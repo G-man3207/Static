@@ -15,6 +15,23 @@ test.describe("Static extension integration", () => {
     await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
     server = await startFixtureServer({
       "/blank.html": '<!doctype html><meta charset="utf-8"><body>blank</body>',
+      "/message-listener.html": `
+        <!doctype html>
+        <meta charset="utf-8">
+        <script>
+          window.staticMessages = [];
+          window.staticBridgeEvents = [];
+          window.addEventListener("message", (event) => {
+            if (event.data && event.data.__static_bridge_init__) {
+              window.staticMessages.push({ data: event.data, ports: event.ports.length });
+            }
+          });
+          document.addEventListener("__static_bridge_init__", (event) => {
+            window.staticBridgeEvents.push({ type: event.type, ports: event.ports.length });
+          });
+        </script>
+        <body>listener</body>
+      `,
       "/dom.html": `
         <!doctype html>
         <meta charset="utf-8">
@@ -99,6 +116,7 @@ test.describe("Static extension integration", () => {
       },
       sendBeacon: {
         length: navigator.sendBeacon.length,
+        ownOnNavigator: Object.prototype.hasOwnProperty.call(navigator, "sendBeacon"),
         ownPrototype: Object.prototype.hasOwnProperty.call(navigator.sendBeacon, "prototype"),
         toString: Function.prototype.toString.call(navigator.sendBeacon),
       },
@@ -123,6 +141,10 @@ test.describe("Static extension integration", () => {
       serviceWorkerRegister: navigator.serviceWorker
         ? {
             length: navigator.serviceWorker.register.length,
+            ownOnContainer: Object.prototype.hasOwnProperty.call(
+              navigator.serviceWorker,
+              "register"
+            ),
             ownPrototype: Object.prototype.hasOwnProperty.call(
               navigator.serviceWorker.register,
               "prototype"
@@ -159,6 +181,7 @@ test.describe("Static extension integration", () => {
     });
     expect(surface.sendBeacon).toEqual({
       length: 1,
+      ownOnNavigator: false,
       ownPrototype: false,
       toString: "function sendBeacon() { [native code] }",
     });
@@ -182,10 +205,38 @@ test.describe("Static extension integration", () => {
     if (surface.serviceWorkerRegister) {
       expect(surface.serviceWorkerRegister).toEqual({
         length: 1,
+        ownOnContainer: false,
         ownPrototype: false,
         toString: "function register() { [native code] }",
       });
     }
+  });
+
+  test("does not expose the private bridge handshake to page listeners", async () => {
+    const page = await extension.context.newPage();
+    await page.goto(server.url("/message-listener.html"));
+
+    const observed = await page.evaluate(async (url) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await fetch(url).catch(() => {});
+      return {
+        messages: window.staticMessages,
+        bridgeEvents: window.staticBridgeEvents,
+      };
+    }, probedUrl());
+
+    expect(observed).toEqual({
+      messages: [],
+      bridgeEvents: [],
+    });
+
+    await expect
+      .poll(() =>
+        extension.serviceWorker.evaluate(() =>
+          chrome.storage.local.get(["cumulative", "probe_log"])
+        )
+      )
+      .toMatchObject({ cumulative: 1 });
   });
 
   test("ignores spoofed legacy public postMessage probe events", async () => {
@@ -260,11 +311,19 @@ test.describe("Static extension integration", () => {
       navigator.sendBeacon(url, "");
       tick();
 
-      new Worker(url);
+      try {
+        new Worker(url);
+      } catch (error) {
+        if (error.name !== "SecurityError") throw error;
+      }
       tick();
 
       if (typeof SharedWorker === "function") {
-        new SharedWorker(url);
+        try {
+          new SharedWorker(url);
+        } catch (error) {
+          if (error.name !== "SecurityError") throw error;
+        }
         tick();
       }
 
@@ -287,6 +346,56 @@ test.describe("Static extension integration", () => {
 
     expect(storage.cumulative).toBe(expectedCount);
     expect(storage.probe_log[origin].idCounts[PROBED_ID]).toBe(expectedCount);
+  });
+
+  test("blocked XHR failures settle like native network failures", async () => {
+    const page = await extension.context.newPage();
+    await page.goto(server.url("/blank.html"));
+
+    const result = await page.evaluate(async (url) => {
+      return await new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        const events = [];
+        for (const name of ["readystatechange", "loadstart", "error", "loadend"]) {
+          xhr.addEventListener(name, () => {
+            events.push({
+              name,
+              readyState: xhr.readyState,
+              status: xhr.status,
+              responseURL: xhr.responseURL,
+              responseText: xhr.responseText,
+            });
+          });
+        }
+        xhr.open("GET", url);
+        xhr.send();
+        setTimeout(() => {
+          resolve({
+            finalReadyState: xhr.readyState,
+            finalStatus: xhr.status,
+            finalResponseURL: xhr.responseURL,
+            events,
+          });
+        }, 100);
+      });
+    }, probedUrl());
+
+    expect(result.finalReadyState).toBe(4);
+    expect(result.finalStatus).toBe(0);
+    expect(result.finalResponseURL).toBe("");
+    expect(result.events.map((event) => event.name)).toEqual([
+      "readystatechange",
+      "loadstart",
+      "readystatechange",
+      "error",
+      "loadend",
+    ]);
+    expect(result.events.at(-1)).toMatchObject({
+      readyState: 4,
+      status: 0,
+      responseURL: "",
+      responseText: "",
+    });
   });
 
   test("Noise mode decoys eligible fetch and XHR probes but keeps element probes blocked", async () => {
@@ -390,6 +499,61 @@ test.describe("Static extension integration", () => {
     }, probedUrl(OTHER_ID));
 
     expect(result).toBe("TypeError");
+  });
+
+  test("blocked EventSource probes keep EventSource shape while failing closed", async () => {
+    const page = await extension.context.newPage();
+    await page.goto(server.url("/blank.html"));
+
+    const result = await page.evaluate(
+      async (url) => {
+        const source = new EventSource(url);
+        const initial = {
+          instance: source instanceof EventSource,
+          prototype: Object.getPrototypeOf(source) === EventSource.prototype,
+          ownReadyState: Object.prototype.hasOwnProperty.call(source, "readyState"),
+          ownUrl: Object.prototype.hasOwnProperty.call(source, "url"),
+          readyState: source.readyState,
+          url: source.url,
+        };
+        let onerrorThisIsSource = false;
+        let listenerErrors = 0;
+        let listenerThisIsSource = false;
+        let listenerTargetIsSource = false;
+        source.onerror = function () {
+          onerrorThisIsSource = this === source;
+        };
+        source.addEventListener("error", function (event) {
+          listenerErrors++;
+          listenerThisIsSource = this === source;
+          listenerTargetIsSource = event.target === source;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return {
+          ...initial,
+          finalReadyState: source.readyState,
+          listenerErrors,
+          listenerThisIsSource,
+          listenerTargetIsSource,
+          onerrorThisIsSource,
+        };
+      },
+      probedUrl(PROBED_ID, "/events")
+    );
+
+    expect(result).toEqual({
+      instance: true,
+      prototype: true,
+      ownReadyState: false,
+      ownUrl: false,
+      readyState: 0,
+      url: probedUrl(PROBED_ID, "/events"),
+      finalReadyState: 2,
+      listenerErrors: 1,
+      listenerThisIsSource: true,
+      listenerTargetIsSource: true,
+      onerrorThisIsSource: true,
+    });
   });
 
   test("scrubs extension DOM markers on initial parse and later mutations", async () => {
