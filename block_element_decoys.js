@@ -335,12 +335,15 @@
   guardProp(HTMLImageElement.prototype, "src", "img.src");
   guardProp(HTMLScriptElement.prototype, "src", "script.src");
   guardProp(HTMLLinkElement.prototype, "href", "link.href");
-  if (typeof HTMLSourceElement !== "undefined")
+  if (typeof HTMLSourceElement !== "undefined") {
     guardProp(HTMLSourceElement.prototype, "src", "source.src");
-  if (typeof HTMLEmbedElement !== "undefined")
+  }
+  if (typeof HTMLEmbedElement !== "undefined") {
     guardProp(HTMLEmbedElement.prototype, "src", "embed.src");
-  if (typeof HTMLObjectElement !== "undefined")
+  }
+  if (typeof HTMLObjectElement !== "undefined") {
     guardProp(HTMLObjectElement.prototype, "data", "object.data");
+  }
   patchAttributes();
   patchCurrentSrc();
   patchStyleSheetHref();
