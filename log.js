@@ -3,6 +3,7 @@
 // for that origin. Also handles Export / Clear.
 const fmt = (n) => n.toLocaleString();
 const fmtDate = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
+const LOG_DIAGNOSTICS = globalThis.__static_log_diagnostics__ || {};
 
 const totalProbesFor = (entry) => {
   let sum = 0;
@@ -279,6 +280,13 @@ const buildOriginDetail = (entry, drift) => {
   const box = document.createElement("div");
   box.className = "id-list";
   box.appendChild(buildDriftDetail(drift));
+  const playbook = LOG_DIAGNOSTICS.buildPlaybookDetail
+    ? LOG_DIAGNOSTICS.buildPlaybookDetail(entry, latestPlaybookComparison(entry))
+    : null;
+  if (playbook) box.appendChild(playbook);
+  if (LOG_DIAGNOSTICS.buildNoiseReadinessDetail) {
+    box.appendChild(LOG_DIAGNOSTICS.buildNoiseReadinessDetail(entry));
+  }
   const adaptive = buildAdaptiveDetail(entry.__adaptive);
   if (adaptive) box.appendChild(adaptive);
   const ids = buildIdList(entry);

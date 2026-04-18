@@ -70,6 +70,12 @@ Expanding an origin shows the concrete reasons. The popup also shows a compact w
 
 This is an early-warning system, not attribution. It means "this origin changed how it checks for extensions," not necessarily "this origin adapted to Static."
 
+Power-user diagnostics in the popup and log viewer expose the local evidence behind those labels:
+current origin, latest weekly probe vector mix, extension-resource path mix, one-shot ID pressure,
+Noise-mode eligibility thresholds, and the IDs currently eligible for an origin's decoy pool. These
+views derive only from the existing local probe and adaptive logs; they do not collect or transmit
+anything new.
+
 ## Adaptive behavior log _(observe-only)_
 
 Static also has a local-only adaptive behavior logger for future dynamic blocking work. It watches for correlated behavior windows such as canvas/WebGL/audio readback plus navigator reads and network transmission, crypto plus network transmission, or document-wide mutation observation plus aggressive input hooks.

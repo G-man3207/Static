@@ -734,6 +734,45 @@ test("log viewer shows playbook drift indicators and reasons", async ({ extensio
   await expect(logPage.getByText("New probe vectors appeared: EventSource, Worker.")).toBeVisible();
   await expect(logPage.getByText("New path kinds appeared: image, script.")).toBeVisible();
   await expect(logPage.getByText(/One-shot ID pressure is high/)).toBeVisible();
+  await expect(logPage.getByText("Probe playbook")).toBeVisible();
+  await expect(logPage.getByText(/EventSource 20/)).toBeVisible();
+  await expect(logPage.getByText(/Worker 20/)).toBeVisible();
+  await expect(logPage.getByText(/fetch 20/)).toBeVisible();
+  await expect(logPage.getByText("image 30, script 30")).toBeVisible();
+});
+
+test("log viewer shows local Noise readiness diagnostics", async ({ extension }) => {
+  const knownOne = "nngceckbapebfimnlniiiahkandclblb";
+  const knownTwo = "cjpalhdlnbpafiamejdnhcphjbkeiagm";
+  const unknown = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  await extension.serviceWorker.evaluate(
+    ({ knownOne, knownTwo, unknown }) =>
+      chrome.storage.local.set({
+        probe_log: {
+          "https://noise.test": {
+            idCounts: {
+              [knownOne]: 2,
+              [knownTwo]: 4,
+              [unknown]: 20,
+              bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: 1,
+            },
+            lastUpdated: Date.now(),
+          },
+        },
+      }),
+    { knownOne, knownTwo, unknown }
+  );
+
+  const logPage = await extension.context.newPage();
+  await logPage.goto(`chrome-extension://${extension.extensionId}/log.html`);
+  await logPage.getByText("https://noise.test").click();
+  await expect(logPage.getByText("Noise readiness")).toBeVisible();
+  await expect(logPage.getByText("3 IDs (2 known-list, 1 repeated unknown)")).toBeVisible();
+  await expect(
+    logPage.getByText("known IDs need 2 probes; unknown IDs need 20 probes")
+  ).toBeVisible();
+  await expect(logPage.getByText(/1 one-shot IDs out of 4 unique/)).toBeVisible();
+  await expect(logPage.locator(".id-entry span").getByText(unknown, { exact: true })).toBeVisible();
 });
 
 test("scrubs extension DOM markers on initial parse and later mutations", async ({
