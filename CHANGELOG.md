@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-04-18
+
+### Fixed
+
+- Shortened `manifest.json` `"description"` field from 171 to 124 characters so it fits within Chrome Web Store's 132-character limit. No functional change.
+
 ## [2.0.0] — 2026-04-18
 
 Initial public release.
@@ -67,5 +73,6 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/G-man3207/Static/releases/tag/v2.0.1
 [2.0.0]: https://github.com/G-man3207/Static/releases/tag/v2.0.0
