@@ -26,6 +26,7 @@ const {
 
 // ─── In-memory per-tab state ──────────────────────────────────────────────
 const perTabState = new Map(); // tabId -> { origin, frames: Map<frameId, {total, idCounts}> }
+const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -79,10 +80,22 @@ const trimLogOrigins = (log, maxOrigins) => {
   for (const oldOrigin of origins.slice(maxOrigins)) delete log[oldOrigin];
 };
 
+const sanitizeExtensionIdCounts = (counts) => {
+  const sanitized = {};
+  for (const [id, count] of Object.entries(counts || {})) {
+    const safeId = id.toLowerCase();
+    if (CHROME_EXT_ID_RE.test(safeId) && typeof count === "number" && count > 0) {
+      sanitized[safeId] = (sanitized[safeId] || 0) + count;
+    }
+  }
+  return sanitized;
+};
+
 const normalizedProbeBatch = (batch) => {
   const deltaVectorCounts = batch && batch.deltaVectorCounts ? batch.deltaVectorCounts : {};
   return {
-    deltaIdCounts: batch && batch.deltaIdCounts ? batch.deltaIdCounts : {},
+    deltaIdCounts:
+      batch && batch.deltaIdCounts ? sanitizeExtensionIdCounts(batch.deltaIdCounts) : {},
     deltaPathKindCounts: batch && batch.deltaPathKindCounts ? batch.deltaPathKindCounts : {},
     deltaTotal:
       batch && typeof batch.delta === "number" && batch.delta > 0
@@ -238,8 +251,8 @@ const shuffleInPlace = (arr, rng) => {
 const eligiblePersonaIds = (entry) => {
   const minCount = CFG.personaMinCount || 2;
   return Object.entries(entry.idCounts)
-    .filter(([, c]) => c >= minCount)
-    .map(([id]) => id);
+    .filter(([id, c]) => CHROME_EXT_ID_RE.test(id) && c >= minCount)
+    .map(([id]) => id.toLowerCase());
 };
 
 const buildConflictSlotMap = () => {
@@ -320,7 +333,10 @@ const mapIdCounts = (idCounts) => {
   const idMap = new Map();
   if (!idCounts || typeof idCounts !== "object") return idMap;
   for (const [id, count] of Object.entries(idCounts)) {
-    if (typeof count === "number" && count > 0) idMap.set(id, count);
+    const safeId = id.toLowerCase();
+    if (CHROME_EXT_ID_RE.test(safeId) && typeof count === "number" && count > 0) {
+      idMap.set(safeId, count);
+    }
   }
   return idMap;
 };

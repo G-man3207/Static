@@ -28,10 +28,12 @@
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
-  const patchedFnToString = function toString() {
-    if (stealthFns.has(this)) return stealthFns.get(this);
-    return origFnToString.call(this);
-  };
+  const patchedFnToString = {
+    toString() {
+      if (stealthFns.has(this)) return stealthFns.get(this);
+      return origFnToString.call(this);
+    },
+  }.toString;
   stealthFns.set(patchedFnToString, "function toString() { [native code] }");
   try {
     Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
@@ -122,10 +124,23 @@
     }
   };
 
+  const redactPathSegment = (segment) => {
+    if (!segment) return segment;
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(segment)) return ":uuid";
+    if (/^[0-9a-f]{16,}$/i.test(segment)) return ":hex";
+    if (/^\d{5,}$/.test(segment)) return ":num";
+    if (segment.length < 24 || !/[a-z]/i.test(segment) || !/\d/.test(segment)) return segment;
+    const ext = segment.match(/\.[a-z0-9]{1,8}$/i);
+    return ext ? `:token${ext[0].toLowerCase()}` : ":token";
+  };
+
+  const redactedPathnameFor = (pathname) =>
+    String(pathname || "").split("/").map(redactPathSegment).join("/");
+
   const stableUrlLabelFor = (url) => {
     try {
       const parsed = new URL(String(url), location.href);
-      return parsed.origin + parsed.pathname;
+      return parsed.origin + redactedPathnameFor(parsed.pathname);
     } catch {
       try {
         return String(url || "")
