@@ -1,21 +1,9 @@
-// Static — MAIN ↔ service-worker bridge (ISOLATED world).
-//
-// Two responsibilities:
-//   1. Establish a per-document MessageChannel with block.js, then listen for
-//      probe events on that private port. Batches them on a 150ms timer,
-//      extracts the extension ID from the URL, and forwards a snapshot
-//      (per-flush delta + cumulative per-frame total + cumulative per-frame ID
-//      counts) to the service worker.
-//   2. Ask the service worker for the current Noise-mode persona for this
-//      origin at page load (and again whenever the user toggles Noise mode),
-//      then relay it into the MAIN world over the MessageChannel so block.js can
-//      decide fetch-by-fetch whether to reject the probe or return a decoy.
-//      The same channel also forwards local replay-SDK detections and the
-//      opt-in Replay poisoning mode, plus observe-only adaptive behavior
-//      signals. All data stays in chrome.storage.local.
+// Static - MAIN-world modules to service-worker bridge (ISOLATED world).
 (() => {
   const EXT_ID_RE = /^(?:chrome|moz|ms-browser|safari-web|edge)-extension:\/\/([a-z0-9]+)/i;
-
+  const CONFIG_EVENTS = ["__static_noise_bridge_init__", "__static_replay_bridge_init__"];
+  const PROBE_EVENTS = ["__static_noise_bridge_init__", "__static_probe_bridge_init__"];
+  const configPorts = new Set();
   let pendingDelta = 0;
   let frameTotal = 0;
   let flushTimer = null;
@@ -43,12 +31,8 @@
   };
 
   const pathKindFor = (url) => {
-    let pathname = "";
-    try {
-      pathname = new URL(url).pathname.toLowerCase();
-    } catch {
-      return "unknown";
-    }
+    const pathname = pathnameFor(url);
+    if (pathname === null) return "unknown";
     if (pathname === "" || pathname === "/") return "root";
     if (pathname.endsWith("/manifest.json")) return "manifest";
     if (/\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(pathname)) return "image";
@@ -60,8 +44,13 @@
     return "other";
   };
 
-  const channel = new MessageChannel();
-  const bridgePort = channel.port1;
+  const pathnameFor = (url) => {
+    try {
+      return new URL(url).pathname.toLowerCase();
+    } catch {
+      return null;
+    }
+  };
 
   const flush = () => {
     flushTimer = null;
@@ -89,64 +78,95 @@
     } catch {}
   };
 
-  bridgePort.onmessage = (event) => {
-    const data = event.data;
-    if (data && data.type === "probe_blocked") {
-      pendingDelta++;
-      bumpMap(pendingVectorCounts, normalizeVector(data.where));
-      bumpMap(pendingPathKindCounts, pathKindFor(data.url));
-      const m = EXT_ID_RE.exec(String(data.url || ""));
-      if (m) {
-        const id = m[1];
-        bumpMap(idCounts, id);
-        bumpMap(pendingIdCounts, id);
-      }
-      if (!flushTimer) flushTimer = setTimeout(flush, 150);
-    } else if (data && data.type === "replay_detected") {
-      try {
-        chrome.runtime.sendMessage({
-          type: "static_replay_detected",
-          signal: String(data.signal || "unknown").slice(0, 96),
-        });
-      } catch {}
-    } else if (data && data.type === "adaptive_signal") {
-      try {
-        const signal = data.signal || {};
-        chrome.runtime.sendMessage({
-          type: "static_adaptive_signal",
-          signal: {
-            category: String(signal.category || "unknown").slice(0, 48),
-            score: Math.max(0, Math.min(100, Math.round(signal.score || 0))),
-            source: String(signal.source || "unknown").slice(0, 160),
-            endpoint: String(signal.endpoint || "").slice(0, 160),
-            reasons: Array.isArray(signal.reasons)
-              ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
-              : [],
-          },
-        });
-      } catch {}
+  const handleProbeBlocked = (data) => {
+    pendingDelta++;
+    bumpMap(pendingVectorCounts, normalizeVector(data.where));
+    bumpMap(pendingPathKindCounts, pathKindFor(data.url));
+    const match = EXT_ID_RE.exec(String(data.url || ""));
+    if (match) {
+      const id = match[1];
+      bumpMap(idCounts, id);
+      bumpMap(pendingIdCounts, id);
     }
+    if (!flushTimer) flushTimer = setTimeout(flush, 150);
   };
-  try {
-    bridgePort.start();
-  } catch {}
 
-  try {
-    document.dispatchEvent(new MessageEvent("__static_bridge_init__", { ports: [channel.port2] }));
-  } catch {}
-
-  const refreshPersona = async () => {
+  const sendReplaySignal = (signal) => {
     try {
-      const resp = await chrome.runtime.sendMessage({ type: "static_get_persona" });
-      if (!resp) return;
-      bridgePort.postMessage({
-        type: "config_update",
-        persona: Array.isArray(resp.ids) ? resp.ids : [],
-        noiseEnabled: !!resp.noiseEnabled,
-        replayMode: typeof resp.replayMode === "string" ? resp.replayMode : "off",
+      chrome.runtime.sendMessage({
+        type: "static_replay_detected",
+        signal: String(signal || "unknown").slice(0, 96),
       });
     } catch {}
   };
+
+  const sendAdaptiveSignal = (signal = {}) => {
+    try {
+      chrome.runtime.sendMessage({
+        type: "static_adaptive_signal",
+        signal: {
+          category: String(signal.category || "unknown").slice(0, 48),
+          score: Math.max(0, Math.min(100, Math.round(signal.score || 0))),
+          source: String(signal.source || "unknown").slice(0, 160),
+          endpoint: String(signal.endpoint || "").slice(0, 160),
+          reasons: Array.isArray(signal.reasons)
+            ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
+            : [],
+        },
+      });
+    } catch {}
+  };
+
+  const handlePortMessage = (event) => {
+    const data = event.data;
+    if (!data || typeof data !== "object") return;
+    if (data.type === "probe_blocked") handleProbeBlocked(data);
+    if (data.type === "replay_detected") sendReplaySignal(data.signal);
+    if (data.type === "adaptive_signal") sendAdaptiveSignal(data.signal);
+  };
+
+  const createPort = (eventName) => {
+    const channel = new MessageChannel();
+    const port = channel.port1;
+    port.onmessage = handlePortMessage;
+    try {
+      port.start();
+    } catch {}
+    if (CONFIG_EVENTS.includes(eventName)) configPorts.add(port);
+    try {
+      document.dispatchEvent(new MessageEvent(eventName, { ports: [channel.port2] }));
+    } catch {}
+    return port;
+  };
+
+  const postConfig = (port, response) => {
+    try {
+      port.postMessage({
+        type: "config_update",
+        persona: Array.isArray(response.ids) ? response.ids : [],
+        noiseEnabled: !!response.noiseEnabled,
+        replayMode: typeof response.replayMode === "string" ? response.replayMode : "off",
+      });
+    } catch {
+      configPorts.delete(port);
+    }
+  };
+
+  const refreshPersona = async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "static_get_persona" });
+      if (!response) return;
+      for (const port of [...configPorts]) postConfig(port, response);
+    } catch {}
+  };
+
+  for (const eventName of new Set([
+    ...PROBE_EVENTS,
+    ...CONFIG_EVENTS,
+    "__static_adaptive_bridge_init__",
+  ])) {
+    createPort(eventName);
+  }
   refreshPersona();
 
   chrome.runtime.onMessage.addListener((msg) => {

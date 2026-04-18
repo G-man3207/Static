@@ -14,40 +14,48 @@
   const CLASS_PATTERNS = CFG.domStripClasses || [];
   if (!ATTR_PATTERNS.length && !TAG_PATTERNS.length && !CLASS_PATTERNS.length) return;
 
-  const scrubEl = (el) => {
-    if (!el || el.nodeType !== 1) return;
+  const matchesAny = (patterns, value) => patterns.some((pattern) => pattern.test(value));
 
-    const tn = el.tagName && el.tagName.toLowerCase();
-    if (tn && TAG_PATTERNS.some((p) => p.test(tn))) {
+  const scrubTag = (el) => {
+    const tagName = el.tagName && el.tagName.toLowerCase();
+    if (!tagName || !matchesAny(TAG_PATTERNS, tagName)) return false;
+    try {
+      el.remove();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const scrubAttributes = (el) => {
+    if (!el.attributes || !el.attributes.length) return;
+    for (let i = el.attributes.length - 1; i >= 0; i--) {
+      const attr = el.attributes[i];
+      if (!matchesAny(ATTR_PATTERNS, attr.name.toLowerCase())) continue;
       try {
-        el.remove();
-        return;
+        el.removeAttribute(attr.name);
       } catch {}
     }
+  };
 
-    if (el.attributes && el.attributes.length) {
-      for (let i = el.attributes.length - 1; i >= 0; i--) {
-        const attr = el.attributes[i];
-        const name = attr.name.toLowerCase();
-        if (ATTR_PATTERNS.some((p) => p.test(name))) {
-          try {
-            el.removeAttribute(attr.name);
-          } catch {}
-        }
-      }
+  const scrubClasses = (el) => {
+    if (!el.classList || !el.classList.length) return;
+    const toRemove = [];
+    for (const cls of el.classList) {
+      if (matchesAny(CLASS_PATTERNS, cls)) toRemove.push(cls);
     }
+    for (const cls of toRemove) {
+      try {
+        el.classList.remove(cls);
+      } catch {}
+    }
+  };
 
-    if (el.classList && el.classList.length) {
-      const toRemove = [];
-      for (const cls of el.classList) {
-        if (CLASS_PATTERNS.some((p) => p.test(cls))) toRemove.push(cls);
-      }
-      for (const cls of toRemove) {
-        try {
-          el.classList.remove(cls);
-        } catch {}
-      }
-    }
+  const scrubEl = (el) => {
+    if (!el || el.nodeType !== 1) return;
+    if (scrubTag(el)) return;
+    scrubAttributes(el);
+    scrubClasses(el);
   };
 
   const scrubTree = (root) => {

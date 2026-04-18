@@ -1,111 +1,47 @@
-// Static — MAIN-world engine.
-//
-// Patches the page's window so that:
-//   1. fetch / XHR / element src|href|data / setAttribute / sendBeacon /
-//      Worker / SharedWorker / EventSource / serviceWorker.register calls
-//      targeting `chrome-extension://` (or equivalent in other browsers) are
-//      rejected by default — blocking pages from enumerating installed
-//      extensions.
-//   2. When Noise mode is on AND the probed ID is in the origin's persona
-//      (a stable 3–8 ID subset drawn from IDs this site has previously
-//      probed for), fetch/XHR return a plausible-looking decoy response
-//      instead of an error. Pages see those IDs as "installed."
-//      Element-based probes (script/img src, setAttribute) stay blocked
-//      regardless — consistent behavior beats a partial decoy that could
-//      be detected by correlating vectors.
-//   3. Known extension-bridge window globals are locked to undefined before
-//      any page script runs.
-//   4. All wrapped functions remain indistinguishable from their native
-//      counterparts under Function.prototype.toString checks.
-//
-// MAIN-world constants are kept local to avoid exposing a Static-specific
-// window global. Persona + Noise-mode state arrive through a private
-// MessageChannel that bridge.js transfers at document_start.
+// Static - MAIN-world fetch/XHR extension probe blocker and Noise decoy engine.
 (() => {
   const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
-  const REPLAY_RE =
-    /(fullstory|fs\.js|logrocket|mouseflow|smartlook|clarity|heap|pendo|luckyorange|inspectlet|browsee|contentsquare|quantummetric|session[-_]?replay|@sentry\/replay|sentry.*(?:replay|rrweb)|browser\.sentry-cdn\.com\/.*replay|replayIntegration|replayCanvasIntegration|replaysSessionSampleRate|replaysOnErrorSampleRate|beforeAddRecordingEvent|ReplayCanvas|rrweb)/i;
-  const REPLAY_GLOBALS = [
-    "FS",
-    "_fs_org",
-    "_fs_host",
-    "LogRocket",
-    "Mouseflow",
-    "mouseflow",
-    "smartlook",
-    "clarity",
-    "heap",
-    "pendo",
-    "__lo_site_id",
-    "__insp",
-    "Inspectlet",
-    "Browsee",
-    "QuantumMetricAPI",
-  ];
-  const REPLAY_EVENT_TYPES = new Set([
-    "input",
-    "change",
-    "keydown",
-    "keyup",
-    "keypress",
-    "click",
-    "dblclick",
-    "mousedown",
-    "mouseup",
-    "mousemove",
-    "pointerdown",
-    "pointerup",
-    "pointermove",
-    "scroll",
-    "focus",
-    "blur",
-  ]);
-  const STRIP_GLOBALS = [
-    "__REACT_DEVTOOLS_GLOBAL_HOOK__",
-    "__REDUX_DEVTOOLS_EXTENSION__",
-    "__REDUX_DEVTOOLS_EXTENSION_COMPOSE__",
-    "__VUE_DEVTOOLS_GLOBAL_HOOK__",
-    "__MOBX_DEVTOOLS_GLOBAL_HOOK__",
-    "__APOLLO_DEVTOOLS_GLOBAL_HOOK__",
-    "__GRAMMARLY_DESKTOP_INTEGRATION__",
-    "__grammarlyGlobalSessionId",
-    "__onePasswordExtension",
-    "__1passwordExtension",
-    "__dashlaneExtensionInstalled",
-    "__isDashlaneExtensionInstalled",
-    "__honeyExtensionInstalled",
-    "__keeper_extension_installed",
-    "__nordpassExtensionInstalled",
-    "__roboformExtensionInstalled",
-  ];
   const EXT_ID_RE = /^(?:chrome|moz|ms-browser|safari-web|edge)-extension:\/\/([a-z0-9]+)/i;
-  let blocked = 0;
-
-  // Persona state — populated from bridge.js over the private MessageChannel.
+  const BRIDGE_EVENT = "__static_noise_bridge_init__";
+  const MAX_QUEUED_PROBES = 1000;
+  const queuedProbeEvents = [];
+  let bridgePort = null;
   let persona = new Set();
   let noiseEnabled = false;
-  let replayMode = "off";
-  let replayDetected = false;
-  let replayNoiseStarted = false;
-  let bridgePort = null;
-  const queuedProbeEvents = [];
-  const queuedReplaySignals = [];
-  const queuedAdaptiveSignals = [];
-  const reportedReplaySignals = new Set();
-  const MAX_QUEUED_PROBES = 1000;
-  const MAX_QUEUED_REPLAY_SIGNALS = 50;
-  const MAX_QUEUED_ADAPTIVE_SIGNALS = 50;
-  const BRIDGE_EVENT = "__static_bridge_init__";
 
-  const applyConfigUpdate = (d) => {
-    if (!d || d.type !== "config_update") return;
-    if (Array.isArray(d.persona)) {
-      persona = new Set(d.persona.filter((id) => typeof id === "string"));
+  const stealthFns = new WeakMap();
+  const origFnToString = Function.prototype.toString;
+  const patchedFnToString = function toString() {
+    if (stealthFns.has(this)) return stealthFns.get(this);
+    return origFnToString.call(this);
+  };
+  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
+  try {
+    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
+    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
+  } catch {}
+  Function.prototype.toString = patchedFnToString;
+
+  const stealth = (fn, nativeName, opts = {}) => {
+    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
+    try {
+      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
+    } catch {}
+    if (typeof opts.length === "number") {
+      try {
+        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
+      } catch {}
     }
-    if (typeof d.noiseEnabled === "boolean") noiseEnabled = d.noiseEnabled;
-    if (typeof d.replayMode === "string") {
-      replayMode = d.replayMode;
-      if (replayDetected) startReplayNoise();
+    return fn;
+  };
+
+  const applyConfigUpdate = (data) => {
+    if (!data || data.type !== "config_update") return;
+    if (Array.isArray(data.persona)) {
+      persona = new Set(data.persona.filter((id) => typeof id === "string"));
+    }
+    if (typeof data.noiseEnabled === "boolean") {
+      noiseEnabled = data.noiseEnabled;
     }
   };
 
@@ -125,68 +61,12 @@
     }
   };
 
-  const postReplayDetected = (signal) => {
-    const safeSignal = signal == null ? "unknown" : String(signal).slice(0, 96);
-    if (bridgePort) {
-      try {
-        bridgePort.postMessage({ type: "replay_detected", signal: safeSignal });
-        return;
-      } catch {
-        bridgePort = null;
-      }
-    }
-    if (queuedReplaySignals.length < MAX_QUEUED_REPLAY_SIGNALS) {
-      queuedReplaySignals.push(safeSignal);
-    }
-  };
-
-  const postAdaptiveSignal = (signal) => {
-    const safeSignal = {
-      category: String((signal && signal.category) || "unknown").slice(0, 48),
-      score: Math.max(0, Math.min(100, Math.round((signal && signal.score) || 0))),
-      source: String((signal && signal.source) || "unknown").slice(0, 160),
-      endpoint: String((signal && signal.endpoint) || "").slice(0, 160),
-      reasons: Array.isArray(signal && signal.reasons)
-        ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
-        : [],
-    };
-    if (bridgePort) {
-      try {
-        bridgePort.postMessage({ type: "adaptive_signal", signal: safeSignal });
-        return;
-      } catch {
-        bridgePort = null;
-      }
-    }
-    if (queuedAdaptiveSignals.length < MAX_QUEUED_ADAPTIVE_SIGNALS) {
-      queuedAdaptiveSignals.push(safeSignal);
-    }
-  };
-
   const flushQueuedProbes = () => {
     if (!bridgePort) return;
     const batch = queuedProbeEvents.splice(0, queuedProbeEvents.length);
     for (const event of batch) {
       try {
         bridgePort.postMessage({ type: "probe_blocked", ...event });
-      } catch {
-        bridgePort = null;
-        return;
-      }
-    }
-    const replaySignals = queuedReplaySignals.splice(0, queuedReplaySignals.length);
-    for (const signal of replaySignals) {
-      try {
-        bridgePort.postMessage({ type: "replay_detected", signal });
-      } catch {
-        bridgePort = null;
-        return;
-      }
-    }
-    const adaptiveSignals = queuedAdaptiveSignals.splice(0, queuedAdaptiveSignals.length);
-    for (const signal of adaptiveSignals) {
-      try {
-        bridgePort.postMessage({ type: "adaptive_signal", signal });
       } catch {
         bridgePort = null;
         return;
@@ -212,52 +92,6 @@
   };
   document.addEventListener(BRIDGE_EVENT, onBridgeInit);
 
-  const bump = (where, url) => {
-    blocked++;
-    try {
-      postProbe(url, where);
-    } catch {}
-  };
-
-  const markReplayDetected = (signal) => {
-    if (!replayDetected) replayDetected = true;
-    const safeSignal = signal == null ? "unknown" : String(signal).slice(0, 96);
-    if (!reportedReplaySignals.has(safeSignal)) {
-      reportedReplaySignals.add(safeSignal);
-      postReplayDetected(safeSignal);
-    }
-    startReplayNoise();
-  };
-
-  const isReplayScriptUrl = (url) => {
-    try {
-      return REPLAY_RE.test(String(url || ""));
-    } catch {
-      return false;
-    }
-  };
-
-  const stableUrlLabelFor = (url) => {
-    try {
-      const parsed = new URL(String(url), location.href);
-      return parsed.origin + parsed.pathname;
-    } catch {
-      try {
-        return String(url || "")
-          .split(/[?#]/)[0]
-          .slice(0, 160);
-      } catch {
-        return "";
-      }
-    }
-  };
-
-  const maybeDetectReplayScript = (url) => {
-    if (isReplayScriptUrl(url)) {
-      markReplayDetected("script:" + stableUrlLabelFor(url).slice(0, 72));
-    }
-  };
-
   const getUrl = (input) => {
     if (input == null) return "";
     if (typeof input === "string") return input;
@@ -271,17 +105,17 @@
     }
   };
 
-  const isBad = (u) => {
+  const isBad = (input) => {
     try {
-      return BAD_RE.test(getUrl(u));
+      return BAD_RE.test(getUrl(input));
     } catch {
       return false;
     }
   };
 
-  const extractExtId = (urlStr) => {
-    const m = EXT_ID_RE.exec(String(urlStr || ""));
-    return m ? m[1] : null;
+  const extractExtId = (url) => {
+    const match = EXT_ID_RE.exec(String(url || ""));
+    return match ? match[1] : null;
   };
 
   const shouldDecoy = (url) => {
@@ -290,13 +124,9 @@
     return id != null && persona.has(id);
   };
 
-  // ─── Decoy response synthesis ───────────────────────────────────────────
-  // Minimal valid 1×1 transparent PNG — served when a probe targets an image
-  // path (icons etc.) under Noise mode.
-  const PNG_1x1_B64 =
+  const PNG_1X1_B64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-  const PNG_1x1 = Uint8Array.from(atob(PNG_1x1_B64), (c) => c.charCodeAt(0));
-
+  const PNG_1X1 = Uint8Array.from(atob(PNG_1X1_B64), (char) => char.charCodeAt(0));
   const FAKE_MANIFEST = {
     manifest_version: 3,
     name: "Browser Extension",
@@ -305,11 +135,16 @@
     icons: { 16: "icon.png", 48: "icon.png", 128: "icon.png" },
   };
 
-  const buildDecoyBody = (url) => {
-    let pathname = "";
+  const pathForDecoy = (url) => {
     try {
-      pathname = new URL(url).pathname.toLowerCase();
-    } catch {}
+      return new URL(url).pathname.toLowerCase();
+    } catch {
+      return "";
+    }
+  };
+
+  const buildDecoyBody = (url) => {
+    const pathname = pathForDecoy(url);
     if (pathname.endsWith("/manifest.json") || pathname === "/" || pathname === "") {
       return {
         body: JSON.stringify(FAKE_MANIFEST),
@@ -317,7 +152,7 @@
       };
     }
     if (/\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(pathname)) {
-      return { body: PNG_1x1, contentType: "image/png" };
+      return { body: PNG_1X1, contentType: "image/png" };
     }
     if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) {
       return { body: "", contentType: "application/javascript; charset=utf-8" };
@@ -329,13 +164,15 @@
       };
     }
     if (pathname.endsWith(".css")) return { body: "", contentType: "text/css; charset=utf-8" };
-    if (pathname.endsWith(".json"))
+    if (pathname.endsWith(".json")) {
       return { body: "{}", contentType: "application/json; charset=utf-8" };
-    if (pathname.endsWith(".svg"))
+    }
+    if (pathname.endsWith(".svg")) {
       return {
         body: '<svg xmlns="http://www.w3.org/2000/svg"/>',
         contentType: "image/svg+xml; charset=utf-8",
       };
+    }
     return { body: "", contentType: "application/octet-stream" };
   };
 
@@ -352,689 +189,33 @@
     }
   };
 
-  // ─── Stealth: Function.prototype.toString ───────────────────────────────
-  const stealthFns = new WeakMap();
-  const origFnToString = Function.prototype.toString;
-  const patchedFnToString = function toString() {
-    if (stealthFns.has(this)) return stealthFns.get(this);
-    return origFnToString.call(this);
-  };
-  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-  try {
-    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
-  Function.prototype.toString = patchedFnToString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || "function " + nativeName + "() { [native code] }");
+  const bump = (where, url) => {
     try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return "function " + fallbackName + "() { [native code] }";
-    }
-  };
-
-  const alignPrototypeConstructor = (wrapped, original) => {
-    try {
-      const proto = original && original.prototype;
-      if (!proto) return;
-      const desc = Object.getOwnPropertyDescriptor(proto, "constructor") || {
-        writable: true,
-        configurable: true,
-        enumerable: false,
-      };
-      Object.defineProperty(proto, "constructor", {
-        ...desc,
-        value: wrapped,
-      });
+      postProbe(url, where);
     } catch {}
   };
 
-  // ─── Adaptive behavior scoring (observe-only) ──────────────────────────
-  const ADAPTIVE_WINDOW_MS = 4000;
-  const ADAPTIVE_COOLDOWN_MS = 7000;
-  const ADAPTIVE_TRIGGER_SCORE = 7;
-  const ADAPTIVE_WEIGHTS = {
-    canvas: 2,
-    webgl: 2,
-    audio: 2,
-    navigator: 1,
-    crypto: 3,
-    dom_observer: 3,
-    input_hooks: 2,
-    replay_surface: 3,
-    network: 2,
-  };
-  const ADAPTIVE_INPUT_EVENTS = new Set([
-    "input",
-    "keydown",
-    "keyup",
-    "keypress",
-    "mousemove",
-    "pointermove",
-    "scroll",
-    "touchmove",
-  ]);
-  const adaptiveWindows = new Map();
-
-  const currentAdaptiveSource = () => {
-    try {
-      if (document.currentScript && document.currentScript.src) {
-        return stableUrlLabelFor(document.currentScript.src);
-      }
-    } catch {}
-    return "inline-or-runtime";
-  };
-
-  const stableEndpointFor = (url) => {
-    try {
-      const parsed = new URL(String(url), location.href);
-      return parsed.origin + parsed.pathname;
-    } catch {
-      return "";
-    }
-  };
-
-  const sizeBucketFor = (value) => {
-    if (value == null) return "0";
-    let size = 0;
-    try {
-      if (typeof value === "string") size = value.length;
-      else if (value instanceof Blob) size = value.size;
-      else if (value instanceof ArrayBuffer) size = value.byteLength;
-      else if (ArrayBuffer.isView(value)) size = value.byteLength;
-      else if (value instanceof URLSearchParams) size = String(value).length;
-      else if (value instanceof FormData) size = 1024;
-      else size = String(value).length;
-    } catch {}
-    if (size === 0) return "0";
-    if (size < 1024) return "<1k";
-    if (size < 10 * 1024) return "1k-10k";
-    if (size < 100 * 1024) return "10k-100k";
-    return "100k+";
-  };
-
-  const adaptiveCategoryFor = (kinds) => {
-    if (kinds.has("dom_observer") && kinds.has("input_hooks")) return "session-replay";
-    if (kinds.has("crypto") && kinds.has("network")) return "anti-bot";
-    if (
-      (kinds.has("canvas") || kinds.has("webgl") || kinds.has("audio")) &&
-      (kinds.has("navigator") || kinds.has("network"))
-    ) {
-      return "fingerprinting";
-    }
-    return "mixed";
-  };
-
-  const recordAdaptiveSignal = (kind, detail = {}) => {
-    const now = Date.now();
-    const source = String(detail.source || currentAdaptiveSource()).slice(0, 160);
-    const key = "page-window";
-    let entry = adaptiveWindows.get(key);
-    if (!entry || now - entry.startedAt > ADAPTIVE_WINDOW_MS) {
-      entry = {
-        startedAt: now,
-        lastReportedAt: 0,
-        kinds: {},
-        endpoints: {},
-        sources: {},
-        details: {},
-      };
-      adaptiveWindows.set(key, entry);
-    }
-
-    const safeKind = String(kind || "unknown").slice(0, 48);
-    entry.kinds[safeKind] = (entry.kinds[safeKind] || 0) + 1;
-    if (source) entry.sources[source] = (entry.sources[source] || 0) + 1;
-    if (detail.endpoint) {
-      const endpoint = String(detail.endpoint).slice(0, 160);
-      entry.endpoints[endpoint] = (entry.endpoints[endpoint] || 0) + 1;
-    }
-    if (detail.detail) {
-      const safeDetail = String(detail.detail).slice(0, 64);
-      entry.details[safeDetail] = (entry.details[safeDetail] || 0) + 1;
-    }
-
-    const kinds = new Set(Object.keys(entry.kinds));
-    const score = Object.keys(entry.kinds).reduce(
-      (sum, name) => sum + (ADAPTIVE_WEIGHTS[name] || 1),
-      0
-    );
-    const endpointEntries = Object.entries(entry.endpoints).sort((a, b) => b[1] - a[1]);
-    const hasNetwork = kinds.has("network");
-    const nonNetworkKinds = [...kinds].filter((name) => name !== "network").length;
-    const strongReplay = kinds.has("dom_observer") && kinds.has("input_hooks");
-    const shouldReport =
-      score >= ADAPTIVE_TRIGGER_SCORE &&
-      (strongReplay || (hasNetwork && nonNetworkKinds >= 2)) &&
-      now - entry.lastReportedAt > ADAPTIVE_COOLDOWN_MS;
-
-    if (!shouldReport) return;
-    entry.lastReportedAt = now;
-    const category = adaptiveCategoryFor(kinds);
-    const details = Object.keys(entry.details).slice(0, 8);
-    const sourceEntries = Object.entries(entry.sources).sort((a, b) => b[1] - a[1]);
-    postAdaptiveSignal({
-      category,
-      score,
-      source: sourceEntries.length ? sourceEntries[0][0] : source,
-      endpoint: endpointEntries.length ? endpointEntries[0][0] : "",
-      reasons: [...kinds, ...details],
-    });
-  };
-
-  const recordAdaptiveNetwork = (where, url, body) => {
-    const endpoint = stableEndpointFor(url);
-    if (!endpoint) return;
-    const bucket = sizeBucketFor(body);
-    recordAdaptiveSignal("network", {
-      endpoint,
-      detail: where + ":" + bucket,
-    });
-  };
-
-  const patchMethod = (owner, name, label, recorder, opts = {}) => {
-    if (!owner || typeof owner[name] !== "function") return;
-    const orig = owner[name];
-    const wrapped = {
-      [name](...args) {
-        try {
-          recorder && recorder.apply(this, args);
-        } catch {}
-        return orig.apply(this, args);
-      },
-    }[name];
-    owner[name] = stealth(wrapped, label || name, { length: opts.length ?? orig.length });
-  };
-
-  const patchNavigatorGetter = (prop) => {
-    try {
-      const proto = Navigator.prototype;
-      const desc = Object.getOwnPropertyDescriptor(proto, prop);
-      if (!desc || typeof desc.get !== "function") return;
-      Object.defineProperty(proto, prop, {
-        configurable: true,
-        enumerable: desc.enumerable,
-        get: stealth(
-          function get() {
-            try {
-              recordAdaptiveSignal("navigator", { detail: "navigator." + prop });
-            } catch {}
-            return desc.get.call(this);
-          },
-          "get " + prop,
-          { length: 0 }
-        ),
-      });
-    } catch {}
-  };
-
-  try {
-    patchMethod(HTMLCanvasElement.prototype, "toDataURL", "toDataURL", () =>
-      recordAdaptiveSignal("canvas", { detail: "canvas.toDataURL" })
-    );
-    patchMethod(HTMLCanvasElement.prototype, "toBlob", "toBlob", () =>
-      recordAdaptiveSignal("canvas", { detail: "canvas.toBlob" })
-    );
-    if (typeof CanvasRenderingContext2D !== "undefined") {
-      patchMethod(CanvasRenderingContext2D.prototype, "getImageData", "getImageData", () =>
-        recordAdaptiveSignal("canvas", { detail: "canvas.getImageData" })
-      );
-    }
-  } catch {}
-
-  try {
-    if (typeof WebGLRenderingContext !== "undefined") {
-      patchMethod(WebGLRenderingContext.prototype, "getParameter", "getParameter", () =>
-        recordAdaptiveSignal("webgl", { detail: "webgl.getParameter" })
-      );
-    }
-    if (typeof WebGL2RenderingContext !== "undefined") {
-      patchMethod(WebGL2RenderingContext.prototype, "getParameter", "getParameter", () =>
-        recordAdaptiveSignal("webgl", { detail: "webgl2.getParameter" })
-      );
-    }
-  } catch {}
-
-  try {
-    if (typeof SubtleCrypto !== "undefined") {
-      patchMethod(SubtleCrypto.prototype, "digest", "digest", () =>
-        recordAdaptiveSignal("crypto", { detail: "crypto.digest" })
-      );
-      patchMethod(SubtleCrypto.prototype, "encrypt", "encrypt", () =>
-        recordAdaptiveSignal("crypto", { detail: "crypto.encrypt" })
-      );
-      patchMethod(SubtleCrypto.prototype, "importKey", "importKey", () =>
-        recordAdaptiveSignal("crypto", { detail: "crypto.importKey" })
-      );
-    }
-  } catch {}
-
-  try {
-    if (typeof OfflineAudioContext !== "undefined") {
-      patchMethod(OfflineAudioContext.prototype, "startRendering", "startRendering", () =>
-        recordAdaptiveSignal("audio", { detail: "audio.startRendering" })
-      );
-    }
-    if (typeof AudioBuffer !== "undefined") {
-      patchMethod(AudioBuffer.prototype, "getChannelData", "getChannelData", () =>
-        recordAdaptiveSignal("audio", { detail: "audio.getChannelData" })
-      );
-    }
-  } catch {}
-
-  for (const prop of ["hardwareConcurrency", "deviceMemory", "platform", "plugins", "languages"]) {
-    patchNavigatorGetter(prop);
-  }
-
-  if (typeof MutationObserver === "function") {
-    const OrigMutationObserver = MutationObserver;
-    const WrappedMutationObserver = function MutationObserver(callback) {
-      const observer = new OrigMutationObserver(callback);
-      const origObserve = observer.observe;
-      observer.observe = stealth(
-        function observe(target, options) {
-          try {
-            const globalTarget =
-              target === document ||
-              target === document.documentElement ||
-              target === document.body;
-            if (globalTarget && options && options.subtree) {
-              recordAdaptiveSignal("dom_observer", { detail: "mutation.subtree" });
-            }
-          } catch {}
-          return origObserve.apply(this, arguments);
-        },
-        "observe",
-        { length: 2 }
-      );
-      return observer;
-    };
-    WrappedMutationObserver.prototype = OrigMutationObserver.prototype;
-    alignPrototypeConstructor(WrappedMutationObserver, OrigMutationObserver);
-    window.MutationObserver = stealth(WrappedMutationObserver, "MutationObserver", { length: 1 });
-  }
-
-  // ─── Replay poisoning (opt-in) ──────────────────────────────────────────
-  const eventJitter = new WeakMap();
-  const targetProxyCache = new WeakMap();
-  const replayListenerWrappers = new WeakMap();
-  const activeReplayListeners = [];
-  let decoySurface = null;
-  let replayScanTicks = 0;
-
-  const shouldRedactTarget = (target) => {
-    if (!target || target.nodeType !== 1) return false;
-    const tag = String(target.tagName || "").toLowerCase();
-    return tag === "input" || tag === "textarea" || tag === "select" || !!target.isContentEditable;
-  };
-
-  const redactedValueFor = (target) => {
-    const type = String((target && target.type) || "").toLowerCase();
-    if (type === "email") return "redacted@example.invalid";
-    if (type === "number" || type === "range") return "0";
-    if (type === "checkbox" || type === "radio") return target.checked ? "on" : "";
-    return "redacted";
-  };
-
-  const jitterFor = (event) => {
-    let jitter = eventJitter.get(event);
-    if (!jitter) {
-      jitter = {
-        x: Math.floor(Math.random() * 17) - 8,
-        y: Math.floor(Math.random() * 13) - 6,
-      };
-      eventJitter.set(event, jitter);
-    }
-    return jitter;
-  };
-
-  const jitteredNumber = (event, prop, value) => {
-    if (replayMode !== "noise" && replayMode !== "chaos") return value;
-    if (typeof value !== "number") return value;
-    const jitter = jitterFor(event);
-    if (prop === "clientX" || prop === "pageX" || prop === "screenX") return value + jitter.x;
-    if (prop === "clientY" || prop === "pageY" || prop === "screenY") return value + jitter.y;
-    if (prop === "movementX") return value + Math.round(jitter.x / 3);
-    if (prop === "movementY") return value + Math.round(jitter.y / 3);
-    return value;
-  };
-
-  const proxiedReplayTarget = (target) => {
-    if (!target || (typeof target !== "object" && typeof target !== "function")) return target;
-    const cached = targetProxyCache.get(target);
-    if (cached) return cached;
-    const proxy = new Proxy(target, {
-      get(t, prop, receiver) {
-        if (replayMode !== "off" && shouldRedactTarget(t)) {
-          if (prop === "value" || prop === "defaultValue") return redactedValueFor(t);
-          if (prop === "textContent" || prop === "innerText") return "redacted";
-          if (prop === "getAttribute") {
-            return (name) => {
-              if (String(name).toLowerCase() === "value") return redactedValueFor(t);
-              return t.getAttribute(name);
-            };
-          }
-        }
-        if (
-          (replayMode === "noise" || replayMode === "chaos") &&
-          prop === "getBoundingClientRect"
-        ) {
-          return () => {
-            const rect = t.getBoundingClientRect();
-            const x = Math.floor(Math.random() * 7) - 3;
-            const y = Math.floor(Math.random() * 7) - 3;
-            return new DOMRect(rect.x + x, rect.y + y, rect.width, rect.height);
-          };
-        }
-        const value = Reflect.get(t, prop, t);
-        return typeof value === "function" ? value.bind(t) : value;
-      },
-    });
-    targetProxyCache.set(target, proxy);
-    return proxy;
-  };
-
-  const proxiedReplayEvent = (event) => {
-    if (!event || (typeof event !== "object" && typeof event !== "function")) return event;
-    return new Proxy(event, {
-      get(e, prop, receiver) {
-        if (prop === "target" || prop === "currentTarget" || prop === "srcElement") {
-          return proxiedReplayTarget(Reflect.get(e, prop, e));
-        }
-        if (prop === "composedPath") {
-          return () => {
-            try {
-              return e.composedPath().map((node) => proxiedReplayTarget(node));
-            } catch {
-              return [];
-            }
-          };
-        }
-        if (replayMode !== "off") {
-          if (prop === "key") return "x";
-          if (prop === "code") return "KeyX";
-          if (prop === "data") return "x";
-        }
-        const value = Reflect.get(e, prop, e);
-        return jitteredNumber(e, prop, typeof value === "function" ? value.bind(e) : value);
-      },
-    });
-  };
-
-  const listenerSource = (listener) => {
-    try {
-      if (typeof listener === "function") return origFnToString.call(listener);
-      if (listener && typeof listener.handleEvent === "function") {
-        return origFnToString.call(listener.handleEvent);
-      }
-    } catch {}
-    return "";
-  };
-
-  const currentScriptLooksReplay = () => {
-    try {
-      return document.currentScript && isReplayScriptUrl(document.currentScript.src);
-    } catch {
-      return false;
-    }
-  };
-
-  const shouldWrapReplayListener = (type, listener) => {
-    if (!REPLAY_EVENT_TYPES.has(String(type))) return false;
-    if (currentScriptLooksReplay()) {
-      markReplayDetected(
-        "listener-script:" + stableUrlLabelFor(document.currentScript.src).slice(0, 72)
-      );
-      return true;
-    }
-    const src = listenerSource(listener);
-    if (src && REPLAY_RE.test(src)) {
-      markReplayDetected("listener-source");
-      return true;
-    }
-    return false;
-  };
-
-  const invokeReplayListener = (listener, thisArg, event) => {
-    const eventForListener = replayMode === "off" ? event : proxiedReplayEvent(event);
-    if (typeof listener === "function") return listener.call(thisArg, eventForListener);
-    if (listener && typeof listener.handleEvent === "function") {
-      return listener.handleEvent.call(listener, eventForListener);
-    }
-  };
-
-  if (typeof EventTarget !== "undefined" && EventTarget.prototype) {
-    const origAddEventListener = EventTarget.prototype.addEventListener;
-    const origRemoveEventListener = EventTarget.prototype.removeEventListener;
-    const wrappedAddEventListener = {
-      addEventListener(type, listener, options) {
-        try {
-          const eventType = String(type);
-          const globalTarget =
-            this === window ||
-            this === document ||
-            this === document.documentElement ||
-            this === document.body;
-          if (globalTarget && ADAPTIVE_INPUT_EVENTS.has(eventType)) {
-            recordAdaptiveSignal("input_hooks", { detail: "listener." + eventType });
-          }
-        } catch {}
-        if (!listener || !shouldWrapReplayListener(type, listener)) {
-          return origAddEventListener.apply(this, arguments);
-        }
-        let wrapped = replayListenerWrappers.get(listener);
-        if (!wrapped) {
-          wrapped = function (event) {
-            return invokeReplayListener(listener, this, event);
-          };
-          replayListenerWrappers.set(listener, wrapped);
-        }
-        const result = origAddEventListener.call(this, type, wrapped, options);
-        const eventType = String(type);
-        if (
-          !activeReplayListeners.some(
-            (entry) =>
-              entry.target === this && entry.type === eventType && entry.listener === listener
-          )
-        ) {
-          activeReplayListeners.push({ target: this, type: eventType, listener });
-        }
-        return result;
-      },
-    }.addEventListener;
-    const wrappedRemoveEventListener = {
-      removeEventListener(type, listener, options) {
-        const wrapped = replayListenerWrappers.get(listener);
-        const eventType = String(type);
-        for (let i = activeReplayListeners.length - 1; i >= 0; i--) {
-          const entry = activeReplayListeners[i];
-          if (entry.target === this && entry.type === eventType && entry.listener === listener) {
-            activeReplayListeners.splice(i, 1);
-          }
-        }
-        return origRemoveEventListener.call(this, type, wrapped || listener, options);
-      },
-    }.removeEventListener;
-    EventTarget.prototype.addEventListener = stealth(wrappedAddEventListener, "addEventListener", {
-      length: 2,
-    });
-    EventTarget.prototype.removeEventListener = stealth(
-      wrappedRemoveEventListener,
-      "removeEventListener",
-      { length: 2 }
-    );
-  }
-
-  const ensureDecoySurface = () => {
-    if (decoySurface && decoySurface.isConnected) return decoySurface;
-    if (!document.documentElement) return null;
-    const input = document.createElement("input");
-    input.type = "text";
-    input.tabIndex = -1;
-    input.autocomplete = "off";
-    input.setAttribute("aria-hidden", "true");
-    input.style.cssText =
-      "position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0;pointer-events:none";
-    document.documentElement.appendChild(input);
-    decoySurface = input;
-    return decoySurface;
-  };
-
-  const replayPathFor = (target) => {
-    if (target === window) return [window];
-    const path = [target];
-    if (target !== document) path.push(document);
-    if (document.documentElement && !path.includes(document.documentElement)) {
-      path.push(document.documentElement);
-    }
-    if (document.body && !path.includes(document.body)) path.push(document.body);
-    path.push(window);
-    return path.filter(Boolean);
-  };
-
-  const makeReplayEvent = (type, target, props) => {
-    const event = {
-      type,
-      target,
-      currentTarget: target,
-      srcElement: target,
-      bubbles: true,
-      cancelable: true,
-      defaultPrevented: false,
-      isTrusted: false,
-      timeStamp:
-        typeof performance !== "undefined" && performance.now ? performance.now() : Date.now(),
-      composedPath: () => replayPathFor(target),
-      preventDefault() {
-        this.defaultPrevented = true;
-      },
-      stopPropagation() {},
-      stopImmediatePropagation() {},
-    };
-    return Object.assign(event, props || {});
-  };
-
-  const invokeActiveReplayListeners = (type, event) => {
-    for (const entry of activeReplayListeners.slice()) {
-      if (entry.type !== type) continue;
-      try {
-        event.currentTarget = entry.target;
-        invokeReplayListener(entry.listener, entry.target, event);
-      } catch {}
-    }
-  };
-
-  const dispatchReplayNoise = () => {
-    if (!replayDetected || (replayMode !== "noise" && replayMode !== "chaos")) return;
-    const x = 40 + Math.floor(Math.random() * Math.max(1, innerWidth - 80));
-    const y = 40 + Math.floor(Math.random() * Math.max(1, innerHeight - 80));
-    invokeActiveReplayListeners(
-      "mousemove",
-      makeReplayEvent("mousemove", document, { clientX: x, clientY: y, screenX: x, screenY: y })
-    );
-    if (replayMode === "chaos") {
-      const target = ensureDecoySurface();
-      if (target) {
-        target.value = "redacted";
-        invokeActiveReplayListeners(
-          "click",
-          makeReplayEvent("click", target, { clientX: x, clientY: y, screenX: x, screenY: y })
-        );
-        invokeActiveReplayListeners("focus", makeReplayEvent("focus", target));
-        invokeActiveReplayListeners(
-          "input",
-          makeReplayEvent("input", target, { data: "x", inputType: "insertText" })
-        );
-        invokeActiveReplayListeners("blur", makeReplayEvent("blur", target));
-      }
-    }
-  };
-
-  function startReplayNoise() {
-    if (replayNoiseStarted || (replayMode !== "noise" && replayMode !== "chaos")) return;
-    replayNoiseStarted = true;
-    let sent = 0;
-    const loop = () => {
-      if (!replayDetected || (replayMode !== "noise" && replayMode !== "chaos") || sent >= 24) {
-        replayNoiseStarted = false;
-        return;
-      }
-      sent++;
-      dispatchReplayNoise();
-      setTimeout(loop, 900 + Math.floor(Math.random() * 900));
-    };
-    setTimeout(loop, 500 + Math.floor(Math.random() * 500));
-  }
-
-  const scanReplaySignals = () => {
-    replayScanTicks++;
-    for (const key of REPLAY_GLOBALS) {
-      try {
-        if (window[key] != null) markReplayDetected("global:" + key);
-      } catch {}
-    }
-    try {
-      for (const script of document.scripts || []) maybeDetectReplayScript(script.src);
-    } catch {}
-    if (replayScanTicks < 20) setTimeout(scanReplaySignals, 500);
-  };
-  setTimeout(scanReplaySignals, 0);
-
-  // ─── 1. fetch ───────────────────────────────────────────────────────────
-  const origFetch = window.fetch;
-  if (typeof origFetch === "function") {
+  const patchFetch = () => {
+    const origFetch = window.fetch;
+    if (typeof origFetch !== "function") return;
     const wrappedFetch = {
       fetch(input) {
         if (isBad(input)) {
-          const u = getUrl(input);
-          if (shouldDecoy(u)) {
-            bump("fetch-decoy", u);
-            return Promise.resolve(buildDecoyResponse(u));
+          const url = getUrl(input);
+          if (shouldDecoy(url)) {
+            bump("fetch-decoy", url);
+            return Promise.resolve(buildDecoyResponse(url));
           }
-          bump("fetch", u);
+          bump("fetch", url);
           return Promise.reject(new TypeError("Failed to fetch"));
         }
-        recordAdaptiveNetwork(
-          "fetch",
-          getUrl(input),
-          arguments[1] && Object.prototype.hasOwnProperty.call(arguments[1], "body")
-            ? arguments[1].body
-            : null
-        );
         return origFetch.apply(this, arguments);
       },
     }.fetch;
     window.fetch = stealth(wrappedFetch, "fetch", { length: 1 });
-  }
+  };
 
-  // ─── 2. XMLHttpRequest ──────────────────────────────────────────────────
-  const blockedXHRs = new WeakMap();
-  const xhrUrls = new WeakMap();
-  const origOpen = XMLHttpRequest.prototype.open;
-  const origSend = XMLHttpRequest.prototype.send;
-  const wrappedOpen = {
-    open(method, url, ...rest) {
-      const bad = isBad(url);
-      if (bad) blockedXHRs.set(this, getUrl(url));
-      else xhrUrls.set(this, getUrl(url));
-      return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
-    },
-  }.open;
-  const fakeXhrSuccess = function (xhr, url) {
+  const fakeXhrSuccess = (xhr, url) => {
     const { body, contentType } = buildDecoyBody(url);
     const text = typeof body === "string" ? body : "";
     queueMicrotask(() => {
@@ -1061,9 +242,44 @@
       } catch {}
     });
   };
-  const wrappedSend = {
-    send(...args) {
-      if (blockedXHRs.has(this)) {
+
+  const fakeXhrFailure = (xhr) => {
+    queueMicrotask(() => {
+      try {
+        xhr.dispatchEvent(new ProgressEvent("loadstart"));
+      } catch {}
+      try {
+        Object.defineProperty(xhr, "readyState", { value: 4, configurable: true });
+        Object.defineProperty(xhr, "status", { value: 0, configurable: true });
+        Object.defineProperty(xhr, "statusText", { value: "", configurable: true });
+        Object.defineProperty(xhr, "responseURL", { value: "", configurable: true });
+        Object.defineProperty(xhr, "responseText", { value: "", configurable: true });
+        Object.defineProperty(xhr, "response", { value: "", configurable: true });
+        xhr.dispatchEvent(new Event("readystatechange"));
+      } catch {}
+      try {
+        xhr.dispatchEvent(new Event("error"));
+      } catch {}
+      try {
+        xhr.dispatchEvent(new Event("loadend"));
+      } catch {}
+    });
+  };
+
+  const patchXhr = () => {
+    const blockedXHRs = new WeakMap();
+    const origOpen = XMLHttpRequest.prototype.open;
+    const origSend = XMLHttpRequest.prototype.send;
+    const wrappedOpen = {
+      open(method, url, ...rest) {
+        const bad = isBad(url);
+        if (bad) blockedXHRs.set(this, getUrl(url));
+        return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
+      },
+    }.open;
+    const wrappedSend = {
+      send(...args) {
+        if (!blockedXHRs.has(this)) return origSend.apply(this, args);
         const url = blockedXHRs.get(this);
         blockedXHRs.delete(this);
         if (shouldDecoy(url)) {
@@ -1072,334 +288,13 @@
           return;
         }
         bump("xhr", url);
-        queueMicrotask(() => {
-          try {
-            this.dispatchEvent(new ProgressEvent("loadstart"));
-          } catch {}
-          try {
-            Object.defineProperty(this, "readyState", { value: 4, configurable: true });
-            Object.defineProperty(this, "status", { value: 0, configurable: true });
-            Object.defineProperty(this, "statusText", { value: "", configurable: true });
-            Object.defineProperty(this, "responseURL", { value: "", configurable: true });
-            Object.defineProperty(this, "responseText", { value: "", configurable: true });
-            Object.defineProperty(this, "response", { value: "", configurable: true });
-            this.dispatchEvent(new Event("readystatechange"));
-          } catch {}
-          try {
-            this.dispatchEvent(new Event("error"));
-          } catch {}
-          try {
-            this.dispatchEvent(new Event("loadend"));
-          } catch {}
-        });
-        return;
-      }
-      if (xhrUrls.has(this)) {
-        recordAdaptiveNetwork("xhr", xhrUrls.get(this), args[0]);
-      }
-      return origSend.apply(this, args);
-    },
-  }.send;
-  XMLHttpRequest.prototype.open = stealth(wrappedOpen, "open");
-  XMLHttpRequest.prototype.send = stealth(wrappedSend, "send");
-
-  // ─── 3. Element src / href / data property setters ──────────────────────
-  const guardProp = (proto, prop, label) => {
-    if (!proto) return;
-    const desc = Object.getOwnPropertyDescriptor(proto, prop);
-    if (!desc || !desc.set) return;
-    const setterHolder = {
-      set [prop](v) {
-        if (label === "script.src") maybeDetectReplayScript(v);
-        if (isBad(v)) {
-          bump(label, v);
-          return;
-        }
-        return desc.set.call(this, v);
+        fakeXhrFailure(this);
       },
-    };
-    const guardedSetter = Object.getOwnPropertyDescriptor(setterHolder, prop).set;
-    Object.defineProperty(proto, prop, {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: stealth(guardedSetter, "set " + prop, {
-        length: desc.set.length,
-        source: nativeSourceFor(desc.set, "set " + prop),
-      }),
-    });
+    }.send;
+    XMLHttpRequest.prototype.open = stealth(wrappedOpen, "open");
+    XMLHttpRequest.prototype.send = stealth(wrappedSend, "send");
   };
-  guardProp(HTMLLinkElement.prototype, "href", "link.href");
-  guardProp(HTMLScriptElement.prototype, "src", "script.src");
-  guardProp(HTMLImageElement.prototype, "src", "img.src");
-  guardProp(HTMLIFrameElement.prototype, "src", "iframe.src");
-  if (typeof HTMLSourceElement !== "undefined")
-    guardProp(HTMLSourceElement.prototype, "src", "source.src");
-  if (typeof HTMLEmbedElement !== "undefined")
-    guardProp(HTMLEmbedElement.prototype, "src", "embed.src");
-  if (typeof HTMLObjectElement !== "undefined")
-    guardProp(HTMLObjectElement.prototype, "data", "object.data");
 
-  // ─── 4. setAttribute / setAttributeNS fallback ──────────────────────────
-  const attrGuard = (origFn, label, name, length) => {
-    const wrapped = {
-      [name](...args) {
-        const argName = args.length >= 3 ? args[1] : args[0];
-        const argValue = args.length >= 3 ? args[2] : args[1];
-        if (typeof argName === "string") {
-          const n = argName.toLowerCase();
-          if (n === "src") maybeDetectReplayScript(argValue);
-          if ((n === "src" || n === "href" || n === "data") && isBad(argValue)) {
-            bump(label, argValue);
-            return;
-          }
-        }
-        return origFn.apply(this, args);
-      },
-    }[name];
-    return stealth(wrapped, name, { length });
-  };
-  Element.prototype.setAttribute = attrGuard(
-    Element.prototype.setAttribute,
-    "setAttribute",
-    "setAttribute",
-    2
-  );
-  Element.prototype.setAttributeNS = attrGuard(
-    Element.prototype.setAttributeNS,
-    "setAttributeNS",
-    "setAttributeNS",
-    3
-  );
-
-  // ─── 5. navigator.sendBeacon ────────────────────────────────────────────
-  try {
-    const navProto = Object.getPrototypeOf(navigator);
-    const beaconDesc = navProto && Object.getOwnPropertyDescriptor(navProto, "sendBeacon");
-    const origBeacon = beaconDesc && beaconDesc.value;
-    if (typeof origBeacon === "function") {
-      const wrappedBeacon = {
-        sendBeacon(url) {
-          if (isBad(url)) {
-            bump("sendBeacon", url);
-            return true;
-          }
-          recordAdaptiveNetwork("sendBeacon", getUrl(url), arguments[1]);
-          return origBeacon.apply(this, arguments);
-        },
-      }.sendBeacon;
-      Object.defineProperty(navProto, "sendBeacon", {
-        ...beaconDesc,
-        value: stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
-      });
-    }
-  } catch {
-    if (navigator.sendBeacon) {
-      const origBeacon = navigator.sendBeacon.bind(navigator);
-      const wrappedBeacon = {
-        sendBeacon(url) {
-          const data = arguments[1];
-          if (isBad(url)) {
-            bump("sendBeacon", url);
-            return true;
-          }
-          recordAdaptiveNetwork("sendBeacon", getUrl(url), data);
-          return origBeacon(url, data);
-        },
-      }.sendBeacon;
-      try {
-        navigator.sendBeacon = stealth(wrappedBeacon, "sendBeacon", { length: 1 });
-      } catch {}
-    }
-  }
-
-  // ─── 6. Worker / SharedWorker ───────────────────────────────────────────
-  const patchWorkerCtor = (Ctor, label) => {
-    if (typeof Ctor !== "function") return Ctor;
-    const wrapped = function (url, opts) {
-      if (isBad(url)) {
-        bump(label, url);
-        const origin = location && location.origin ? location.origin : "null";
-        throw new DOMException(
-          "Failed to construct '" +
-            label +
-            "': Script at '" +
-            String(url) +
-            "' cannot be accessed from origin '" +
-            origin +
-            "'.",
-          "SecurityError"
-        );
-      }
-      return new Ctor(url, opts);
-    };
-    wrapped.prototype = Ctor.prototype;
-    alignPrototypeConstructor(wrapped, Ctor);
-    return stealth(wrapped, label, { length: 1 });
-  };
-  if (window.Worker) window.Worker = patchWorkerCtor(window.Worker, "Worker");
-  if (window.SharedWorker)
-    window.SharedWorker = patchWorkerCtor(window.SharedWorker, "SharedWorker");
-
-  // ─── 7. EventSource ─────────────────────────────────────────────────────
-  if (window.EventSource) {
-    const origES = window.EventSource;
-    const wrappedES = function EventSource(url, opts) {
-      if (isBad(url)) {
-        bump("EventSource", url);
-        const target = new EventTarget();
-        let readyState = origES.CONNECTING;
-        let onerror = null;
-        let onerrorHandler = null;
-        const listenerWrappers = [];
-        const close = stealth(
-          function close() {
-            readyState = origES.CLOSED;
-          },
-          "close",
-          { length: 0 }
-        );
-        const wrapEvent = (event) =>
-          new Proxy(event, {
-            get(e, prop, receiver) {
-              if (prop === "target" || prop === "currentTarget" || prop === "srcElement") {
-                return fake;
-              }
-              if (prop === "composedPath") {
-                return () => [fake];
-              }
-              const value = Reflect.get(e, prop, receiver);
-              return typeof value === "function" ? value.bind(e) : value;
-            },
-          });
-        const captureFor = (options) =>
-          typeof options === "boolean" ? options : !!(options && options.capture);
-        const addEventListener = stealth(
-          function addEventListener(type, listener, options) {
-            if (listener == null) return;
-            const wrapped = (event) => {
-              const eventForPage = wrapEvent(event);
-              if (typeof listener === "function") return listener.call(fake, eventForPage);
-              if (listener && typeof listener.handleEvent === "function") {
-                return listener.handleEvent.call(listener, eventForPage);
-              }
-            };
-            listenerWrappers.push({
-              type,
-              listener,
-              capture: captureFor(options),
-              wrapped,
-            });
-            target.addEventListener(type, wrapped, options);
-          },
-          "addEventListener",
-          { length: 2 }
-        );
-        const removeEventListener = stealth(
-          function removeEventListener(type, listener, options) {
-            const capture = captureFor(options);
-            const index = listenerWrappers.findIndex(
-              (entry) =>
-                entry.type === type && entry.listener === listener && entry.capture === capture
-            );
-            if (index === -1) return;
-            const [entry] = listenerWrappers.splice(index, 1);
-            target.removeEventListener(type, entry.wrapped, options);
-          },
-          "removeEventListener",
-          { length: 2 }
-        );
-        const fake = new Proxy(target, {
-          get(t, prop, receiver) {
-            if (prop === "readyState") return readyState;
-            if (prop === "url") return String(url);
-            if (prop === "withCredentials") return !!(opts && opts.withCredentials);
-            if (prop === "onerror") return onerror;
-            if (prop === "close") return close;
-            if (prop === "addEventListener") return addEventListener;
-            if (prop === "removeEventListener") return removeEventListener;
-            const value = Reflect.get(t, prop, receiver);
-            return typeof value === "function" ? value.bind(t) : value;
-          },
-          set(t, prop, value) {
-            if (prop === "onerror") {
-              if (onerrorHandler) target.removeEventListener("error", onerrorHandler);
-              onerror = typeof value === "function" ? value : null;
-              onerrorHandler = onerror
-                ? (event) => {
-                    try {
-                      onerror.call(fake, wrapEvent(event));
-                    } catch {}
-                  }
-                : null;
-              if (onerrorHandler) target.addEventListener("error", onerrorHandler);
-              return true;
-            }
-            return Reflect.set(t, prop, value);
-          },
-          getPrototypeOf() {
-            return origES.prototype;
-          },
-        });
-        queueMicrotask(() => {
-          readyState = origES.CLOSED;
-          try {
-            target.dispatchEvent(new Event("error"));
-          } catch {}
-        });
-        return fake;
-      }
-      return new origES(url, opts);
-    };
-    wrappedES.prototype = origES.prototype;
-    alignPrototypeConstructor(wrappedES, origES);
-    wrappedES.CONNECTING = 0;
-    wrappedES.OPEN = 1;
-    wrappedES.CLOSED = 2;
-    window.EventSource = stealth(wrappedES, "EventSource", { length: 1 });
-  }
-
-  // ─── 8. navigator.serviceWorker.register ────────────────────────────────
-  // Reading navigator.serviceWorker itself throws SecurityError in sandboxed
-  // iframes that lack `allow-same-origin` (e.g. tweet-embed / ad iframes),
-  // so the whole section is wrapped.
-  try {
-    if (navigator.serviceWorker && typeof navigator.serviceWorker.register === "function") {
-      try {
-        const sw = navigator.serviceWorker;
-        const swProto = Object.getPrototypeOf(sw);
-        const registerDesc = swProto && Object.getOwnPropertyDescriptor(swProto, "register");
-        const origRegister = registerDesc && registerDesc.value;
-        if (typeof origRegister === "function") {
-          const wrappedRegister = {
-            register(url) {
-              if (isBad(url)) {
-                bump("serviceWorker.register", url);
-                return Promise.reject(new TypeError("Failed to register a ServiceWorker"));
-              }
-              return origRegister.apply(this, arguments);
-            },
-          }.register;
-          Object.defineProperty(swProto, "register", {
-            ...registerDesc,
-            value: stealth(wrappedRegister, "register", { length: 1 }),
-          });
-        }
-      } catch {}
-    }
-  } catch {}
-
-  // ─── 9. Lock down devtools / extension-bridge globals ───────────────────
-  for (const k of STRIP_GLOBALS) {
-    try {
-      const existing = Object.getOwnPropertyDescriptor(window, k);
-      if (existing && !existing.configurable) continue;
-      Object.defineProperty(window, k, {
-        configurable: false,
-        enumerable: false,
-        get: () => undefined,
-        set: () => {},
-      });
-    } catch {}
-  }
+  patchFetch();
+  patchXhr();
 })();

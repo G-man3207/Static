@@ -45,21 +45,27 @@ const pushConfigUpdateToActiveTab = async () => {
   }
 };
 
-const renderDetails = (resp) => {
-  const total = resp && typeof resp.total === "number" ? resp.total : 0;
-  const cumulative = resp && typeof resp.cumulative === "number" ? resp.cumulative : 0;
-  const topIds = resp && Array.isArray(resp.topIds) ? resp.topIds : [];
+const setChecked = (input, checked) => {
+  input.checked = checked;
+};
 
-  const countEl = document.getElementById("count");
-  countEl.textContent = fmt(total);
-  countEl.style.color = colorForCount(total);
+const setSelectValue = (select, value) => {
+  select.value = value;
+};
 
+const setReplayMode = (mode) => {
+  replayState.replayMode = mode;
+  renderReplayIndicators();
+};
+
+const renderCumulative = (cumulative) => {
   if (cumulative > 0) {
     document.getElementById("cumulative").textContent =
-      fmt(cumulative) + " probes blocked since install";
+      `${fmt(cumulative)} probes blocked since install`;
   }
+};
 
-  const drift = resp && resp.drift;
+const renderDriftNotice = (drift) => {
   const driftEl = document.getElementById("drift");
   if (drift && (drift.level === "changed" || drift.level === "high")) {
     driftEl.textContent =
@@ -67,23 +73,27 @@ const renderDetails = (resp) => {
         ? "High probe behavior drift on this site"
         : "Probe behavior changed on this site";
     driftEl.hidden = false;
-  } else {
-    driftEl.hidden = true;
+    return;
   }
+  driftEl.hidden = true;
+};
 
+const renderAdaptiveNotice = (resp) => {
   const adaptiveEl = document.getElementById("adaptive");
-  if (resp && resp.adaptiveDetected) {
-    const categories = Object.entries(resp.adaptiveCategories || {})
-      .sort((a, b) => b[1] - a[1])
-      .map(([category]) => category);
-    adaptiveEl.textContent =
-      "Adaptive signals observed" +
-      (categories.length ? ": " + categories.slice(0, 2).join(", ") : "");
-    adaptiveEl.hidden = false;
-  } else {
+  if (!(resp && resp.adaptiveDetected)) {
     adaptiveEl.hidden = true;
+    return;
   }
+  const categories = Object.entries(resp.adaptiveCategories || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([category]) => category);
+  adaptiveEl.textContent = `Adaptive signals observed${
+    categories.length ? `: ${categories.slice(0, 2).join(", ")}` : ""
+  }`;
+  adaptiveEl.hidden = false;
+};
 
+const renderTopIds = (topIds) => {
   const topEl = document.getElementById("top-ids");
   topEl.innerHTML = "";
   if (topIds.length === 0) {
@@ -107,6 +117,20 @@ const renderDetails = (resp) => {
   }
 };
 
+const renderDetails = (resp) => {
+  const total = resp && typeof resp.total === "number" ? resp.total : 0;
+  const cumulative = resp && typeof resp.cumulative === "number" ? resp.cumulative : 0;
+  const topIds = resp && Array.isArray(resp.topIds) ? resp.topIds : [];
+
+  const countEl = document.getElementById("count");
+  countEl.textContent = fmt(total);
+  countEl.style.color = colorForCount(total);
+  renderCumulative(cumulative);
+  renderDriftNotice(resp && resp.drift);
+  renderAdaptiveNotice(resp);
+  renderTopIds(topIds);
+};
+
 const renderNoiseSection = (resp) => {
   const toggle = document.getElementById("noise-toggle");
   toggle.checked = !!(resp && resp.noiseEnabled);
@@ -120,7 +144,7 @@ const renderNoiseSection = (resp) => {
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] noise toggle failed", e);
-      toggle.checked = !desired;
+      setChecked(toggle, !desired);
     }
   });
 
@@ -128,8 +152,7 @@ const renderNoiseSection = (resp) => {
   const viewLog = document.getElementById("view-log");
   const stats = document.getElementById("noise-stats");
   if (originsLogged > 0) {
-    stats.textContent =
-      fmt(originsLogged) + " origin" + (originsLogged === 1 ? "" : "s") + " logged";
+    stats.textContent = `${fmt(originsLogged)} origin${originsLogged === 1 ? "" : "s"} logged`;
     viewLog.hidden = false;
     viewLog.addEventListener("click", () => {
       chrome.tabs.create({ url: chrome.runtime.getURL("log.html") });
@@ -142,35 +165,32 @@ const renderReplaySection = (resp) => {
   const select = document.getElementById("replay-mode");
   const detected = document.getElementById("replay-detected");
   const allowed = new Set(["off", "mask", "noise", "chaos"]);
-  let current = resp && allowed.has(resp.replayMode) ? resp.replayMode : "off";
-  replayState.replayMode = current;
+  replayState.replayMode = resp && allowed.has(resp.replayMode) ? resp.replayMode : "off";
   replayState.replayDetected = !!(resp && resp.replayDetected);
-  select.value = current;
+  select.value = replayState.replayMode;
   detected.hidden = !replayState.replayDetected;
   renderReplayIndicators();
 
   select.addEventListener("change", async () => {
     const desired = allowed.has(select.value) ? select.value : "off";
-    const previous = current;
+    const previous = replayState.replayMode;
     try {
       const saved = await chrome.runtime.sendMessage({ type: "static_set_replay", mode: desired });
-      current = saved && allowed.has(saved.mode) ? saved.mode : desired;
-      select.value = current;
-      replayState.replayMode = current;
-      renderReplayIndicators();
+      const next = saved && allowed.has(saved.mode) ? saved.mode : desired;
+      setSelectValue(select, next);
+      setReplayMode(next);
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] replay mode update failed", e);
-      select.value = previous;
-      replayState.replayMode = previous;
-      renderReplayIndicators();
+      setSelectValue(select, previous);
+      setReplayMode(previous);
     }
   });
 };
 
 const addReplayPill = (container, text, kind) => {
   const pill = document.createElement("span");
-  pill.className = "replay-pill " + kind;
+  pill.className = `replay-pill ${kind}`;
   pill.textContent = text;
   container.appendChild(pill);
 };
@@ -194,7 +214,7 @@ const renderReplayIndicators = () => {
     const label = replayModeLabel(replayState.replayMode);
     addReplayPill(
       list,
-      replayState.replayDetected ? label + " active on this site" : label + " poisoning armed",
+      replayState.replayDetected ? `${label} active on this site` : `${label} poisoning armed`,
       replayState.replayDetected ? "active" : "armed"
     );
   }
@@ -213,7 +233,7 @@ const renderRulesets = (enabledArr, counts) => {
 
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.id = "rs_" + meta.id;
+    input.id = `rs_${meta.id}`;
     input.checked = enabled.has(meta.id);
 
     const label = document.createElement("label");
@@ -223,7 +243,7 @@ const renderRulesets = (enabledArr, counts) => {
     if (typeof c === "number") {
       const countSpan = document.createElement("span");
       countSpan.className = "rule-count";
-      countSpan.textContent = "(" + c + ")";
+      countSpan.textContent = `(${c})`;
       label.appendChild(countSpan);
     }
 

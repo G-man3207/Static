@@ -93,6 +93,9 @@ jobs:
             node --check "$f"
           done
 
+      - name: ESLint
+        run: npm run lint:strict
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 

@@ -166,6 +166,14 @@ Run fast static validation:
 npm run test:static
 ```
 
+Run ESLint:
+
+```bash
+npm run lint
+```
+
+`npm run lint:strict` fails on warnings too and is what CI uses.
+
 Run real browser extension tests. On Linux without a desktop display, use Xvfb:
 
 ```bash
@@ -178,12 +186,18 @@ On a desktop session with a display, this also works:
 npm run test:e2e
 ```
 
+Run the full CI-style local check on Linux:
+
+```bash
+npm run check
+```
+
 ## Extend coverage
 
 - **DOM markers to strip** — edit the regex arrays in `lists.js`.
-- **`window` globals to strip** — edit the `STRIP_GLOBALS` array in `block.js`.
+- **`window` globals to strip** — edit the `STRIP_GLOBALS` array in `block_globals.js`.
 - **Endpoints to block at the network layer** — add rules to an existing file under `rules/`, or create a new `rules/<category>.json` and register it in `manifest.json`'s `rule_resources` (and add an entry in `rules/META.json` + `popup.js`'s `RULESET_META`).
-- **A new script-layer probe vector (some new Web API that takes a URL)** — add a wrapper in `block.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns.
+- **A new script-layer probe vector (some new Web API that takes a URL)** — add a wrapper in `block_vectors.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns. Fetch/XHR Noise-mode decoys live in `block.js`.
 
 ## Layout
 
@@ -191,10 +205,15 @@ npm run test:e2e
 static/
 ├── manifest.json
 ├── lists.js              # DOM pattern + Noise persona config
-├── block.js              # MAIN-world engine — API patches + stealth
+├── block_adaptive.js     # MAIN-world observe-only adaptive behavior logging
+├── block.js              # MAIN-world fetch/XHR blocker + Noise decoys
+├── block_vectors.js      # MAIN-world element / worker / beacon / EventSource blockers
+├── block_replay.js       # MAIN-world Replay poisoning
+├── block_globals.js      # MAIN-world extension-global stripping
 ├── dom_scrubber.js       # ISOLATED-world DOM MutationObserver
 ├── bridge.js             # MessageChannel → service-worker relay
-├── service_worker.js     # per-tab badge with blocked-probe count
+├── service_worker.js     # per-tab badge, storage, and message routing
+├── service_worker_utils.js # service-worker caps, playbook drift, and utility helpers
 ├── popup.html, popup.js  # popup showing count + ruleset toggles
 ├── icons/                # 16/32/48/128 px icon set + original
 └── rules/

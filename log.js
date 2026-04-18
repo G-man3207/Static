@@ -77,6 +77,89 @@ const newKeys = (current, baseline, minCount) =>
     .filter(([key, count]) => count >= minCount && !baseline[key])
     .map(([key]) => key);
 
+const addShiftScore = (shift) => {
+  const { state } = shift;
+  if (shift.value >= shift.high) {
+    state.score += shift.highScore;
+    state.reasons.push(shift.reason);
+  } else if (shift.value >= shift.medium) {
+    state.score += shift.mediumScore;
+    state.reasons.push(shift.reason);
+  }
+};
+
+const addPlaybookDriftSignals = (state, current, baseline) => {
+  const vectorShift = distributionShift(current.vectorCounts, baseline.vectorCounts);
+  addShiftScore({
+    state,
+    value: vectorShift,
+    high: 0.35,
+    medium: 0.2,
+    highScore: 3,
+    mediumScore: 2,
+    reason: `Probe vector mix changed by ${percent(vectorShift)}%.`,
+  });
+  const addedVectors = newKeys(current.vectorCounts, baseline.vectorCounts, 3);
+  if (addedVectors.length > 0) {
+    state.score += 2;
+    state.reasons.push(`New probe vectors appeared: ${addedVectors.slice(0, 4).join(", ")}.`);
+  }
+
+  const pathShift = distributionShift(current.pathKindCounts, baseline.pathKindCounts);
+  addShiftScore({
+    state,
+    value: pathShift,
+    high: 0.35,
+    medium: 0.2,
+    highScore: 2,
+    mediumScore: 1,
+    reason: `Extension-resource path strategy changed by ${percent(pathShift)}%.`,
+  });
+  const addedPathKinds = newKeys(current.pathKindCounts, baseline.pathKindCounts, 3);
+  if (addedPathKinds.length > 0) {
+    state.score += 1;
+    state.reasons.push(`New path kinds appeared: ${addedPathKinds.slice(0, 4).join(", ")}.`);
+  }
+};
+
+const addIdDriftSignals = (state, current, baseline) => {
+  const currentIds = repeatedIdSet(current.idCounts);
+  const baselineIds = repeatedIdSet(baseline.idCounts);
+  const idShift = jaccardDistance(currentIds, baselineIds);
+  if (currentIds.size >= 5) {
+    addShiftScore({
+      state,
+      value: idShift,
+      high: 0.6,
+      medium: 0.35,
+      highScore: 2,
+      mediumScore: 1,
+      reason: `Repeated extension-ID dictionary changed by ${percent(idShift)}%.`,
+    });
+  }
+
+  const uniqueIds = Object.keys(current.idCounts || {}).length;
+  const singletonIds = Object.values(current.idCounts || {}).filter((count) => count === 1).length;
+  const canaryPressure = uniqueIds ? singletonIds / uniqueIds : 0;
+  if (uniqueIds >= 10 && canaryPressure >= 0.35) {
+    state.score += 2;
+    state.reasons.push(
+      `One-shot ID pressure is high: ${percent(canaryPressure)}% of IDs were single-hit.`
+    );
+  }
+};
+
+const driftResultFor = (score, latestKey, reasons) => {
+  if (score >= 5) return { level: "high", label: "High drift", week: latestKey, reasons };
+  if (score >= 3) return { level: "changed", label: "Changed", week: latestKey, reasons };
+  return {
+    level: "stable",
+    label: "Stable",
+    week: latestKey,
+    reasons: ["No meaningful change from this origin's previous probe behavior."],
+  };
+};
+
 const playbookDriftForEntry = (entry) => {
   const comparison = latestPlaybookComparison(entry);
   if (!comparison) {
@@ -94,68 +177,15 @@ const playbookDriftForEntry = (entry) => {
     };
   }
 
-  const reasons = [];
-  let score = 0;
-  const vectorShift = distributionShift(current.vectorCounts, baseline.vectorCounts);
-  const pathShift = distributionShift(current.pathKindCounts, baseline.pathKindCounts);
-  const currentIds = repeatedIdSet(current.idCounts);
-  const baselineIds = repeatedIdSet(baseline.idCounts);
-  const idShift = jaccardDistance(currentIds, baselineIds);
-  const uniqueIds = Object.keys(current.idCounts || {}).length;
-  const singletonIds = Object.values(current.idCounts || {}).filter((count) => count === 1).length;
-  const canaryPressure = uniqueIds ? singletonIds / uniqueIds : 0;
-  const addedVectors = newKeys(current.vectorCounts, baseline.vectorCounts, 3);
-  const addedPathKinds = newKeys(current.pathKindCounts, baseline.pathKindCounts, 3);
-
-  if (vectorShift >= 0.35) {
-    score += 3;
-    reasons.push(`Probe vector mix changed by ${percent(vectorShift)}%.`);
-  } else if (vectorShift >= 0.2) {
-    score += 2;
-    reasons.push(`Probe vector mix changed by ${percent(vectorShift)}%.`);
-  }
-  if (addedVectors.length > 0) {
-    score += 2;
-    reasons.push(`New probe vectors appeared: ${addedVectors.slice(0, 4).join(", ")}.`);
-  }
-  if (pathShift >= 0.35) {
-    score += 2;
-    reasons.push(`Extension-resource path strategy changed by ${percent(pathShift)}%.`);
-  } else if (pathShift >= 0.2) {
-    score += 1;
-    reasons.push(`Extension-resource path strategy changed by ${percent(pathShift)}%.`);
-  }
-  if (addedPathKinds.length > 0) {
-    score += 1;
-    reasons.push(`New path kinds appeared: ${addedPathKinds.slice(0, 4).join(", ")}.`);
-  }
-  if (currentIds.size >= 5 && idShift >= 0.6) {
-    score += 2;
-    reasons.push(`Repeated extension-ID dictionary changed by ${percent(idShift)}%.`);
-  } else if (currentIds.size >= 5 && idShift >= 0.35) {
-    score += 1;
-    reasons.push(`Repeated extension-ID dictionary changed by ${percent(idShift)}%.`);
-  }
-  if (uniqueIds >= 10 && canaryPressure >= 0.35) {
-    score += 2;
-    reasons.push(
-      `One-shot ID pressure is high: ${percent(canaryPressure)}% of IDs were single-hit.`
-    );
-  }
-
-  if (score >= 5) return { level: "high", label: "High drift", week: latestKey, reasons };
-  if (score >= 3) return { level: "changed", label: "Changed", week: latestKey, reasons };
-  return {
-    level: "stable",
-    label: "Stable",
-    week: latestKey,
-    reasons: ["No meaningful change from this origin's previous probe behavior."],
-  };
+  const state = { score: 0, reasons: [] };
+  addPlaybookDriftSignals(state, current, baseline);
+  addIdDriftSignals(state, current, baseline);
+  return driftResultFor(state.score, latestKey, state.reasons);
 };
 
 const buildDriftPill = (drift) => {
   const span = document.createElement("span");
-  span.className = "drift-pill " + (drift.level || "learning");
+  span.className = `drift-pill ${drift.level || "learning"}`;
   span.textContent = drift.label || "Learning";
   return span;
 };
@@ -173,7 +203,7 @@ const buildDriftDetail = (drift) => {
   box.className = "drift-detail";
   const title = document.createElement("div");
   title.className = "drift-detail-title";
-  title.textContent = "Probe behavior: " + (drift.label || "Learning");
+  title.textContent = `Probe behavior: ${drift.label || "Learning"}`;
   box.appendChild(title);
   const list = document.createElement("ul");
   list.className = "drift-reasons";
@@ -200,25 +230,21 @@ const buildAdaptiveDetail = (adaptive) => {
   const endpoints = Object.entries(adaptive.endpoints || {}).sort((a, b) => b[1] - a[1]);
   const reasons = Object.entries(adaptive.reasons || {}).sort((a, b) => b[1] - a[1]);
   const lines = [
-    "Max local score: " + fmt(adaptive.scoreMax || 0) + ".",
+    `Max local score: ${fmt(adaptive.scoreMax || 0)}.`,
     categories.length
-      ? "Categories observed: " +
-        categories
+      ? `Categories observed: ${categories
           .map(([category]) => category)
           .slice(0, 4)
-          .join(", ") +
-        "."
+          .join(", ")}.`
       : "",
     reasons.length
-      ? "Reasons: " +
-        reasons
+      ? `Reasons: ${reasons
           .map(([reason]) => reason)
           .slice(0, 8)
-          .join(", ") +
-        "."
+          .join(", ")}.`
       : "",
     endpoints.length
-      ? "Top endpoint: " + endpoints[0][0] + "."
+      ? `Top endpoint: ${endpoints[0][0]}.`
       : "No endpoint was associated with the local signal.",
   ].filter(Boolean);
   for (const line of lines) {
@@ -317,21 +343,13 @@ const render = (filter) => {
   for (const [, entry] of allEntries) grand += totalProbesFor(entry);
   const adaptiveCount = Object.keys(adaptiveSignals).length;
 
-  document.getElementById("summary").textContent =
-    fmt(filtered.length) +
-    " of " +
-    fmt(allEntries.length) +
-    " origin" +
-    (allEntries.length === 1 ? "" : "s") +
-    "  ·  " +
-    fmt(grand) +
-    " total probes recorded  ·  " +
-    fmt(adaptiveCount) +
-    " adaptive origin" +
-    (adaptiveCount === 1 ? "" : "s") +
-    " observed  ·  " +
-    fmt(fullData.cumulative || 0) +
-    " probes blocked since install";
+  document.getElementById("summary").textContent = `${fmt(filtered.length)} of ${fmt(
+    allEntries.length
+  )} origin${allEntries.length === 1 ? "" : "s"}  ·  ${fmt(grand)} total probes recorded  ·  ${fmt(
+    adaptiveCount
+  )} adaptive origin${adaptiveCount === 1 ? "" : "s"} observed  ·  ${fmt(
+    fullData.cumulative || 0
+  )} probes blocked since install`;
 
   if (filtered.length === 0) {
     const empty = document.createElement("div");
@@ -364,20 +382,11 @@ const render = (filter) => {
     tr.className = "origin-row";
     const caret = '<span class="caret">›</span> ';
     tr.innerHTML =
-      "<td>" +
-      caret +
-      origin.replace(/</g, "&lt;") +
-      "</td>" +
-      "<td class='num'>" +
-      fmt(unique) +
-      "</td>" +
-      "<td class='num'>" +
-      fmt(total) +
-      "</td>" +
-      "<td class='drift-cell'></td>" +
-      "<td>" +
-      fmtDate(entry.lastUpdated) +
-      "</td>";
+      `<td>${caret}${origin.replace(/</g, "&lt;")}</td>` +
+      `<td class='num'>${fmt(unique)}</td>` +
+      `<td class='num'>${fmt(total)}</td>` +
+      `<td class='drift-cell'></td>` +
+      `<td>${fmtDate(entry.lastUpdated)}</td>`;
     tr.querySelector(".drift-cell").appendChild(buildDriftPill(drift));
     if (adaptivePill) {
       tr.querySelector(".drift-cell").appendChild(document.createTextNode(" "));
@@ -465,7 +474,7 @@ const downloadJson = (obj, filename) => {
 
 document.getElementById("export-raw").addEventListener("click", () => {
   if (!fullData) return;
-  downloadJson(fullData, "static-probe-log-" + new Date().toISOString().slice(0, 10) + ".json");
+  downloadJson(fullData, `static-probe-log-${new Date().toISOString().slice(0, 10)}.json`);
 });
 
 document.getElementById("export-shareable").addEventListener("click", () => {
@@ -481,7 +490,7 @@ document.getElementById("export-shareable").addEventListener("click", () => {
   }
   downloadJson(
     shareable,
-    "static-probe-log-shareable-" + new Date().toISOString().slice(0, 7) + ".json"
+    `static-probe-log-shareable-${new Date().toISOString().slice(0, 7)}.json`
   );
 });
 
