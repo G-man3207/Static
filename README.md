@@ -41,7 +41,7 @@ Websites quietly probe your browser to figure out **which extensions you have in
 
 ## What it blocks
 
-1. **Extension enumeration.** Pages that iterate through extension IDs via `fetch("chrome-extension://<id>/<resource>")` (and XHR / `<script src>` / `<link href>` / `<img src>` / `sendBeacon` / `Worker` / `SharedWorker` / `EventSource` / `serviceWorker.register` equivalents) to probe which extensions are installed. All those vectors are patched in the page's MAIN world to reject `chrome-extension://` (plus `moz-extension://`, `ms-browser-extension://`, `safari-web-extension://`, `edge-extension://`) transparently.
+1. **Extension enumeration.** Pages that iterate through extension IDs via `fetch("chrome-extension://<id>/<resource>")` (and XHR / `<script src>` / `<link href>` / `<img src>` / image-input `src` / video `poster` / media and track `src` / object/embed/source URLs / CSSOM `@import` rules / `sendBeacon` / `Worker` / `SharedWorker` / `EventSource` / `serviceWorker.register` equivalents) to probe which extensions are installed. All those vectors are patched in the page's MAIN world to reject `chrome-extension://` (plus `moz-extension://`, `ms-browser-extension://`, `safari-web-extension://`, `edge-extension://`) transparently.
 2. **DOM-marker fingerprinting.** A MutationObserver strips attributes, classes, and custom-element tags that browser extensions leave on the DOM to announce their presence.
 3. **`window` global fingerprinting.** Devtools bridges and extension-presence markers (`__REACT_DEVTOOLS_GLOBAL_HOOK__`, `__GRAMMARLY_DESKTOP_INTEGRATION__`, etc.) are locked to `undefined` before page scripts run.
 4. **Network-layer blocklists (togglable).** Declarative-Net-Request rulesets block known:
@@ -94,7 +94,7 @@ Blocking a probe proves one thing: "some defense is present." **Noise mode** goe
 - **Cold start is honest.** First visit to a site produces no poisoning because there's nothing logged yet. From the second pageview onward, the site gets noise.
 - **Decoy responses by path.** Fetches to `.../manifest.json` return a generic valid manifest; `*.png` etc. return a 1×1 transparent PNG; `*.js`/`.html`/`.css` return empty with correct content types. Covers what site-side detectors typically check for.
 
-**Scope in v2.1:** Noise mode decoys `fetch`, `XMLHttpRequest`, and passive element probes for eligible persona IDs. Images, scripts, and stylesheets receive small inert data-URL resources while page-visible `src` / `href` / `data` getters still report the original extension URL. Frames and active surfaces with larger behavioral footprints (`iframe`, `Worker`, `SharedWorker`, `EventSource`, and `serviceWorker.register`) stay fail-closed.
+**Scope in v2.1:** Noise mode decoys `fetch`, `XMLHttpRequest`, and passive element probes for eligible persona IDs. Images, image inputs, video posters, scripts, and stylesheets receive small inert data-URL resources while page-visible `src` / `href` / `data` / `poster` getters still report the original extension URL. Frames, CSSOM `@import` rules, and active surfaces with larger behavioral footprints (`iframe`, media streams, track files, `Worker`, `SharedWorker`, `EventSource`, and `serviceWorker.register`) stay fail-closed.
 
 The cross-vector behavior contract is documented in `docs/noise-behavior.md`.
 

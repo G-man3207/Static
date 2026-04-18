@@ -1,9 +1,25 @@
 const { expect, test } = require("@playwright/test");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 
 const repoRoot = path.resolve(__dirname, "..");
 const readJson = (filePath) => JSON.parse(fs.readFileSync(path.join(repoRoot, filePath), "utf8"));
+const readText = (filePath) => fs.readFileSync(path.join(repoRoot, filePath), "utf8");
+
+const loadServiceWorkerUtils = () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("service_worker_utils.js"), context);
+  return context.__static_sw_utils__;
+};
+
+const countMap = (count, prefix = "k") =>
+  Object.fromEntries(
+    Array.from({ length: count }, (_, index) => [
+      `${prefix}${String(index).padStart(4, "0")}`,
+      index + 1,
+    ])
+  );
 
 const expectedMainWorldScripts = [
   "block_adaptive.js",
@@ -77,6 +93,89 @@ test("manifest references existing files and keeps content-script worlds separat
   const manifest = readJson("manifest.json");
   expectManifestFilesToExist(manifest);
   expectContentScriptWorlds(manifest);
+});
+
+test("manifest keeps privacy-sensitive exposure and permissions minimal", () => {
+  const manifest = readJson("manifest.json");
+  expect(manifest.permissions.sort()).toEqual(["declarativeNetRequest", "storage"]);
+  expect(manifest.host_permissions || []).toEqual([]);
+  expect(manifest.optional_host_permissions || []).toEqual([]);
+  expect(manifest.web_accessible_resources || []).toEqual([]);
+  expect(manifest.externally_connectable).toBeUndefined();
+});
+
+test("extension runtime code stays local-only", () => {
+  const runtimeFiles = [
+    ...collectManifestFiles(readJson("manifest.json")),
+    "popup.js",
+    "log.js",
+  ].filter((filePath) => filePath.endsWith(".js") || filePath.endsWith(".html"));
+  const uniqueFiles = [...new Set(runtimeFiles)];
+
+  for (const filePath of uniqueFiles) {
+    const source = readText(filePath);
+    expect(source, `${filePath}: must not use synced storage`).not.toMatch(/chrome\.storage\.sync/);
+    if (filePath.endsWith(".js")) {
+      expect(source, `${filePath}: must not contain remote endpoints`).not.toMatch(
+        /https?:\/\/(?!www\.w3\.org\/2000\/svg)/
+      );
+    } else {
+      expect(source, `${filePath}: must not load remote active content`).not.toMatch(
+        /<(script|img|link|iframe|form)\b[^>]*(src|href|action)=["']https?:\/\//i
+      );
+    }
+  }
+});
+
+test("service worker probe-log caps enforce local privacy bounds", () => {
+  const { enforceCaps } = loadServiceWorkerUtils();
+  const probeLog = {};
+  for (let i = 0; i < 105; i++) {
+    probeLog[`https://origin-${i}.test`] = {
+      idCounts: countMap(2105, "id"),
+      lastUpdated: i,
+      playbook: {
+        weeks: Object.fromEntries(
+          Array.from({ length: 12 }, (_, index) => [
+            `2026-W${String(index + 1).padStart(2, "0")}`,
+            {
+              total: 100,
+              vectorCounts: countMap(60, "v"),
+              pathKindCounts: countMap(60, "p"),
+              idCounts: countMap(1200, "w"),
+              firstSeen: index,
+              lastSeen: index,
+            },
+          ])
+        ),
+      },
+    };
+  }
+
+  enforceCaps(probeLog);
+
+  expect(Object.keys(probeLog)).toHaveLength(100);
+  expect(probeLog["https://origin-0.test"]).toBeUndefined();
+  expect(probeLog["https://origin-4.test"]).toBeUndefined();
+  expect(probeLog["https://origin-104.test"]).toBeTruthy();
+  const retained = probeLog["https://origin-104.test"];
+  expect(Object.keys(retained.idCounts)).toHaveLength(2000);
+  expect(Object.keys(retained.playbook.weeks)).toEqual([
+    "2026-W03",
+    "2026-W04",
+    "2026-W05",
+    "2026-W06",
+    "2026-W07",
+    "2026-W08",
+    "2026-W09",
+    "2026-W10",
+    "2026-W11",
+    "2026-W12",
+  ]);
+  const latestWeek = retained.playbook.weeks["2026-W12"];
+  expect(Object.keys(latestWeek.vectorCounts)).toHaveLength(50);
+  expect(Object.keys(latestWeek.pathKindCounts)).toHaveLength(50);
+  expect(Object.keys(latestWeek.idCounts)).toHaveLength(1000);
 });
 
 test("DNR rulesets are well-formed and synchronized with metadata and popup IDs", () => {

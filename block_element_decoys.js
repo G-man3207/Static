@@ -171,6 +171,7 @@
     const path = pathFor(url);
     const tag = String((el && el.tagName) || "").toLowerCase();
     if (prop === "src" && tag === "script") return "data:application/javascript;charset=utf-8,";
+    if (prop === "poster") return `data:image/png;base64,${PNG_1X1_B64}`;
     if (prop === "href" && (path.endsWith(".css") || tag === "link")) return "data:text/css,";
     if (/\.(png|jpe?g|gif|webp|ico|bmp|svg)$/i.test(path) || prop === "src") {
       return `data:image/png;base64,${PNG_1X1_B64}`;
@@ -183,9 +184,10 @@
 
   const canHandlePassiveElement = (el, prop) => {
     const tag = String((el && el.tagName) || "").toLowerCase();
-    if (prop === "src") return ["img", "script", "source", "embed"].includes(tag);
+    if (prop === "src") return ["img", "input", "script", "source", "embed"].includes(tag);
     if (prop === "href") return tag === "link" || tag === "use" || tag === "image";
     if (prop === "data") return tag === "object";
+    if (prop === "poster") return tag === "video";
     return false;
   };
 
@@ -239,7 +241,9 @@
 
   const attrPropFor = (name) => {
     const lower = String(name || "").toLowerCase();
-    if (lower === "src" || lower === "href" || lower === "data") return lower;
+    if (lower === "src" || lower === "href" || lower === "data" || lower === "poster") {
+      return lower;
+    }
     return null;
   };
 
@@ -350,8 +354,14 @@
   };
 
   guardProp(HTMLImageElement.prototype, "src", "img.src");
+  if (typeof HTMLInputElement !== "undefined") {
+    guardProp(HTMLInputElement.prototype, "src", "input.src");
+  }
   guardProp(HTMLScriptElement.prototype, "src", "script.src");
   guardProp(HTMLLinkElement.prototype, "href", "link.href");
+  if (typeof HTMLVideoElement !== "undefined") {
+    guardProp(HTMLVideoElement.prototype, "poster", "video.poster");
+  }
   if (typeof HTMLSourceElement !== "undefined") {
     guardProp(HTMLSourceElement.prototype, "src", "source.src");
   }
