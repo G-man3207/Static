@@ -71,7 +71,8 @@ Each category of network rules lives in its own file under `rules/`. Toggle them
 
 ## Extend coverage
 
-- **DOM markers / window globals to strip** — edit the regex arrays in `lists.js`.
+- **DOM markers to strip** — edit the regex arrays in `lists.js`.
+- **`window` globals to strip** — edit the `STRIP_GLOBALS` array in `block.js`.
 - **Endpoints to block at the network layer** — add rules to an existing file under `rules/`, or create a new `rules/<category>.json` and register it in `manifest.json`'s `rule_resources` (and add an entry in `rules/META.json` + `popup.js`'s `RULESET_META`).
 - **A new script-layer probe vector (some new Web API that takes a URL)** — add a wrapper in `block.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns.
 
@@ -80,10 +81,10 @@ Each category of network rules lives in its own file under `rules/`. Toggle them
 ```
 static/
 ├── manifest.json
-├── lists.js              # DOM/global pattern config (edit to extend coverage)
+├── lists.js              # DOM pattern + Noise persona config
 ├── block.js              # MAIN-world engine — API patches + stealth
 ├── dom_scrubber.js       # ISOLATED-world DOM MutationObserver
-├── bridge.js             # postMessage → service-worker relay
+├── bridge.js             # MessageChannel → service-worker relay
 ├── service_worker.js     # per-tab badge with blocked-probe count
 ├── popup.html, popup.js  # popup showing count + ruleset toggles
 ├── icons/                # 16/32/48/128 px icon set + original

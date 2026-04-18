@@ -18,19 +18,87 @@
 //   4. All wrapped functions remain indistinguishable from their native
 //      counterparts under Function.prototype.toString checks.
 //
-// Pattern lists come from lists.js (loaded just before this file in the same
-// content-script group). Persona + Noise-mode flag arrive from bridge.js via
-// window.postMessage on page load (and on toggle).
+// MAIN-world constants are kept local to avoid exposing a Static-specific
+// window global. Persona + Noise-mode state arrive through a private
+// MessageChannel that bridge.js transfers at document_start.
 (() => {
-  const CFG = globalThis.__static_config__ || {};
-  const BAD_RE = CFG.probeUrlRegex || /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
-  const STRIP_GLOBALS = CFG.stripGlobals || [];
+  const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
+  const STRIP_GLOBALS = [
+    "__REACT_DEVTOOLS_GLOBAL_HOOK__",
+    "__REDUX_DEVTOOLS_EXTENSION__",
+    "__REDUX_DEVTOOLS_EXTENSION_COMPOSE__",
+    "__VUE_DEVTOOLS_GLOBAL_HOOK__",
+    "__MOBX_DEVTOOLS_GLOBAL_HOOK__",
+    "__APOLLO_DEVTOOLS_GLOBAL_HOOK__",
+    "__GRAMMARLY_DESKTOP_INTEGRATION__",
+    "__grammarlyGlobalSessionId",
+    "__onePasswordExtension",
+    "__1passwordExtension",
+    "__dashlaneExtensionInstalled",
+    "__isDashlaneExtensionInstalled",
+    "__honeyExtensionInstalled",
+    "__keeper_extension_installed",
+    "__nordpassExtensionInstalled",
+    "__roboformExtensionInstalled",
+  ];
   const EXT_ID_RE = /^(?:chrome|moz|ms-browser|safari-web|edge)-extension:\/\/([a-z0-9]+)/i;
   let blocked = 0;
 
-  // Persona state — populated from bridge.js via window.postMessage.
+  // Persona state — populated from bridge.js over the private MessageChannel.
   let persona = new Set();
   let noiseEnabled = false;
+  let bridgePort = null;
+  const queuedProbeUrls = [];
+  const MAX_QUEUED_PROBES = 1000;
+
+  const applyConfigUpdate = (d) => {
+    if (!d || d.type !== "config_update") return;
+    if (Array.isArray(d.persona)) {
+      persona = new Set(d.persona.filter((id) => typeof id === "string"));
+    }
+    if (typeof d.noiseEnabled === "boolean") noiseEnabled = d.noiseEnabled;
+  };
+
+  const postProbe = (url) => {
+    const safeUrl = url == null ? "" : String(url).slice(0, 512);
+    if (bridgePort) {
+      try {
+        bridgePort.postMessage({ type: "probe_blocked", url: safeUrl });
+        return;
+      } catch {
+        bridgePort = null;
+      }
+    }
+    if (queuedProbeUrls.length < MAX_QUEUED_PROBES) queuedProbeUrls.push(safeUrl);
+  };
+
+  const flushQueuedProbes = () => {
+    if (!bridgePort || queuedProbeUrls.length === 0) return;
+    const batch = queuedProbeUrls.splice(0, queuedProbeUrls.length);
+    for (const url of batch) {
+      try {
+        bridgePort.postMessage({ type: "probe_blocked", url });
+      } catch {
+        bridgePort = null;
+        return;
+      }
+    }
+  };
+
+  const onBridgeInit = (event) => {
+    if (event.source !== window || bridgePort) return;
+    const d = event.data;
+    if (!d || d.__static_bridge_init__ !== true || !event.ports || !event.ports[0]) return;
+
+    bridgePort = event.ports[0];
+    bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
+    try {
+      bridgePort.start();
+    } catch {}
+    flushQueuedProbes();
+    window.removeEventListener("message", onBridgeInit);
+  };
+  window.addEventListener("message", onBridgeInit);
 
   const bump = (where, url) => {
     blocked++;
@@ -38,10 +106,7 @@
       console.debug("[Static]", where, "— total blocked:", blocked);
     }
     try {
-      window.postMessage(
-        { __static_probe_blocked__: true, url: url == null ? "" : String(url).slice(0, 512) },
-        "*"
-      );
+      postProbe(url);
     } catch {}
   };
 
@@ -76,16 +141,6 @@
     const id = extractExtId(url);
     return id != null && persona.has(id);
   };
-
-  // Persona + noise flag arrive from isolated-world bridge.js.
-  window.addEventListener("message", (event) => {
-    if (event.source !== window) return;
-    const d = event.data;
-    if (d && d.__static_config_update__ === true) {
-      if (Array.isArray(d.persona)) persona = new Set(d.persona);
-      if (typeof d.noiseEnabled === "boolean") noiseEnabled = d.noiseEnabled;
-    }
-  });
 
   // ─── Decoy response synthesis ───────────────────────────────────────────
   // Minimal valid 1×1 transparent PNG — served when a probe targets an image
@@ -163,11 +218,16 @@
   } catch {}
   Function.prototype.toString = patchedFnToString;
 
-  const stealth = (fn, nativeName) => {
+  const stealth = (fn, nativeName, opts = {}) => {
     stealthFns.set(fn, "function " + nativeName + "() { [native code] }");
     try {
       Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
     } catch {}
+    if (typeof opts.length === "number") {
+      try {
+        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
+      } catch {}
+    }
     return fn;
   };
 
@@ -186,10 +246,7 @@
       }
       return origFetch.apply(this, arguments);
     };
-    try {
-      Object.defineProperty(wrappedFetch, "length", { value: 1, configurable: true });
-    } catch {}
-    window.fetch = stealth(wrappedFetch, "fetch");
+    window.fetch = stealth(wrappedFetch, "fetch", { length: 1 });
   }
 
   // ─── 2. XMLHttpRequest ──────────────────────────────────────────────────
@@ -278,7 +335,7 @@
     guardProp(HTMLObjectElement.prototype, "data", "object.data");
 
   // ─── 4. setAttribute / setAttributeNS fallback ──────────────────────────
-  const attrGuard = (origFn, label, name) => {
+  const attrGuard = (origFn, label, name, length) => {
     const wrapped = function (...args) {
       const argName = args.length >= 3 ? args[1] : args[0];
       const argValue = args.length >= 3 ? args[2] : args[1];
@@ -291,17 +348,19 @@
       }
       return origFn.apply(this, args);
     };
-    return stealth(wrapped, name);
+    return stealth(wrapped, name, { length });
   };
   Element.prototype.setAttribute = attrGuard(
     Element.prototype.setAttribute,
     "setAttribute",
-    "setAttribute"
+    "setAttribute",
+    2
   );
   Element.prototype.setAttributeNS = attrGuard(
     Element.prototype.setAttributeNS,
     "setAttributeNS",
-    "setAttributeNS"
+    "setAttributeNS",
+    3
   );
 
   // ─── 5. navigator.sendBeacon ────────────────────────────────────────────
