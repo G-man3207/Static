@@ -67,9 +67,11 @@ test("adversarial Noise harness finds no cross-vector contradictions", async ({
     xhr: 1,
   };
 
-  await expect.poll(() => getProbeVectorCounts(extension, server.origin)).toMatchObject(
-    probe.active.sharedWorker === "SecurityError"
-      ? { ...expectedVectors, SharedWorker: 1 }
-      : expectedVectors
-  );
+  await expect
+    .poll(() => getProbeVectorCounts(extension, server.origin))
+    .toMatchObject(
+      probe.active.sharedWorker === "SecurityError"
+        ? { ...expectedVectors, SharedWorker: 1 }
+        : expectedVectors
+    );
 });

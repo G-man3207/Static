@@ -31,62 +31,65 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
   await page.goto(server.url("/blank.html"));
   await page.waitForTimeout(300);
 
-  const result = await page.evaluate(async (manifestUrl) => {
-    const response = await fetch(manifestUrl);
-    const responseText = await response.clone().text();
-    const manifest = await response.json();
-    const head = await fetch(new Request(manifestUrl, { method: "HEAD" }));
+  const result = await page.evaluate(
+    async (manifestUrl) => {
+      const response = await fetch(manifestUrl);
+      const responseText = await response.clone().text();
+      const manifest = await response.json();
+      const head = await fetch(new Request(manifestUrl, { method: "HEAD" }));
 
-    const xhrText = await new Promise((resolve) => {
-      const xhr = new XMLHttpRequest();
-      xhr.addEventListener("loadend", () => {
-        resolve({
-          allHeaders: xhr.getAllResponseHeaders(),
-          contentType: xhr.getResponseHeader("content-type"),
-          ownGetHeader: Object.prototype.hasOwnProperty.call(xhr, "getResponseHeader"),
-          responseText: xhr.responseText,
-          responseURL: xhr.responseURL,
-          status: xhr.status,
+      const xhrText = await new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.addEventListener("loadend", () => {
+          resolve({
+            allHeaders: xhr.getAllResponseHeaders(),
+            contentType: xhr.getResponseHeader("content-type"),
+            ownGetHeader: Object.prototype.hasOwnProperty.call(xhr, "getResponseHeader"),
+            responseText: xhr.responseText,
+            responseURL: xhr.responseURL,
+            status: xhr.status,
+          });
         });
+        xhr.open("GET", manifestUrl);
+        xhr.send();
       });
-      xhr.open("GET", manifestUrl);
-      xhr.send();
-    });
 
-    const xhrJson = await new Promise((resolve) => {
-      const xhr = new XMLHttpRequest();
-      xhr.addEventListener("loadend", () => {
-        let responseTextAccess = "ok";
-        try {
-          void xhr.responseText;
-        } catch (error) {
-          responseTextAccess = error.name;
-        }
-        resolve({
-          response: xhr.response,
-          responseTextAccess,
-          status: xhr.status,
+      const xhrJson = await new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.addEventListener("loadend", () => {
+          let responseTextAccess = "ok";
+          try {
+            void xhr.responseText;
+          } catch (error) {
+            responseTextAccess = error.name;
+          }
+          resolve({
+            response: xhr.response,
+            responseTextAccess,
+            status: xhr.status,
+          });
         });
+        xhr.open("GET", manifestUrl);
+        xhr.responseType = "json";
+        xhr.send();
       });
-      xhr.open("GET", manifestUrl);
-      xhr.responseType = "json";
-      xhr.send();
-    });
 
-    return {
-      fetch: {
-        instance: response instanceof Response,
-        manifest,
-        prototype: Object.getPrototypeOf(response) === Response.prototype,
-        responseText,
-        type: response.type,
-        url: response.url,
-      },
-      headText: await head.text(),
-      xhrJson,
-      xhrText,
-    };
-  }, probedUrl(PROBED_ID, "/manifest.json"));
+      return {
+        fetch: {
+          instance: response instanceof Response,
+          manifest,
+          prototype: Object.getPrototypeOf(response) === Response.prototype,
+          responseText,
+          type: response.type,
+          url: response.url,
+        },
+        headText: await head.text(),
+        xhrJson,
+        xhrText,
+      };
+    },
+    probedUrl(PROBED_ID, "/manifest.json")
+  );
 
   expect(result.fetch).toMatchObject({
     instance: true,
@@ -120,10 +123,7 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
   });
 });
 
-test("Noise decoys are consistent for passive resource elements", async ({
-  extension,
-  server,
-}) => {
+test("Noise decoys are consistent for passive resource elements", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await seedNoisePersona(extension, server.origin);
 
@@ -252,29 +252,32 @@ test("Noise keeps frame probes fail-closed and logs attribute vectors", async ({
   await page.goto(server.url("/blank.html"));
   await page.waitForTimeout(300);
 
-  const result = await page.evaluate(({ frameUrl, imageUrl }) => {
-    const frame = document.createElement("iframe");
-    frame.src = frameUrl;
-    document.body.appendChild(frame);
+  const result = await page.evaluate(
+    ({ frameUrl, imageUrl }) => {
+      const frame = document.createElement("iframe");
+      frame.src = frameUrl;
+      document.body.appendChild(frame);
 
-    const attrFrame = document.createElement("iframe");
-    attrFrame.setAttribute("src", frameUrl);
+      const attrFrame = document.createElement("iframe");
+      attrFrame.setAttribute("src", frameUrl);
 
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "use");
-    svg.setAttributeNS("http://www.w3.org/1999/xlink", "href", imageUrl);
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "use");
+      svg.setAttributeNS("http://www.w3.org/1999/xlink", "href", imageUrl);
 
-    return {
-      frame: {
-        attr: frame.getAttribute("src"),
-        attrFrameSrc: attrFrame.getAttribute("src"),
-        src: frame.src,
-      },
-      svgHref: svg.getAttributeNS("http://www.w3.org/1999/xlink", "href"),
-    };
-  }, {
-    frameUrl: probedUrl(PROBED_ID, "/page.html"),
-    imageUrl: probedUrl(PROBED_ID, "/icon.png"),
-  });
+      return {
+        frame: {
+          attr: frame.getAttribute("src"),
+          attrFrameSrc: attrFrame.getAttribute("src"),
+          src: frame.src,
+        },
+        svgHref: svg.getAttributeNS("http://www.w3.org/1999/xlink", "href"),
+      };
+    },
+    {
+      frameUrl: probedUrl(PROBED_ID, "/page.html"),
+      imageUrl: probedUrl(PROBED_ID, "/icon.png"),
+    }
+  );
 
   expect(result).toEqual({
     frame: {
@@ -377,7 +380,9 @@ test("adaptive logs redact high-entropy endpoint path segments", async ({ extens
     .not.toBeNull();
 
   const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
-    return chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]);
+    return chrome.storage.local
+      .get("adaptive_log")
+      .then(({ adaptive_log }) => adaptive_log[origin]);
   }, server.origin);
   const serialized = JSON.stringify(adaptiveEntry);
   expect(serialized).not.toContain("user-1234567890abcdef1234567890abcdef");
@@ -393,9 +398,9 @@ test("replay detection logs redact high-entropy script path segments", async ({
 
   const page = await extension.context.newPage();
   await page.goto(server.url("/replay-private.html"));
-  await expect.poll(() => page.evaluate(() => Array.isArray(window.__privateReplayRecords))).toBe(
-    true
-  );
+  await expect
+    .poll(() => page.evaluate(() => Array.isArray(window.__privateReplayRecords)))
+    .toBe(true);
   await page.locator("#secret").fill("private@example.com");
 
   await expect

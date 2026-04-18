@@ -62,7 +62,10 @@
       const parsed = new URL(String(url || ""));
       const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
       const id = parsed.hostname.toLowerCase();
-      if ((scheme === "chrome-extension" || scheme === "edge-extension") && CHROME_EXT_ID_RE.test(id)) {
+      if (
+        (scheme === "chrome-extension" || scheme === "edge-extension") &&
+        CHROME_EXT_ID_RE.test(id)
+      ) {
         return id;
       }
     } catch {}
