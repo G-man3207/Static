@@ -234,18 +234,20 @@
   // ─── 1. fetch ───────────────────────────────────────────────────────────
   const origFetch = window.fetch;
   if (typeof origFetch === "function") {
-    const wrappedFetch = function fetch(input, init) {
-      if (isBad(input)) {
-        const u = getUrl(input);
-        if (shouldDecoy(u)) {
-          bump("fetch-decoy", u);
-          return Promise.resolve(buildDecoyResponse(u));
+    const wrappedFetch = {
+      fetch(input) {
+        if (isBad(input)) {
+          const u = getUrl(input);
+          if (shouldDecoy(u)) {
+            bump("fetch-decoy", u);
+            return Promise.resolve(buildDecoyResponse(u));
+          }
+          bump("fetch", u);
+          return Promise.reject(new TypeError("Failed to fetch"));
         }
-        bump("fetch", u);
-        return Promise.reject(new TypeError("Failed to fetch"));
-      }
-      return origFetch.apply(this, arguments);
-    };
+        return origFetch.apply(this, arguments);
+      },
+    }.fetch;
     window.fetch = stealth(wrappedFetch, "fetch", { length: 1 });
   }
 
@@ -253,11 +255,13 @@
   const blockedXHRs = new WeakMap();
   const origOpen = XMLHttpRequest.prototype.open;
   const origSend = XMLHttpRequest.prototype.send;
-  const wrappedOpen = function open(method, url, ...rest) {
-    const bad = isBad(url);
-    if (bad) blockedXHRs.set(this, getUrl(url));
-    return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
-  };
+  const wrappedOpen = {
+    open(method, url, ...rest) {
+      const bad = isBad(url);
+      if (bad) blockedXHRs.set(this, getUrl(url));
+      return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
+    },
+  }.open;
   const fakeXhrSuccess = function (xhr, url) {
     const { body, contentType } = buildDecoyBody(url);
     const text = typeof body === "string" ? body : "";
@@ -270,38 +274,42 @@
         Object.defineProperty(xhr, "responseText", { value: text, configurable: true });
         Object.defineProperty(xhr, "response", { value: text, configurable: true });
         const origGetHeader = xhr.getResponseHeader;
-        xhr.getResponseHeader = function (name) {
-          if (String(name).toLowerCase() === "content-type") return contentType;
-          return origGetHeader ? origGetHeader.call(this, name) : null;
-        };
+        xhr.getResponseHeader = {
+          getResponseHeader(name) {
+            if (String(name).toLowerCase() === "content-type") return contentType;
+            return origGetHeader ? origGetHeader.call(this, name) : null;
+          },
+        }.getResponseHeader;
         xhr.dispatchEvent(new Event("readystatechange"));
         xhr.dispatchEvent(new Event("load"));
         xhr.dispatchEvent(new Event("loadend"));
       } catch {}
     });
   };
-  const wrappedSend = function send(...args) {
-    if (blockedXHRs.has(this)) {
-      const url = blockedXHRs.get(this);
-      blockedXHRs.delete(this);
-      if (shouldDecoy(url)) {
-        bump("xhr-decoy", url);
-        fakeXhrSuccess(this, url);
+  const wrappedSend = {
+    send(...args) {
+      if (blockedXHRs.has(this)) {
+        const url = blockedXHRs.get(this);
+        blockedXHRs.delete(this);
+        if (shouldDecoy(url)) {
+          bump("xhr-decoy", url);
+          fakeXhrSuccess(this, url);
+          return;
+        }
+        bump("xhr", url);
+        queueMicrotask(() => {
+          try {
+            this.dispatchEvent(new Event("error"));
+          } catch {}
+          try {
+            this.dispatchEvent(new Event("loadend"));
+          } catch {}
+        });
         return;
       }
-      bump("xhr", url);
-      queueMicrotask(() => {
-        try {
-          this.dispatchEvent(new Event("error"));
-        } catch {}
-        try {
-          this.dispatchEvent(new Event("loadend"));
-        } catch {}
-      });
-      return;
-    }
-    return origSend.apply(this, args);
-  };
+      return origSend.apply(this, args);
+    },
+  }.send;
   XMLHttpRequest.prototype.open = stealth(wrappedOpen, "open");
   XMLHttpRequest.prototype.send = stealth(wrappedSend, "send");
 
@@ -336,18 +344,20 @@
 
   // ─── 4. setAttribute / setAttributeNS fallback ──────────────────────────
   const attrGuard = (origFn, label, name, length) => {
-    const wrapped = function (...args) {
-      const argName = args.length >= 3 ? args[1] : args[0];
-      const argValue = args.length >= 3 ? args[2] : args[1];
-      if (typeof argName === "string") {
-        const n = argName.toLowerCase();
-        if ((n === "src" || n === "href" || n === "data") && isBad(argValue)) {
-          bump(label, argValue);
-          return;
+    const wrapped = {
+      [name](...args) {
+        const argName = args.length >= 3 ? args[1] : args[0];
+        const argValue = args.length >= 3 ? args[2] : args[1];
+        if (typeof argName === "string") {
+          const n = argName.toLowerCase();
+          if ((n === "src" || n === "href" || n === "data") && isBad(argValue)) {
+            bump(label, argValue);
+            return;
+          }
         }
-      }
-      return origFn.apply(this, args);
-    };
+        return origFn.apply(this, args);
+      },
+    }[name];
     return stealth(wrapped, name, { length });
   };
   Element.prototype.setAttribute = attrGuard(
@@ -366,15 +376,18 @@
   // ─── 5. navigator.sendBeacon ────────────────────────────────────────────
   if (navigator.sendBeacon) {
     const origBeacon = navigator.sendBeacon.bind(navigator);
-    const wrappedBeacon = function sendBeacon(url, data) {
-      if (isBad(url)) {
-        bump("sendBeacon", url);
-        return true;
-      }
-      return origBeacon(url, data);
-    };
+    const wrappedBeacon = {
+      sendBeacon(url) {
+        const data = arguments[1];
+        if (isBad(url)) {
+          bump("sendBeacon", url);
+          return true;
+        }
+        return origBeacon(url, data);
+      },
+    }.sendBeacon;
     try {
-      navigator.sendBeacon = stealth(wrappedBeacon, "sendBeacon");
+      navigator.sendBeacon = stealth(wrappedBeacon, "sendBeacon", { length: 1 });
     } catch {}
   }
 
@@ -398,7 +411,7 @@
       return new Ctor(url, opts);
     };
     wrapped.prototype = Ctor.prototype;
-    return stealth(wrapped, label);
+    return stealth(wrapped, label, { length: 1 });
   };
   if (window.Worker) window.Worker = patchWorkerCtor(window.Worker, "Worker");
   if (window.SharedWorker)
@@ -430,7 +443,7 @@
     wrappedES.CONNECTING = 0;
     wrappedES.OPEN = 1;
     wrappedES.CLOSED = 2;
-    window.EventSource = stealth(wrappedES, "EventSource");
+    window.EventSource = stealth(wrappedES, "EventSource", { length: 1 });
   }
 
   // ─── 8. navigator.serviceWorker.register ────────────────────────────────
@@ -440,15 +453,18 @@
   try {
     if (navigator.serviceWorker && typeof navigator.serviceWorker.register === "function") {
       const origRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
-      const wrappedRegister = function register(url, opts) {
-        if (isBad(url)) {
-          bump("serviceWorker.register", url);
-          return Promise.reject(new TypeError("Failed to register a ServiceWorker"));
-        }
-        return origRegister(url, opts);
-      };
+      const wrappedRegister = {
+        register(url) {
+          const opts = arguments[1];
+          if (isBad(url)) {
+            bump("serviceWorker.register", url);
+            return Promise.reject(new TypeError("Failed to register a ServiceWorker"));
+          }
+          return origRegister(url, opts);
+        },
+      }.register;
       try {
-        navigator.serviceWorker.register = stealth(wrappedRegister, "register");
+        navigator.serviceWorker.register = stealth(wrappedRegister, "register", { length: 1 });
       } catch {}
     }
   } catch {}

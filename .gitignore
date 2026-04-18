@@ -1,5 +1,8 @@
 # Chrome's local storage for loaded-unpacked extensions
 _metadata/
+node_modules/
+playwright-report/
+test-results/
 
 # OS
 .DS_Store
