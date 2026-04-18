@@ -1,7 +1,7 @@
 const { expect, test } = require("./helpers/extension-fixture");
 const { expectApiSurface, getApiSurface } = require("./helpers/api-surface");
 
-const PROBED_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const OTHER_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const probedUrl = (id = PROBED_ID, path = "/manifest.json") => `chrome-extension://${id}${path}`;
 
@@ -163,7 +163,11 @@ test("blocks broad extension URL vectors and accumulates per-origin ID counts", 
     svg.setAttributeNS("http://www.w3.org/1999/xlink", "href", url);
     tick();
 
-    navigator.sendBeacon(url, "");
+    try {
+      navigator.sendBeacon(url, "");
+    } catch (error) {
+      if (error.name !== "TypeError") throw error;
+    }
     tick();
 
     try {
@@ -240,6 +244,11 @@ test("blocked XHR failures settle like native network failures", async ({ extens
           finalReadyState: xhr.readyState,
           finalStatus: xhr.status,
           finalResponseURL: xhr.responseURL,
+          ownReadyState: Object.prototype.hasOwnProperty.call(xhr, "readyState"),
+          ownResponse: Object.prototype.hasOwnProperty.call(xhr, "response"),
+          ownResponseText: Object.prototype.hasOwnProperty.call(xhr, "responseText"),
+          ownResponseURL: Object.prototype.hasOwnProperty.call(xhr, "responseURL"),
+          ownStatus: Object.prototype.hasOwnProperty.call(xhr, "status"),
           events,
         });
       }, 100);
@@ -249,6 +258,11 @@ test("blocked XHR failures settle like native network failures", async ({ extens
   expect(result.finalReadyState).toBe(4);
   expect(result.finalStatus).toBe(0);
   expect(result.finalResponseURL).toBe("");
+  expect(result.ownReadyState).toBe(false);
+  expect(result.ownResponse).toBe(false);
+  expect(result.ownResponseText).toBe(false);
+  expect(result.ownResponseURL).toBe(false);
+  expect(result.ownStatus).toBe(false);
   expect(result.events.map((event) => event.name)).toEqual([
     "readystatechange",
     "loadstart",
@@ -371,6 +385,61 @@ test("Noise mode does not decoy IDs below the minimum observed count", async ({
   }, probedUrl(OTHER_ID));
 
   expect(result).toBe("TypeError");
+});
+
+test("Noise mode requires stronger evidence for unknown extension-shaped IDs", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(
+    ({ id, origin }) =>
+      chrome.storage.local.set({
+        noise_enabled: true,
+        probe_log: {
+          [origin]: {
+            idCounts: { [id]: 2 },
+            lastUpdated: Date.now(),
+          },
+        },
+      }),
+    { id: OTHER_ID, origin: server.origin }
+  );
+
+  const firstPage = await extension.context.newPage();
+  await firstPage.goto(server.url("/blank.html"));
+  await firstPage.waitForTimeout(300);
+  const lowEvidence = await firstPage.evaluate(async (url) => {
+    try {
+      await fetch(url);
+      return "resolved";
+    } catch (error) {
+      return error.name;
+    }
+  }, probedUrl(OTHER_ID));
+  expect(lowEvidence).toBe("TypeError");
+
+  await extension.serviceWorker.evaluate(
+    ({ id, origin }) =>
+      chrome.storage.local.set({
+        noise_enabled: true,
+        probe_log: {
+          [origin]: {
+            idCounts: { [id]: 20 },
+            lastUpdated: Date.now(),
+          },
+        },
+      }),
+    { id: OTHER_ID, origin: server.origin }
+  );
+
+  const secondPage = await extension.context.newPage();
+  await secondPage.goto(server.url("/blank.html"));
+  await secondPage.waitForTimeout(300);
+  const highEvidence = await secondPage.evaluate(async (url) => {
+    const response = await fetch(url);
+    return response.status;
+  }, probedUrl(OTHER_ID));
+  expect(highEvidence).toBe(200);
 });
 
 test("Replay mask mode redacts replay listener values without breaking page handlers", async ({

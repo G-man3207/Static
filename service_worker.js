@@ -248,10 +248,24 @@ const shuffleInPlace = (arr, rng) => {
   }
 };
 
+const knownPersonaIds = () => {
+  const ids = new Set();
+  for (const slotIds of Object.values(CFG.conflictSlots || {})) {
+    for (const id of slotIds) ids.add(id);
+  }
+  return ids;
+};
+
 const eligiblePersonaIds = (entry) => {
   const minCount = CFG.personaMinCount || 2;
+  const unknownMinCount = CFG.unknownPersonaMinCount || 20;
+  const knownIds = knownPersonaIds();
   return Object.entries(entry.idCounts)
-    .filter(([id, c]) => CHROME_EXT_ID_RE.test(id) && c >= minCount)
+    .filter(([id, c]) => {
+      const safeId = id.toLowerCase();
+      const threshold = knownIds.has(safeId) ? minCount : unknownMinCount;
+      return CHROME_EXT_ID_RE.test(safeId) && typeof c === "number" && c >= threshold;
+    })
     .map(([id]) => id.toLowerCase());
 };
 
@@ -307,7 +321,9 @@ const personaFor = async (origin) => {
 
   const secret = await getUserSecret();
   const rotWeeks = CFG.personaRotationWeeks || 1;
-  const week = Math.floor(Date.now() / (rotWeeks * 7 * 24 * 60 * 60 * 1000));
+  const rotationMs = rotWeeks * 7 * 24 * 60 * 60 * 1000;
+  const phase = (await seedFor(secret, origin, "phase")) % rotationMs;
+  const week = Math.floor((Date.now() + phase) / rotationMs);
   const seed = await seedFor(secret, origin, week);
   const rng = mulberry32(seed);
   const { bySlot, unslotted } = splitIdsBySlot(eligible, buildConflictSlotMap());

@@ -1,6 +1,6 @@
 const { expect, test } = require("./helpers/extension-fixture");
 
-const PROBED_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const INVALID_ID = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
 const probedUrl = (id = PROBED_ID, path = "/manifest.json") => `chrome-extension://${id}${path}`;
 
@@ -34,7 +34,8 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
   const result = await page.evaluate(
     async (manifestUrl) => {
       const response = await fetch(manifestUrl);
-      const responseText = await response.clone().text();
+      const responseClone = response.clone();
+      const responseText = await responseClone.text();
       const manifest = await response.json();
       const head = await fetch(new Request(manifestUrl, { method: "HEAD" }));
 
@@ -45,6 +46,11 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
             allHeaders: xhr.getAllResponseHeaders(),
             contentType: xhr.getResponseHeader("content-type"),
             ownGetHeader: Object.prototype.hasOwnProperty.call(xhr, "getResponseHeader"),
+            ownReadyState: Object.prototype.hasOwnProperty.call(xhr, "readyState"),
+            ownResponse: Object.prototype.hasOwnProperty.call(xhr, "response"),
+            ownResponseText: Object.prototype.hasOwnProperty.call(xhr, "responseText"),
+            ownResponseURL: Object.prototype.hasOwnProperty.call(xhr, "responseURL"),
+            ownStatus: Object.prototype.hasOwnProperty.call(xhr, "status"),
             responseText: xhr.responseText,
             responseURL: xhr.responseURL,
             status: xhr.status,
@@ -64,6 +70,9 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
             responseTextAccess = error.name;
           }
           resolve({
+            ownResponse: Object.prototype.hasOwnProperty.call(xhr, "response"),
+            ownResponseText: Object.prototype.hasOwnProperty.call(xhr, "responseText"),
+            ownStatus: Object.prototype.hasOwnProperty.call(xhr, "status"),
             response: xhr.response,
             responseTextAccess,
             status: xhr.status,
@@ -78,7 +87,11 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
         fetch: {
           instance: response instanceof Response,
           manifest,
+          ownType: Object.prototype.hasOwnProperty.call(response, "type"),
+          ownUrl: Object.prototype.hasOwnProperty.call(response, "url"),
           prototype: Object.getPrototypeOf(response) === Response.prototype,
+          cloneType: responseClone.type,
+          cloneUrl: responseClone.url,
           responseText,
           type: response.type,
           url: response.url,
@@ -98,7 +111,11 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
       name: "Browser Extension",
       version: "1.0.0",
     },
+    ownType: false,
+    ownUrl: false,
     prototype: true,
+    cloneType: "basic",
+    cloneUrl: probedUrl(PROBED_ID, "/manifest.json"),
     type: "basic",
     url: probedUrl(PROBED_ID, "/manifest.json"),
   });
@@ -107,12 +124,20 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
   expect(result.xhrText).toMatchObject({
     contentType: "application/json; charset=utf-8",
     ownGetHeader: false,
+    ownReadyState: false,
+    ownResponse: false,
+    ownResponseText: false,
+    ownResponseURL: false,
+    ownStatus: false,
     responseURL: probedUrl(PROBED_ID, "/manifest.json"),
     status: 200,
   });
   expect(result.xhrText.allHeaders).toContain("content-type: application/json; charset=utf-8");
   expect(JSON.parse(result.xhrText.responseText)).toMatchObject({ name: "Browser Extension" });
   expect(result.xhrJson).toMatchObject({
+    ownResponse: false,
+    ownResponseText: false,
+    ownStatus: false,
     response: {
       manifest_version: 3,
       name: "Browser Extension",
@@ -310,6 +335,100 @@ test("Noise keeps frame probes fail-closed and logs attribute vectors", async ({
     });
 });
 
+test("blocked passive element probes keep native-like visible URLs and error events", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(
+    async ({ cssUrl, imageUrl, scriptUrl }) => {
+      const waitForOutcome = async (el, start) => {
+        const eventPromise = new Promise((resolve) => {
+          el.addEventListener("load", () => resolve("load"), { once: true });
+          el.addEventListener("error", () => resolve("error"), { once: true });
+          setTimeout(() => resolve("timeout"), 1000);
+        });
+        start();
+        return eventPromise;
+      };
+
+      const img = new Image();
+      const imgEvent = await waitForOutcome(img, () => {
+        img.src = imageUrl;
+        document.body.appendChild(img);
+      });
+
+      const script = document.createElement("script");
+      const scriptEvent = await waitForOutcome(script, () => {
+        script.src = scriptUrl;
+        document.head.appendChild(script);
+      });
+
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      const linkEvent = await waitForOutcome(link, () => {
+        link.href = cssUrl;
+        document.head.appendChild(link);
+      });
+
+      return {
+        img: {
+          attr: img.getAttribute("src"),
+          complete: img.complete,
+          currentSrc: img.currentSrc,
+          event: imgEvent,
+          naturalWidth: img.naturalWidth,
+          src: img.src,
+        },
+        link: {
+          attr: link.getAttribute("href"),
+          event: linkEvent,
+          href: link.href,
+          hasHref: link.hasAttribute("href"),
+          sheetHref: link.sheet && link.sheet.href,
+        },
+        script: {
+          attr: script.getAttribute("src"),
+          event: scriptEvent,
+          hasSrc: script.hasAttribute("src"),
+          src: script.src,
+        },
+      };
+    },
+    {
+      cssUrl: probedUrl(PROBED_ID, "/style.css"),
+      imageUrl: probedUrl(PROBED_ID, "/icon.png"),
+      scriptUrl: probedUrl(PROBED_ID, "/content.js"),
+    }
+  );
+
+  expect(result).toMatchObject({
+    img: {
+      attr: probedUrl(PROBED_ID, "/icon.png"),
+      complete: true,
+      currentSrc: probedUrl(PROBED_ID, "/icon.png"),
+      event: "error",
+      naturalWidth: 0,
+      src: probedUrl(PROBED_ID, "/icon.png"),
+    },
+    link: {
+      attr: probedUrl(PROBED_ID, "/style.css"),
+      event: "error",
+      href: probedUrl(PROBED_ID, "/style.css"),
+      hasHref: true,
+      sheetHref: probedUrl(PROBED_ID, "/style.css"),
+    },
+    script: {
+      attr: probedUrl(PROBED_ID, "/content.js"),
+      event: "error",
+      hasSrc: true,
+      src: probedUrl(PROBED_ID, "/content.js"),
+    },
+  });
+});
+
 test("invalid Chrome extension IDs are blocked but not logged or decoyed", async ({
   extension,
   server,
@@ -424,6 +543,56 @@ test("replay detection logs redact high-entropy script path segments", async ({
   expect(Object.keys(stored.signals)).toContain(
     `listener-script:${server.origin}/assets/replay/:token.js`
   );
+});
+
+test("shareable export hashes origin and extension ID labels", async ({ extension }) => {
+  const origin = "https://sensitive.example";
+  const ids = [
+    "nngceckbapebfimnlniiiahkandclblb",
+    "cjpalhdlnbpafiamejdnhcphjbkeiagm",
+    "kbfnbcaeplbcioakkpcpgfkobkghlhen",
+  ];
+  await extension.serviceWorker.evaluate(
+    ({ ids, origin }) =>
+      chrome.storage.local.set({
+        probe_log: {
+          [origin]: {
+            idCounts: {
+              [ids[0]]: 2,
+              [ids[1]]: 7,
+              [ids[2]]: 25,
+            },
+            lastUpdated: Date.now(),
+          },
+        },
+      }),
+    { ids, origin }
+  );
+
+  const logPage = await extension.context.newPage();
+  await logPage.goto(`chrome-extension://${extension.extensionId}/log.html`);
+  await expect(logPage.getByText(origin)).toBeVisible();
+
+  const first = await logPage.evaluate("buildShareableExport(fullData)");
+  const second = await logPage.evaluate("buildShareableExport(fullData)");
+  const serialized = JSON.stringify(first);
+  const firstOriginHash = Object.keys(first.origins)[0];
+  const secondOriginHash = Object.keys(second.origins)[0];
+  const firstIdHashes = Object.keys(first.origins[firstOriginHash].idBuckets);
+
+  expect(first.schema).toBe("static.probe-log.shareable.v1");
+  expect(firstOriginHash).toMatch(/^[0-9a-f]{64}$/);
+  expect(secondOriginHash).toMatch(/^[0-9a-f]{64}$/);
+  expect(firstOriginHash).not.toBe(secondOriginHash);
+  expect(firstIdHashes).toHaveLength(3);
+  expect(firstIdHashes.every((idHash) => /^[0-9a-f]{64}$/.test(idHash))).toBe(true);
+  expect(serialized).not.toContain(origin);
+  for (const id of ids) expect(serialized).not.toContain(id);
+  expect(Object.values(first.origins[firstOriginHash].idBuckets).sort()).toEqual([
+    "2-5",
+    "21-100",
+    "6-20",
+  ]);
 });
 
 test("DOM scrubber follows open shadow roots", async ({ extension, server }) => {

@@ -432,13 +432,31 @@ const bucketCount = (n) => {
   return "1000+";
 };
 
-// Anonymize the raw log for public sharing / aggregate research. Removes
-// per-user timing signal (timestamps, cumulative counter), coarsens counts
-// into log-scale buckets, drops single-occurrence IDs (canaries), and drops
-// origins with too few surviving IDs (low-signal noise).
-const buildShareableExport = (raw) => {
+const randomSalt = () => {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+};
+
+const hashLabel = async (salt, value) => {
+  const data = new TextEncoder().encode(`${salt}|${value}`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+};
+
+// Anonymize the raw log for public sharing. Removes per-user timing signal
+// (timestamps, cumulative counter), coarsens counts into log-scale buckets,
+// drops single-occurrence IDs (canaries), drops origins with too few surviving
+// IDs, and hashes origin/ID labels with a per-export salt that is not retained.
+const buildShareableExport = async (raw) => {
+  const salt = randomSalt();
   const out = {
     schema: "static.probe-log.shareable.v1",
+    anonymization: "per-export salted SHA-256 labels; salt is not retained",
     exportMonth: new Date().toISOString().slice(0, 7),
     origins: {},
   };
@@ -449,11 +467,11 @@ const buildShareableExport = (raw) => {
     const buckets = {};
     for (const [id, count] of Object.entries(ids)) {
       const b = bucketCount(count);
-      if (b) buckets[id] = b;
+      if (b) buckets[await hashLabel(salt, `id:${id}`)] = b;
     }
     const surviving = Object.keys(buckets).length;
     if (surviving >= 3) {
-      out.origins[origin] = { idBuckets: buckets };
+      out.origins[await hashLabel(salt, `origin:${origin}`)] = { idBuckets: buckets };
     }
   }
   return out;
@@ -477,9 +495,9 @@ document.getElementById("export-raw").addEventListener("click", () => {
   downloadJson(fullData, `static-probe-log-${new Date().toISOString().slice(0, 10)}.json`);
 });
 
-document.getElementById("export-shareable").addEventListener("click", () => {
+document.getElementById("export-shareable").addEventListener("click", async () => {
   if (!fullData) return;
-  const shareable = buildShareableExport(fullData);
+  const shareable = await buildShareableExport(fullData);
   const originCount = Object.keys(shareable.origins).length;
   if (originCount === 0) {
     alert(

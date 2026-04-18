@@ -99,9 +99,15 @@
     personaSize: { min: 3, max: 8 },
 
     // An ID must be seen at least this many times on an origin before Static
-    // will include it in that origin's persona. Filters one-shot canary
-    // probes from entering the replay pool.
+    // will include it in that origin's persona when it is a known plausible
+    // extension ID. Filters one-shot canary probes from entering the replay
+    // pool.
     personaMinCount: 2,
+
+    // Unknown extension-shaped IDs need stronger evidence before Static will
+    // claim them. This keeps cheap repeated canaries from poisoning Static's
+    // own persona with IDs that no real user could plausibly have installed.
+    unknownPersonaMinCount: 20,
 
     // Weeks before a persona rotates.
     personaRotationWeeks: 1,
