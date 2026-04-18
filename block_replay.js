@@ -137,10 +137,7 @@
   };
 
   const redactedPathnameFor = (pathname) =>
-    String(pathname || "")
-      .split("/")
-      .map(redactPathSegment)
-      .join("/");
+    String(pathname || "").replace(/[^/]+/g, redactPathSegment);
 
   const stableUrlLabelFor = (url) => {
     try {
@@ -149,7 +146,7 @@
     } catch {
       try {
         return String(url || "")
-          .split(/[?#]/)[0]
+          .replace(/[?#].*$/, "")
           .slice(0, 160);
       } catch {
         return "";
@@ -495,13 +492,9 @@
   const patchReplayScriptProperties = () => {
     guardScriptProp(HTMLScriptElement.prototype, "src", "script.src");
     const origSetAttribute = Element.prototype.setAttribute;
-    const origSetAttributeNS = Element.prototype.setAttributeNS;
+    const origSetNS = Element.prototype.setAttributeNS;
     Element.prototype.setAttribute = makeAttributeDetector(origSetAttribute, "setAttribute", 2);
-    Element.prototype.setAttributeNS = makeAttributeDetector(
-      origSetAttributeNS,
-      "setAttributeNS",
-      3
-    );
+    Element.prototype.setAttributeNS = makeAttributeDetector(origSetNS, "setAttributeNS", 3);
   };
 
   const guardScriptProp = (proto, prop) => {
