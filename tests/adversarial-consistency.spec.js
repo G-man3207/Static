@@ -6,7 +6,7 @@ const {
   seedNoisePersona,
 } = require("./helpers/adversarial-probe");
 
-const PROBED_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const probedUrl = (path = "/manifest.json") => `chrome-extension://${PROBED_ID}${path}`;
 
 const makeProbeUrls = () => ({

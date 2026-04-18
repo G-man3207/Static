@@ -37,6 +37,14 @@
     return fn;
   };
 
+  const nativeSourceFor = (fn, fallbackName) => {
+    try {
+      return origFnToString.call(fn);
+    } catch {
+      return `function ${fallbackName}() { [native code] }`;
+    }
+  };
+
   const applyConfigUpdate = (data) => {
     if (!data || data.type !== "config_update") return;
     if (Array.isArray(data.persona)) {
@@ -152,6 +160,97 @@
     icons: { 16: "icon.png", 48: "icon.png", 128: "icon.png" },
   };
   const fakeXhrResponses = new WeakMap();
+  const fakeFetchResponses = new WeakMap();
+
+  const descriptorOwnerFor = (proto, prop) => {
+    let cursor = proto;
+    while (cursor) {
+      const desc = Object.getOwnPropertyDescriptor(cursor, prop);
+      if (desc) return { owner: cursor, desc };
+      cursor = Object.getPrototypeOf(cursor);
+    }
+    return null;
+  };
+
+  const patchFakeResponseMetadata = () => {
+    if (typeof Response === "undefined" || !Response.prototype) return;
+    for (const prop of ["type", "url"]) {
+      const found = descriptorOwnerFor(Response.prototype, prop);
+      if (!found || !found.desc || typeof found.desc.get !== "function") continue;
+      const { desc, owner } = found;
+      Object.defineProperty(owner, prop, {
+        ...desc,
+        get: stealth(
+          function get() {
+            const fake = fakeFetchResponses.get(this);
+            if (fake && Object.prototype.hasOwnProperty.call(fake, prop)) return fake[prop];
+            return desc.get.call(this);
+          },
+          `get ${prop}`,
+          { length: 0, source: nativeSourceFor(desc.get, `get ${prop}`) }
+        ),
+      });
+    }
+
+    const cloneDesc = Object.getOwnPropertyDescriptor(Response.prototype, "clone");
+    const origClone = cloneDesc && cloneDesc.value;
+    if (typeof origClone !== "function") return;
+    const wrappedClone = {
+      clone() {
+        const cloned = origClone.apply(this, arguments);
+        const fake = fakeFetchResponses.get(this);
+        if (fake) fakeFetchResponses.set(cloned, fake);
+        return cloned;
+      },
+    }.clone;
+    Object.defineProperty(Response.prototype, "clone", {
+      ...cloneDesc,
+      value: stealth(wrappedClone, "clone", {
+        length: 0,
+        source: nativeSourceFor(origClone, "clone"),
+      }),
+    });
+  };
+
+  const fakeXhrValueFor = (xhr, prop, desc) => {
+    const fake = fakeXhrResponses.get(xhr);
+    if (fake && Object.prototype.hasOwnProperty.call(fake, prop)) {
+      if (prop === "responseText" && fake.responseTextError) {
+        throw new DOMException(
+          "The value is only accessible if the object's 'responseType' is '' or 'text'.",
+          "InvalidStateError"
+        );
+      }
+      return fake[prop];
+    }
+    return desc.get.call(xhr);
+  };
+
+  const patchFakeXhrMetadata = () => {
+    if (typeof XMLHttpRequest === "undefined" || !XMLHttpRequest.prototype) return;
+    for (const prop of [
+      "readyState",
+      "response",
+      "responseText",
+      "responseURL",
+      "status",
+      "statusText",
+    ]) {
+      const found = descriptorOwnerFor(XMLHttpRequest.prototype, prop);
+      if (!found || !found.desc || typeof found.desc.get !== "function") continue;
+      const { desc, owner } = found;
+      Object.defineProperty(owner, prop, {
+        ...desc,
+        get: stealth(
+          function get() {
+            return fakeXhrValueFor(this, prop, desc);
+          },
+          `get ${prop}`,
+          { length: 0, source: nativeSourceFor(desc.get, `get ${prop}`) }
+        ),
+      });
+    }
+  };
 
   const pathForDecoy = (url) => {
     try {
@@ -214,12 +313,7 @@
         statusText: "OK",
         headers: { "content-type": contentType },
       });
-      try {
-        Object.defineProperties(response, {
-          type: { value: "basic", configurable: true },
-          url: { value: String(url), configurable: true },
-        });
-      } catch {}
+      fakeFetchResponses.set(response, { type: "basic", url: String(url) });
       return response;
     } catch {
       return new Response("", { status: 200 });
@@ -266,22 +360,6 @@
     return text;
   };
 
-  const defineXhrResponseText = (xhr, responseType, text) => {
-    if (responseType && responseType !== "text") {
-      Object.defineProperty(xhr, "responseText", {
-        configurable: true,
-        get() {
-          throw new DOMException(
-            "The value is only accessible if the object's 'responseType' is '' or 'text'.",
-            "InvalidStateError"
-          );
-        },
-      });
-      return;
-    }
-    Object.defineProperty(xhr, "responseText", { value: text, configurable: true });
-  };
-
   const patchFetch = () => {
     const origFetch = window.fetch;
     if (typeof origFetch !== "function") return;
@@ -310,18 +388,19 @@
     fakeXhrResponses.set(xhr, {
       allHeaders: `content-type: ${contentType}\r\n`,
       contentType,
+      readyState: 4,
+      response: responseValue,
+      responseText: text,
+      responseTextError: !!(responseType && responseType !== "text"),
+      responseURL: url,
+      status: 200,
+      statusText: "OK",
     });
     queueMicrotask(() => {
       try {
         xhr.dispatchEvent(new ProgressEvent("loadstart"));
       } catch {}
       try {
-        Object.defineProperty(xhr, "readyState", { value: 4, configurable: true });
-        Object.defineProperty(xhr, "status", { value: 200, configurable: true });
-        Object.defineProperty(xhr, "statusText", { value: "OK", configurable: true });
-        Object.defineProperty(xhr, "responseURL", { value: url, configurable: true });
-        defineXhrResponseText(xhr, responseType, text);
-        Object.defineProperty(xhr, "response", { value: responseValue, configurable: true });
         xhr.dispatchEvent(new Event("readystatechange"));
         xhr.dispatchEvent(new Event("load"));
         xhr.dispatchEvent(new Event("loadend"));
@@ -330,18 +409,19 @@
   };
 
   const fakeXhrFailure = (xhr) => {
-    fakeXhrResponses.delete(xhr);
+    fakeXhrResponses.set(xhr, {
+      readyState: 4,
+      response: "",
+      responseText: "",
+      responseURL: "",
+      status: 0,
+      statusText: "",
+    });
     queueMicrotask(() => {
       try {
         xhr.dispatchEvent(new ProgressEvent("loadstart"));
       } catch {}
       try {
-        Object.defineProperty(xhr, "readyState", { value: 4, configurable: true });
-        Object.defineProperty(xhr, "status", { value: 0, configurable: true });
-        Object.defineProperty(xhr, "statusText", { value: "", configurable: true });
-        Object.defineProperty(xhr, "responseURL", { value: "", configurable: true });
-        Object.defineProperty(xhr, "responseText", { value: "", configurable: true });
-        Object.defineProperty(xhr, "response", { value: "", configurable: true });
         xhr.dispatchEvent(new Event("readystatechange"));
       } catch {}
       try {
@@ -411,6 +491,8 @@
     );
   };
 
+  patchFakeResponseMetadata();
+  patchFakeXhrMetadata();
   patchFetch();
   patchXhr();
 })();
