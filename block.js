@@ -243,7 +243,9 @@
       return parsed.origin + parsed.pathname;
     } catch {
       try {
-        return String(url || "").split(/[?#]/)[0].slice(0, 160);
+        return String(url || "")
+          .split(/[?#]/)[0]
+          .slice(0, 160);
       } catch {
         return "";
       }
