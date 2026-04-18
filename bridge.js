@@ -1,7 +1,11 @@
 // Static - MAIN-world modules to service-worker bridge (ISOLATED world).
 (() => {
-  const EXT_ID_RE = /^(?:chrome|moz|ms-browser|safari-web|edge)-extension:\/\/([a-z0-9]+)/i;
-  const CONFIG_EVENTS = ["__static_noise_bridge_init__", "__static_replay_bridge_init__"];
+  const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
+  const CONFIG_EVENTS = [
+    "__static_element_decoy_bridge_init__",
+    "__static_noise_bridge_init__",
+    "__static_replay_bridge_init__",
+  ];
   const PROBE_EVENTS = ["__static_noise_bridge_init__", "__static_probe_bridge_init__"];
   const configPorts = new Set();
   let pendingDelta = 0;
@@ -27,6 +31,7 @@
     const value = typeof where === "string" ? where : "";
     if (value === "fetch-decoy") return "fetch";
     if (value === "xhr-decoy") return "xhr";
+    if (value.endsWith("-decoy")) return value.slice(0, -"-decoy".length);
     return value || "unknown";
   };
 
@@ -50,6 +55,18 @@
     } catch {
       return null;
     }
+  };
+
+  const extractProbeId = (url) => {
+    try {
+      const parsed = new URL(String(url || ""));
+      const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+      const id = parsed.hostname.toLowerCase();
+      if ((scheme === "chrome-extension" || scheme === "edge-extension") && CHROME_EXT_ID_RE.test(id)) {
+        return id;
+      }
+    } catch {}
+    return null;
   };
 
   const flush = () => {
@@ -82,9 +99,8 @@
     pendingDelta++;
     bumpMap(pendingVectorCounts, normalizeVector(data.where));
     bumpMap(pendingPathKindCounts, pathKindFor(data.url));
-    const match = EXT_ID_RE.exec(String(data.url || ""));
-    if (match) {
-      const id = match[1];
+    const id = extractProbeId(data.url);
+    if (id) {
       bumpMap(idCounts, id);
       bumpMap(pendingIdCounts, id);
     }

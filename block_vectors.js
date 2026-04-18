@@ -8,10 +8,12 @@
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
-  const patchedFnToString = function toString() {
-    if (stealthFns.has(this)) return stealthFns.get(this);
-    return origFnToString.call(this);
-  };
+  const patchedFnToString = {
+    toString() {
+      if (stealthFns.has(this)) return stealthFns.get(this);
+      return origFnToString.call(this);
+    },
+  }.toString;
   stealthFns.set(patchedFnToString, "function toString() { [native code] }");
   try {
     Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });

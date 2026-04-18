@@ -13,6 +13,13 @@
   const TAG_PATTERNS = CFG.domStripTags || [];
   const CLASS_PATTERNS = CFG.domStripClasses || [];
   if (!ATTR_PATTERNS.length && !TAG_PATTERNS.length && !CLASS_PATTERNS.length) return;
+  const OBSERVE_OPTIONS = {
+    attributes: true,
+    childList: true,
+    subtree: true,
+  };
+  const observedRoots = new WeakSet();
+  let obs = null;
 
   const matchesAny = (patterns, value) => patterns.some((pattern) => pattern.test(value));
 
@@ -51,11 +58,24 @@
     }
   };
 
+  const scrubShadowRoot = (el) => {
+    const root = el && el.shadowRoot;
+    if (!root || observedRoots.has(root)) return;
+    observedRoots.add(root);
+    scrubTree(root);
+    if (obs) {
+      try {
+        obs.observe(root, OBSERVE_OPTIONS);
+      } catch {}
+    }
+  };
+
   const scrubEl = (el) => {
     if (!el || el.nodeType !== 1) return;
     if (scrubTag(el)) return;
     scrubAttributes(el);
     scrubClasses(el);
+    scrubShadowRoot(el);
   };
 
   const scrubTree = (root) => {
@@ -66,9 +86,7 @@
     }
   };
 
-  if (document.documentElement) scrubTree(document.documentElement);
-
-  const obs = new MutationObserver((muts) => {
+  obs = new MutationObserver((muts) => {
     for (const m of muts) {
       if (m.addedNodes) {
         for (const node of m.addedNodes) {
@@ -78,11 +96,10 @@
       if (m.type === "attributes") scrubEl(m.target);
     }
   });
+
+  if (document.documentElement) scrubTree(document.documentElement);
+
   try {
-    obs.observe(document.documentElement || document, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-    });
+    obs.observe(document.documentElement || document, OBSERVE_OPTIONS);
   } catch {}
 })();

@@ -1,7 +1,7 @@
 // Static - MAIN-world fetch/XHR extension probe blocker and Noise decoy engine.
 (() => {
   const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
-  const EXT_ID_RE = /^(?:chrome|moz|ms-browser|safari-web|edge)-extension:\/\/([a-z0-9]+)/i;
+  const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
   const BRIDGE_EVENT = "__static_noise_bridge_init__";
   const MAX_QUEUED_PROBES = 1000;
   const queuedProbeEvents = [];
@@ -11,10 +11,12 @@
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
-  const patchedFnToString = function toString() {
-    if (stealthFns.has(this)) return stealthFns.get(this);
-    return origFnToString.call(this);
-  };
+  const patchedFnToString = {
+    toString() {
+      if (stealthFns.has(this)) return stealthFns.get(this);
+      return origFnToString.call(this);
+    },
+  }.toString;
   stealthFns.set(patchedFnToString, "function toString() { [native code] }");
   try {
     Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
@@ -113,9 +115,21 @@
     }
   };
 
+  const extensionIdentityFor = (url) => {
+    try {
+      const parsed = new URL(String(url || ""));
+      const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+      const id = parsed.hostname.toLowerCase();
+      if ((scheme === "chrome-extension" || scheme === "edge-extension") && CHROME_EXT_ID_RE.test(id)) {
+        return { id, scheme };
+      }
+    } catch {}
+    return null;
+  };
+
   const extractExtId = (url) => {
-    const match = EXT_ID_RE.exec(String(url || ""));
-    return match ? match[1] : null;
+    const identity = extensionIdentityFor(url);
+    return identity ? identity.id : null;
   };
 
   const shouldDecoy = (url) => {
@@ -134,6 +148,7 @@
     description: "",
     icons: { 16: "icon.png", 48: "icon.png", 128: "icon.png" },
   };
+  const fakeXhrResponses = new WeakMap();
 
   const pathForDecoy = (url) => {
     try {
@@ -176,14 +191,33 @@
     return { body: "", contentType: "application/octet-stream" };
   };
 
-  const buildDecoyResponse = (url) => {
-    const { body, contentType } = buildDecoyBody(url);
+  const fetchMethodFor = (input, init) => {
+    const initMethod = init && init.method;
+    if (initMethod != null) return String(initMethod).toUpperCase();
     try {
-      return new Response(body, {
+      if (typeof Request !== "undefined" && input instanceof Request && input.method) {
+        return String(input.method).toUpperCase();
+      }
+    } catch {}
+    return "GET";
+  };
+
+  const buildDecoyResponse = (url, method = "GET") => {
+    const { body, contentType } = buildDecoyBody(url);
+    const responseBody = method === "HEAD" ? null : body;
+    try {
+      const response = new Response(responseBody, {
         status: 200,
         statusText: "OK",
         headers: { "content-type": contentType },
       });
+      try {
+        Object.defineProperties(response, {
+          type: { value: "basic", configurable: true },
+          url: { value: String(url), configurable: true },
+        });
+      } catch {}
+      return response;
     } catch {
       return new Response("", { status: 200 });
     }
@@ -195,6 +229,56 @@
     } catch {}
   };
 
+  const textBodyFor = (body) => {
+    if (typeof body === "string") return body;
+    if (body instanceof Uint8Array) {
+      try {
+        return new TextDecoder().decode(body);
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  };
+
+  const arrayBufferFor = (body, text) => {
+    if (body instanceof Uint8Array) {
+      return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+    }
+    return new TextEncoder().encode(text).buffer;
+  };
+
+  const responseValueFor = (xhr, body, contentType, text) => {
+    const responseType = String(xhr.responseType || "");
+    if (responseType === "arraybuffer") return arrayBufferFor(body, text);
+    if (responseType === "blob") return new Blob([body], { type: contentType });
+    if (responseType === "document") return null;
+    if (responseType === "json") {
+      try {
+        return text ? JSON.parse(text) : null;
+      } catch {
+        return null;
+      }
+    }
+    return text;
+  };
+
+  const defineXhrResponseText = (xhr, responseType, text) => {
+    if (responseType && responseType !== "text") {
+      Object.defineProperty(xhr, "responseText", {
+        configurable: true,
+        get() {
+          throw new DOMException(
+            "The value is only accessible if the object's 'responseType' is '' or 'text'.",
+            "InvalidStateError"
+          );
+        },
+      });
+      return;
+    }
+    Object.defineProperty(xhr, "responseText", { value: text, configurable: true });
+  };
+
   const patchFetch = () => {
     const origFetch = window.fetch;
     if (typeof origFetch !== "function") return;
@@ -204,7 +288,7 @@
           const url = getUrl(input);
           if (shouldDecoy(url)) {
             bump("fetch-decoy", url);
-            return Promise.resolve(buildDecoyResponse(url));
+            return Promise.resolve(buildDecoyResponse(url, fetchMethodFor(input, arguments[1])));
           }
           bump("fetch", url);
           return Promise.reject(new TypeError("Failed to fetch"));
@@ -217,7 +301,13 @@
 
   const fakeXhrSuccess = (xhr, url) => {
     const { body, contentType } = buildDecoyBody(url);
-    const text = typeof body === "string" ? body : "";
+    const text = textBodyFor(body);
+    const responseType = String(xhr.responseType || "");
+    const responseValue = responseValueFor(xhr, body, contentType, text);
+    fakeXhrResponses.set(xhr, {
+      allHeaders: `content-type: ${contentType}\r\n`,
+      contentType,
+    });
     queueMicrotask(() => {
       try {
         xhr.dispatchEvent(new ProgressEvent("loadstart"));
@@ -227,15 +317,8 @@
         Object.defineProperty(xhr, "status", { value: 200, configurable: true });
         Object.defineProperty(xhr, "statusText", { value: "OK", configurable: true });
         Object.defineProperty(xhr, "responseURL", { value: url, configurable: true });
-        Object.defineProperty(xhr, "responseText", { value: text, configurable: true });
-        Object.defineProperty(xhr, "response", { value: text, configurable: true });
-        const origGetHeader = xhr.getResponseHeader;
-        xhr.getResponseHeader = {
-          getResponseHeader(name) {
-            if (String(name).toLowerCase() === "content-type") return contentType;
-            return origGetHeader ? origGetHeader.call(this, name) : null;
-          },
-        }.getResponseHeader;
+        defineXhrResponseText(xhr, responseType, text);
+        Object.defineProperty(xhr, "response", { value: responseValue, configurable: true });
         xhr.dispatchEvent(new Event("readystatechange"));
         xhr.dispatchEvent(new Event("load"));
         xhr.dispatchEvent(new Event("loadend"));
@@ -244,6 +327,7 @@
   };
 
   const fakeXhrFailure = (xhr) => {
+    fakeXhrResponses.delete(xhr);
     queueMicrotask(() => {
       try {
         xhr.dispatchEvent(new ProgressEvent("loadstart"));
@@ -270,10 +354,13 @@
     const blockedXHRs = new WeakMap();
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;
+    const origGetResponseHeader = XMLHttpRequest.prototype.getResponseHeader;
+    const origGetAllResponseHeaders = XMLHttpRequest.prototype.getAllResponseHeaders;
     const wrappedOpen = {
       open(method, url, ...rest) {
         const bad = isBad(url);
         if (bad) blockedXHRs.set(this, getUrl(url));
+        else fakeXhrResponses.delete(this);
         return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
       },
     }.open;
@@ -291,8 +378,34 @@
         fakeXhrFailure(this);
       },
     }.send;
+    const wrappedGetResponseHeader = {
+      getResponseHeader(name) {
+        const fake = fakeXhrResponses.get(this);
+        if (fake) {
+          return String(name).toLowerCase() === "content-type" ? fake.contentType : null;
+        }
+        return origGetResponseHeader.apply(this, arguments);
+      },
+    }.getResponseHeader;
+    const wrappedGetAllResponseHeaders = {
+      getAllResponseHeaders() {
+        const fake = fakeXhrResponses.get(this);
+        if (fake) return fake.allHeaders;
+        return origGetAllResponseHeaders.apply(this, arguments);
+      },
+    }.getAllResponseHeaders;
     XMLHttpRequest.prototype.open = stealth(wrappedOpen, "open");
     XMLHttpRequest.prototype.send = stealth(wrappedSend, "send");
+    XMLHttpRequest.prototype.getResponseHeader = stealth(
+      wrappedGetResponseHeader,
+      "getResponseHeader",
+      { length: 1 }
+    );
+    XMLHttpRequest.prototype.getAllResponseHeaders = stealth(
+      wrappedGetAllResponseHeaders,
+      "getAllResponseHeaders",
+      { length: 0 }
+    );
   };
 
   patchFetch();
