@@ -48,7 +48,7 @@
   let persona = new Set();
   let noiseEnabled = false;
   let bridgePort = null;
-  const queuedProbeUrls = [];
+  const queuedProbeEvents = [];
   const MAX_QUEUED_PROBES = 1000;
   const BRIDGE_EVENT = "__static_bridge_init__";
 
@@ -60,25 +60,28 @@
     if (typeof d.noiseEnabled === "boolean") noiseEnabled = d.noiseEnabled;
   };
 
-  const postProbe = (url) => {
+  const postProbe = (url, where) => {
     const safeUrl = url == null ? "" : String(url).slice(0, 512);
+    const safeWhere = where == null ? "" : String(where).slice(0, 64);
     if (bridgePort) {
       try {
-        bridgePort.postMessage({ type: "probe_blocked", url: safeUrl });
+        bridgePort.postMessage({ type: "probe_blocked", where: safeWhere, url: safeUrl });
         return;
       } catch {
         bridgePort = null;
       }
     }
-    if (queuedProbeUrls.length < MAX_QUEUED_PROBES) queuedProbeUrls.push(safeUrl);
+    if (queuedProbeEvents.length < MAX_QUEUED_PROBES) {
+      queuedProbeEvents.push({ url: safeUrl, where: safeWhere });
+    }
   };
 
   const flushQueuedProbes = () => {
-    if (!bridgePort || queuedProbeUrls.length === 0) return;
-    const batch = queuedProbeUrls.splice(0, queuedProbeUrls.length);
-    for (const url of batch) {
+    if (!bridgePort || queuedProbeEvents.length === 0) return;
+    const batch = queuedProbeEvents.splice(0, queuedProbeEvents.length);
+    for (const event of batch) {
       try {
-        bridgePort.postMessage({ type: "probe_blocked", url });
+        bridgePort.postMessage({ type: "probe_blocked", ...event });
       } catch {
         bridgePort = null;
         return;
@@ -110,7 +113,7 @@
       console.debug("[Static]", where, "— total blocked:", blocked);
     }
     try {
-      postProbe(url);
+      postProbe(url, where);
     } catch {}
   };
 

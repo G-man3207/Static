@@ -47,6 +47,18 @@ const renderDetails = (resp) => {
       fmt(cumulative) + " probes blocked since install";
   }
 
+  const drift = resp && resp.drift;
+  const driftEl = document.getElementById("drift");
+  if (drift && (drift.level === "changed" || drift.level === "high")) {
+    driftEl.textContent =
+      drift.level === "high"
+        ? "High probe behavior drift on this site"
+        : "Probe behavior changed on this site";
+    driftEl.hidden = false;
+  } else {
+    driftEl.hidden = true;
+  }
+
   const topEl = document.getElementById("top-ids");
   topEl.innerHTML = "";
   if (topIds.length === 0) {

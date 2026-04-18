@@ -179,6 +179,34 @@
       .log-table td.num {
         text-align: right;
       }
+      .drift-cell {
+        white-space: nowrap;
+      }
+      .drift-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 7px;
+        border-radius: 6px;
+        border: 1px solid var(--border-strong);
+        color: var(--text-muted);
+        background: #f6f6f6;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .drift-pill.changed {
+        color: #8a4b00;
+        border-color: #efd4a8;
+        background: #fff7e8;
+      }
+      .drift-pill.high {
+        color: var(--accent);
+        border-color: #ead0d0;
+        background: #fff5f5;
+      }
+      .drift-pill.learning,
+      .drift-pill.stable {
+        color: var(--text-muted);
+      }
       .origin-row {
         cursor: pointer;
         border-top: 1px solid var(--border);
@@ -208,6 +236,28 @@
       }
       .id-list.open {
         display: block;
+      }
+      .drift-detail {
+        margin-bottom: 10px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      .drift-detail-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        margin-bottom: 5px;
+      }
+      .drift-reasons {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .drift-reasons li {
+        margin: 3px 0;
       }
       .id-entry {
         display: flex;

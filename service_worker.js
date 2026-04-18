@@ -61,14 +61,85 @@ const addToCumulative = async (delta) => {
   await chrome.storage.local.set({ cumulative: cumulative + delta });
 };
 
+const sumCounts = (counts) => {
+  let total = 0;
+  for (const value of Object.values(counts || {})) {
+    if (typeof value === "number" && value > 0) total += value;
+  }
+  return total;
+};
+
+const mergeCounts = (target, source) => {
+  let changed = false;
+  for (const [key, value] of Object.entries(source || {})) {
+    if (typeof value === "number" && value > 0) {
+      target[key] = (target[key] || 0) + value;
+      changed = true;
+    }
+  }
+  return changed;
+};
+
+const trimCountMap = (counts, maxEntries) => {
+  const entries = Object.entries(counts || {});
+  if (entries.length <= maxEntries) return counts || {};
+  entries.sort((a, b) => b[1] - a[1]);
+  return Object.fromEntries(entries.slice(0, maxEntries));
+};
+
+const weekKeyFor = (time) => {
+  const d = new Date(time);
+  const year = d.getUTCFullYear();
+  const yearStart = Date.UTC(year, 0, 1);
+  const day = Math.floor((Date.UTC(year, d.getUTCMonth(), d.getUTCDate()) - yearStart) / 86400000);
+  const week = Math.floor(day / 7) + 1;
+  return `${year}-W${String(week).padStart(2, "0")}`;
+};
+
+const ensurePlaybookWeek = (entry, now) => {
+  entry.playbook ||= { weeks: {} };
+  entry.playbook.weeks ||= {};
+  const weekKey = weekKeyFor(now);
+  const week =
+    entry.playbook.weeks[weekKey] ||
+    (entry.playbook.weeks[weekKey] = {
+      total: 0,
+      vectorCounts: {},
+      pathKindCounts: {},
+      idCounts: {},
+      firstSeen: now,
+      lastSeen: now,
+    });
+  week.firstSeen ||= now;
+  week.lastSeen = now;
+  return week;
+};
+
+const enforcePlaybookCaps = (entry) => {
+  if (!entry.playbook || !entry.playbook.weeks) return;
+  for (const week of Object.values(entry.playbook.weeks)) {
+    week.vectorCounts = trimCountMap(week.vectorCounts, 50);
+    week.pathKindCounts = trimCountMap(week.pathKindCounts, 50);
+    week.idCounts = trimCountMap(week.idCounts, 1000);
+  }
+  const weekKeys = Object.keys(entry.playbook.weeks).sort();
+  if (weekKeys.length > 10) {
+    for (const key of weekKeys.slice(0, weekKeys.length - 10)) {
+      delete entry.playbook.weeks[key];
+    }
+  }
+};
+
 const enforceCaps = (probeLog) => {
   for (const origin in probeLog) {
     const entry = probeLog[origin];
+    entry.idCounts ||= {};
     const ids = Object.entries(entry.idCounts);
     if (ids.length > 2000) {
       ids.sort((a, b) => b[1] - a[1]);
       entry.idCounts = Object.fromEntries(ids.slice(0, 2000));
     }
+    enforcePlaybookCaps(entry);
   }
   const origins = Object.keys(probeLog);
   if (origins.length > 100) {
@@ -77,21 +148,162 @@ const enforceCaps = (probeLog) => {
   }
 };
 
-const recordProbes = async (origin, deltaIdCounts) => {
+const recordProbes = async (origin, batch) => {
   const { probe_log = {} } = await chrome.storage.local.get({ probe_log: {} });
   const entry = probe_log[origin] || { idCounts: {}, lastUpdated: 0 };
-  let changed = false;
-  for (const [id, c] of Object.entries(deltaIdCounts)) {
-    if (typeof c === "number" && c > 0) {
-      entry.idCounts[id] = (entry.idCounts[id] || 0) + c;
-      changed = true;
-    }
+  entry.idCounts ||= {};
+  const now = Date.now();
+  const deltaIdCounts = batch && batch.deltaIdCounts ? batch.deltaIdCounts : {};
+  const deltaVectorCounts = batch && batch.deltaVectorCounts ? batch.deltaVectorCounts : {};
+  const deltaPathKindCounts = batch && batch.deltaPathKindCounts ? batch.deltaPathKindCounts : {};
+  const deltaTotal =
+    batch && typeof batch.delta === "number" && batch.delta > 0
+      ? batch.delta
+      : sumCounts(deltaVectorCounts);
+
+  let changed = mergeCounts(entry.idCounts, deltaIdCounts);
+  if (deltaTotal > 0 || sumCounts(deltaVectorCounts) > 0 || sumCounts(deltaPathKindCounts) > 0) {
+    const week = ensurePlaybookWeek(entry, now);
+    week.total += deltaTotal;
+    changed = deltaTotal > 0 || changed;
+    changed = mergeCounts(week.vectorCounts, deltaVectorCounts) || changed;
+    changed = mergeCounts(week.pathKindCounts, deltaPathKindCounts) || changed;
+    changed = mergeCounts(week.idCounts, deltaIdCounts) || changed;
   }
   if (!changed) return;
-  entry.lastUpdated = Date.now();
+  entry.lastUpdated = now;
   probe_log[origin] = entry;
   enforceCaps(probe_log);
   await chrome.storage.local.set({ probe_log });
+};
+
+const latestPlaybookComparison = (entry) => {
+  const weeks = entry && entry.playbook && entry.playbook.weeks;
+  if (!weeks) return null;
+  const keys = Object.keys(weeks).sort();
+  if (keys.length === 0) return null;
+  const latestKey = keys[keys.length - 1];
+  const current = weeks[latestKey];
+  const baseline = { total: 0, vectorCounts: {}, pathKindCounts: {}, idCounts: {} };
+  for (const key of keys.slice(0, -1)) {
+    const week = weeks[key] || {};
+    baseline.total += week.total || 0;
+    mergeCounts(baseline.vectorCounts, week.vectorCounts);
+    mergeCounts(baseline.pathKindCounts, week.pathKindCounts);
+    mergeCounts(baseline.idCounts, week.idCounts);
+  }
+  return { latestKey, current, baseline };
+};
+
+const distributionShift = (a, b) => {
+  const totalA = sumCounts(a);
+  const totalB = sumCounts(b);
+  if (totalA === 0 || totalB === 0) return 0;
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  let sum = 0;
+  for (const key of keys) {
+    sum += Math.abs(((a && a[key]) || 0) / totalA - ((b && b[key]) || 0) / totalB);
+  }
+  return sum / 2;
+};
+
+const repeatedIdSet = (counts) =>
+  new Set(
+    Object.entries(counts || {})
+      .filter(([, count]) => count >= 2)
+      .map(([id]) => id)
+  );
+
+const jaccardDistance = (a, b) => {
+  if (a.size === 0 && b.size === 0) return 0;
+  let intersection = 0;
+  for (const value of a) {
+    if (b.has(value)) intersection++;
+  }
+  return 1 - intersection / new Set([...a, ...b]).size;
+};
+
+const percent = (n) => Math.round(n * 100);
+
+const newKeys = (current, baseline, minCount) =>
+  Object.entries(current || {})
+    .filter(([key, count]) => count >= minCount && !baseline[key])
+    .map(([key]) => key);
+
+const playbookDriftForEntry = (entry) => {
+  const comparison = latestPlaybookComparison(entry);
+  if (!comparison) {
+    return { level: "learning", label: "Learning", reasons: ["No playbook summary yet."] };
+  }
+  const { latestKey, current, baseline } = comparison;
+  const currentTotal = current.total || 0;
+  const baselineTotal = baseline.total || 0;
+  if (currentTotal < 20 || baselineTotal < 20) {
+    return {
+      level: "learning",
+      label: "Learning",
+      week: latestKey,
+      reasons: ["Needs at least 20 probes in the latest week and baseline before scoring drift."],
+    };
+  }
+
+  const reasons = [];
+  let score = 0;
+  const vectorShift = distributionShift(current.vectorCounts, baseline.vectorCounts);
+  const pathShift = distributionShift(current.pathKindCounts, baseline.pathKindCounts);
+  const currentIds = repeatedIdSet(current.idCounts);
+  const baselineIds = repeatedIdSet(baseline.idCounts);
+  const idShift = jaccardDistance(currentIds, baselineIds);
+  const uniqueIds = Object.keys(current.idCounts || {}).length;
+  const singletonIds = Object.values(current.idCounts || {}).filter((count) => count === 1).length;
+  const canaryPressure = uniqueIds ? singletonIds / uniqueIds : 0;
+  const addedVectors = newKeys(current.vectorCounts, baseline.vectorCounts, 3);
+  const addedPathKinds = newKeys(current.pathKindCounts, baseline.pathKindCounts, 3);
+
+  if (vectorShift >= 0.35) {
+    score += 3;
+    reasons.push(`Probe vector mix changed by ${percent(vectorShift)}%.`);
+  } else if (vectorShift >= 0.2) {
+    score += 2;
+    reasons.push(`Probe vector mix changed by ${percent(vectorShift)}%.`);
+  }
+  if (addedVectors.length > 0) {
+    score += 2;
+    reasons.push(`New probe vectors appeared: ${addedVectors.slice(0, 4).join(", ")}.`);
+  }
+  if (pathShift >= 0.35) {
+    score += 2;
+    reasons.push(`Extension-resource path strategy changed by ${percent(pathShift)}%.`);
+  } else if (pathShift >= 0.2) {
+    score += 1;
+    reasons.push(`Extension-resource path strategy changed by ${percent(pathShift)}%.`);
+  }
+  if (addedPathKinds.length > 0) {
+    score += 1;
+    reasons.push(`New path kinds appeared: ${addedPathKinds.slice(0, 4).join(", ")}.`);
+  }
+  if (currentIds.size >= 5 && idShift >= 0.6) {
+    score += 2;
+    reasons.push(`Repeated extension-ID dictionary changed by ${percent(idShift)}%.`);
+  } else if (currentIds.size >= 5 && idShift >= 0.35) {
+    score += 1;
+    reasons.push(`Repeated extension-ID dictionary changed by ${percent(idShift)}%.`);
+  }
+  if (uniqueIds >= 10 && canaryPressure >= 0.35) {
+    score += 2;
+    reasons.push(
+      `One-shot ID pressure is high: ${percent(canaryPressure)}% of IDs were single-hit.`
+    );
+  }
+
+  if (score >= 5) return { level: "high", label: "High drift", week: latestKey, reasons };
+  if (score >= 3) return { level: "changed", label: "Changed", week: latestKey, reasons };
+  return {
+    level: "stable",
+    label: "Stable",
+    week: latestKey,
+    reasons: ["No meaningful change from this origin's previous probe behavior."],
+  };
 };
 
 // ─── Persona generation ───────────────────────────────────────────────────
@@ -216,8 +428,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     const delta = typeof msg.delta === "number" ? msg.delta : 0;
     if (delta > 0) serialize(() => addToCumulative(delta));
-    if (origin && msg.deltaIdCounts && Object.keys(msg.deltaIdCounts).length > 0) {
-      serialize(() => recordProbes(origin, msg.deltaIdCounts));
+    if (origin && delta > 0) {
+      serialize(() =>
+        recordProbes(origin, {
+          delta,
+          deltaIdCounts: msg.deltaIdCounts || {},
+          deltaVectorCounts: msg.deltaVectorCounts || {},
+          deltaPathKindCounts: msg.deltaPathKindCounts || {},
+        })
+      );
     }
     return;
   }
@@ -230,12 +449,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         probe_log: {},
       });
       const state = perTabState.get(msg.tabId);
+      const origin = state ? state.origin : null;
       sendResponse({
         total: sumTabTotal(msg.tabId),
         topIds: topIdsForTab(msg.tabId, 5),
         cumulative: stored.cumulative,
         noiseEnabled: stored.noise_enabled,
-        origin: state ? state.origin : null,
+        origin,
+        drift:
+          origin && stored.probe_log[origin]
+            ? playbookDriftForEntry(stored.probe_log[origin])
+            : null,
         originsLogged: Object.keys(stored.probe_log).length,
       });
     })();

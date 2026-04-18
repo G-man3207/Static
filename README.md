@@ -54,6 +54,21 @@ Websites quietly probe your browser to figure out **which extensions you have in
 
 The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds.
 
+## Playbook drift detection
+
+Static keeps a local, weekly summary of how each origin probes for extensions: probe vector mix (`fetch`, XHR, element setters, workers, EventSource, etc.), extension-resource path kinds (`manifest`, image, script, HTML, CSS, other), repeated ID dictionary changes, and one-shot ID pressure.
+
+The probe log viewer shows a **Probe behavior** indicator per origin:
+
+- **Learning** — not enough baseline data yet.
+- **Stable** — no meaningful change from that origin's previous probe behavior.
+- **Changed** — the origin changed how it checks for extensions.
+- **High drift** — multiple signals shifted at once, such as new probe vectors plus path strategy or ID dictionary changes.
+
+Expanding an origin shows the concrete reasons. The popup also shows a compact warning when the active site has recent `Changed` or `High drift` behavior.
+
+This is an early-warning system, not attribution. It means "this origin changed how it checks for extensions," not necessarily "this origin adapted to Static."
+
 ## Noise mode _(opt-in)_
 
 Blocking a probe proves one thing: "some defense is present." **Noise mode** goes further — it learns each site's probe dictionary from its own behavior, then returns plausible decoy responses for a stable subset of those same IDs. The site sees its targets as "installed" and logs them; the logs get poisoned with IDs the site itself cared about.
@@ -67,11 +82,11 @@ Blocking a probe proves one thing: "some defense is present." **Noise mode** goe
 
 **Scope in v2.0:** Noise mode decoys `fetch` and `XMLHttpRequest`. Element-based probes (`<script src>`, `<img src>`, etc.) stay blocked regardless — consistent behavior beats a partial decoy that could be detected by correlating vectors.
 
-**Privacy:** Probe logs are kept locally in `chrome.storage.local`. Capped at 100 origins × 2,000 IDs each. Nothing leaves your machine unless you explicitly export.
+**Privacy:** Probe logs are kept locally in `chrome.storage.local`. Capped at 100 origins × 2,000 IDs each, with weekly playbook summaries capped to the latest 10 weeks. Nothing leaves your machine unless you explicitly export.
 
 Two export formats are available in the log viewer (click **View probe log** in the popup):
 
-- **Export raw log** — full detail. Contains per-origin timestamps (`lastUpdated`), exact probe counts, your since-install cumulative counter, and the precise `exportedAt` moment. This is fine for your own archive but **should not be published** — timestamp + count patterns can cross-correlate users across sites if multiple raw dumps from different users ever end up in the same hands.
+- **Export raw log** — full detail. Contains per-origin timestamps (`lastUpdated`), exact probe counts, weekly playbook summaries, your since-install cumulative counter, and the precise `exportedAt` moment. This is fine for your own archive but **should not be published** — timestamp + count patterns can cross-correlate users across sites if multiple raw dumps from different users ever end up in the same hands.
 - **Export for research** — anonymized. Replaces precise `exportedAt` with a coarse `"exportMonth": "YYYY-MM"` bucket, drops per-origin `lastUpdated`, drops the `cumulative` counter, coarsens per-ID counts into log-scale buckets (`"2-5"`, `"6-20"`, `"21-100"`, `"101-1000"`, `"1000+"`), drops any ID that was probed fewer than 2 times (canary filter), and drops any origin with fewer than 3 surviving IDs (low-signal noise). Safe to publish or contribute to aggregate datasets documenting how the web fingerprints browser extensions.
 
 Noise mode is **off by default** — turning it on is an active choice to shift Static from pure defense to counter-intelligence. Toggle it from the popup.

@@ -21,8 +21,9 @@ Static stores this local state in your browser profile and never writes to `chro
 2. **Since-install probe counter** — the total number of extension-enumeration probes blocked since you installed Static.
 3. **User secret** — a random 256-bit value generated once, at install time, via `crypto.getRandomValues`. Used only to seed the per-origin decoy personas for Noise mode so that different Static users produce different decoys on the same site. Never displayed anywhere in the UI, never transmitted.
 4. **Preferences** — whether Noise mode is enabled, and which DNR rulesets (LinkedIn telemetry, fingerprinting vendors, CAPTCHA vendors, session replay, Datadog RUM) you have turned on. Noise mode is stored in `chrome.storage.local`; DNR ruleset choices are persisted locally by Chrome's extension ruleset API.
+5. **Playbook summaries** — weekly, per-origin aggregates describing how a site probed for extensions: probe vectors (for example `fetch`, XHR, Worker, EventSource), coarse extension-resource path kinds (for example manifest, image, script, HTML, CSS, other), per-week ID counts, and first/last-seen times for the weekly bucket. These summaries power local "probe behavior changed" indicators and are capped to the latest 10 weekly buckets per origin.
 
-You can erase the probe log, since-install counter, and Noise-mode user secret at any time via the **Clear log** button in Static's log viewer. Ruleset and Noise-mode preferences can be changed in the popup; uninstalling Static removes all extension-managed data.
+You can erase the probe log, playbook summaries, since-install counter, and Noise-mode user secret at any time via the **Clear log** button in Static's log viewer. Ruleset and Noise-mode preferences can be changed in the popup; uninstalling Static removes all extension-managed data.
 
 ## What Static does NOT store or access
 
@@ -42,7 +43,7 @@ Static's only network-related action is **blocking** certain outbound requests i
 ## Permissions Static requests, and why
 
 - **`declarativeNetRequest`** — to block fingerprinting, tracking, and session-replay vendor endpoints at the browser's network layer. Blocking is declarative; Static does not inspect the contents of these requests.
-- **`storage`** — to persist the four items listed under "What Static stores locally" above. Uses `chrome.storage.local` only; never `chrome.storage.sync`.
+- **`storage`** — to persist the items listed under "What Static stores locally" above. Uses `chrome.storage.local` only; never `chrome.storage.sync`.
 - **Content-script `matches: ["<all_urls>"]`** — to register the API interception on every page, because fingerprinting can happen on any site. Static does not read page content in any origin it runs on.
 - No `host_permissions` are additionally requested; the content-script match patterns are the only host access.
 
@@ -50,7 +51,7 @@ Static's only network-related action is **blocking** certain outbound requests i
 
 The log viewer offers two export options. Both save a JSON file to your computer via the browser's native download mechanism; nothing is transmitted.
 
-- **Export raw log** — full fidelity, including per-origin `lastUpdated` timestamps, exact per-ID probe counts, and the since-install cumulative counter. Intended for private archival. If you choose to share this file, be aware that timestamps plus exact counts can be correlated with similar dumps from other users to partially re-identify individual browsing patterns.
+- **Export raw log** — full fidelity, including per-origin `lastUpdated` timestamps, exact per-ID probe counts, weekly playbook summaries, and the since-install cumulative counter. Intended for private archival. If you choose to share this file, be aware that timestamps plus exact counts can be correlated with similar dumps from other users to partially re-identify individual browsing patterns.
 - **Export for research** — anonymized. Replaces the precise `exportedAt` timestamp with a coarse `exportMonth` (`"YYYY-MM"`), drops per-origin `lastUpdated` timestamps, drops the since-install cumulative counter, coarsens per-ID counts into log-scale buckets (`2-5`, `6-20`, `21-100`, `101-1000`, `1000+`), drops IDs probed fewer than 2 times (canary filter), and drops origins with fewer than 3 surviving IDs (low-signal noise filter). Safe to publish or contribute to aggregate datasets that document how the web fingerprints browser extensions.
 
 Static does not retain a copy of any export. Once the file is downloaded, only you have it.
