@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||arkoselabs.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||funcaptcha.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  }
+]

@@ -1,0 +1,33 @@
+name: Format
+
+# Runs Prettier in write-mode on every push to main. If anything changes,
+# commits the result back as a bot commit. No changes → no extra commit.
+# After a push that triggers a bot commit, run `git pull --rebase` locally
+# before your next push.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run Prettier
+        run: npx --yes prettier@3 --write "**/*.{js,html,json,md,yml}"
+
+      - name: Commit formatting changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-format via prettier"
+          commit_user_name: github-actions[bot]
+          commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com

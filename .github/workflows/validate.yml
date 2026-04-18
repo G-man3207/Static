@@ -1,0 +1,80 @@
+name: Validate
+
+# Syntactic + light semantic checks on JSON config and manifest file references.
+# Catches the "missing comma / broken path, Chrome refuses to load the extension"
+# class of mistakes before they hit a browser. Uses `jq`, which is pre-installed
+# on GitHub runners — zero npm, zero install.
+
+on: [push, pull_request]
+
+jobs:
+  json:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: manifest.json is valid JSON
+        run: jq empty manifest.json
+
+      - name: rules/*.json are valid and well-shaped
+        run: |
+          set -e
+          fail=0
+          for f in rules/*.json; do
+            name=$(basename "$f")
+            if ! jq empty "$f" 2>/dev/null; then
+              echo "::error file=$f::not valid JSON"
+              fail=1
+              continue
+            fi
+            if [ "$name" = "META.json" ]; then
+              if ! jq -e 'type == "object" and has("rulesets")' "$f" >/dev/null; then
+                echo "::error file=$f::META.json must be an object with a 'rulesets' key"
+                fail=1
+              fi
+            else
+              if ! jq -e 'type == "array"' "$f" >/dev/null; then
+                echo "::error file=$f::DNR ruleset must be a top-level JSON array"
+                fail=1
+                continue
+              fi
+              missing=$(jq -r '.[] | select((.id | not) or (.priority | not) or (.action | not) or (.condition | not)) | "rule missing required field: \(. | tostring | .[0:80])"' "$f")
+              if [ -n "$missing" ]; then
+                echo "::error file=$f::$missing"
+                fail=1
+              fi
+              dups=$(jq -r 'map(.id) | group_by(.) | map(select(length > 1) | .[0]) | .[]' "$f")
+              if [ -n "$dups" ]; then
+                echo "::error file=$f::duplicate rule IDs: $dups"
+                fail=1
+              fi
+            fi
+            echo "$f: ok"
+          done
+          exit $fail
+
+      - name: manifest file references exist
+        run: |
+          FAIL=0
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if [ ! -f "$path" ]; then
+              echo "::error file=manifest.json::references missing file: $path"
+              FAIL=1
+            else
+              echo "  ok: $path"
+            fi
+          done < <(jq -r '
+            [
+              (.content_scripts[]?.js[]?),
+              (.background.service_worker),
+              (.action.default_popup),
+              (.icons // {} | to_entries[].value),
+              (.action.default_icon // {} | to_entries[].value),
+              (.declarative_net_request.rule_resources[]?.path)
+            ]
+            | map(select(. != null))
+            | unique
+            | .[]
+          ' manifest.json)
+          exit $FAIL
