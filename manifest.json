@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Static",
-  "version": "2.0.0",
-  "description": "Anti-fingerprinting / anti-probing: blocks browser-extension enumeration, client-side fingerprinting vendors, and session-replay telemetry at the script and network layer.",
+  "version": "2.0.1",
+  "description": "Blocks websites from fingerprinting which browser extensions you have installed, and known tracker/session-replay telemetry.",
   "permissions": ["declarativeNetRequest", "storage"],
   "icons": {
     "16": "icons/icon-16.png",
