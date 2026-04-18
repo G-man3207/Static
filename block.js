@@ -50,6 +50,7 @@
   let bridgePort = null;
   const queuedProbeUrls = [];
   const MAX_QUEUED_PROBES = 1000;
+  const BRIDGE_EVENT = "__static_bridge_init__";
 
   const applyConfigUpdate = (d) => {
     if (!d || d.type !== "config_update") return;
@@ -86,19 +87,22 @@
   };
 
   const onBridgeInit = (event) => {
-    if (event.source !== window || bridgePort) return;
-    const d = event.data;
-    if (!d || d.__static_bridge_init__ !== true || !event.ports || !event.ports[0]) return;
+    if (bridgePort) return;
+    const port = event && event.ports && event.ports[0];
+    if (!port || typeof port.postMessage !== "function") return;
 
-    bridgePort = event.ports[0];
+    try {
+      event.stopImmediatePropagation();
+    } catch {}
+    bridgePort = port;
     bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
     try {
       bridgePort.start();
     } catch {}
     flushQueuedProbes();
-    window.removeEventListener("message", onBridgeInit);
+    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
   };
-  window.addEventListener("message", onBridgeInit);
+  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
 
   const bump = (where, url) => {
     blocked++;
@@ -267,6 +271,9 @@
     const text = typeof body === "string" ? body : "";
     queueMicrotask(() => {
       try {
+        xhr.dispatchEvent(new ProgressEvent("loadstart"));
+      } catch {}
+      try {
         Object.defineProperty(xhr, "readyState", { value: 4, configurable: true });
         Object.defineProperty(xhr, "status", { value: 200, configurable: true });
         Object.defineProperty(xhr, "statusText", { value: "OK", configurable: true });
@@ -298,6 +305,18 @@
         }
         bump("xhr", url);
         queueMicrotask(() => {
+          try {
+            this.dispatchEvent(new ProgressEvent("loadstart"));
+          } catch {}
+          try {
+            Object.defineProperty(this, "readyState", { value: 4, configurable: true });
+            Object.defineProperty(this, "status", { value: 0, configurable: true });
+            Object.defineProperty(this, "statusText", { value: "", configurable: true });
+            Object.defineProperty(this, "responseURL", { value: "", configurable: true });
+            Object.defineProperty(this, "responseText", { value: "", configurable: true });
+            Object.defineProperty(this, "response", { value: "", configurable: true });
+            this.dispatchEvent(new Event("readystatechange"));
+          } catch {}
           try {
             this.dispatchEvent(new Event("error"));
           } catch {}
@@ -374,21 +393,42 @@
   );
 
   // ─── 5. navigator.sendBeacon ────────────────────────────────────────────
-  if (navigator.sendBeacon) {
-    const origBeacon = navigator.sendBeacon.bind(navigator);
-    const wrappedBeacon = {
-      sendBeacon(url) {
-        const data = arguments[1];
-        if (isBad(url)) {
-          bump("sendBeacon", url);
-          return true;
-        }
-        return origBeacon(url, data);
-      },
-    }.sendBeacon;
-    try {
-      navigator.sendBeacon = stealth(wrappedBeacon, "sendBeacon", { length: 1 });
-    } catch {}
+  try {
+    const navProto = Object.getPrototypeOf(navigator);
+    const beaconDesc = navProto && Object.getOwnPropertyDescriptor(navProto, "sendBeacon");
+    const origBeacon = beaconDesc && beaconDesc.value;
+    if (typeof origBeacon === "function") {
+      const wrappedBeacon = {
+        sendBeacon(url) {
+          if (isBad(url)) {
+            bump("sendBeacon", url);
+            return true;
+          }
+          return origBeacon.apply(this, arguments);
+        },
+      }.sendBeacon;
+      Object.defineProperty(navProto, "sendBeacon", {
+        ...beaconDesc,
+        value: stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
+      });
+    }
+  } catch {
+    if (navigator.sendBeacon) {
+      const origBeacon = navigator.sendBeacon.bind(navigator);
+      const wrappedBeacon = {
+        sendBeacon(url) {
+          const data = arguments[1];
+          if (isBad(url)) {
+            bump("sendBeacon", url);
+            return true;
+          }
+          return origBeacon(url, data);
+        },
+      }.sendBeacon;
+      try {
+        navigator.sendBeacon = stealth(wrappedBeacon, "sendBeacon", { length: 1 });
+      } catch {}
+    }
   }
 
   // ─── 6. Worker / SharedWorker ───────────────────────────────────────────
@@ -397,16 +437,17 @@
     const wrapped = function (url, opts) {
       if (isBad(url)) {
         bump(label, url);
-        const fake = new EventTarget();
-        fake.postMessage = () => {};
-        fake.terminate = () => {};
-        fake.port = { postMessage: () => {}, start: () => {}, close: () => {} };
-        queueMicrotask(() => {
-          try {
-            fake.dispatchEvent(new Event("error"));
-          } catch {}
-        });
-        return fake;
+        const origin = location && location.origin ? location.origin : "null";
+        throw new DOMException(
+          "Failed to construct '" +
+            label +
+            "': Script at '" +
+            String(url) +
+            "' cannot be accessed from origin '" +
+            origin +
+            "'.",
+          "SecurityError"
+        );
       }
       return new Ctor(url, opts);
     };
@@ -423,16 +464,104 @@
     const wrappedES = function EventSource(url, opts) {
       if (isBad(url)) {
         bump("EventSource", url);
-        const fake = new EventTarget();
-        Object.assign(fake, {
-          readyState: 2,
-          url: String(url),
-          withCredentials: false,
-          close: () => {},
+        const target = new EventTarget();
+        let readyState = origES.CONNECTING;
+        let onerror = null;
+        let onerrorHandler = null;
+        const listenerWrappers = [];
+        const close = stealth(
+          function close() {
+            readyState = origES.CLOSED;
+          },
+          "close",
+          { length: 0 }
+        );
+        const wrapEvent = (event) =>
+          new Proxy(event, {
+            get(e, prop, receiver) {
+              if (prop === "target" || prop === "currentTarget" || prop === "srcElement") {
+                return fake;
+              }
+              if (prop === "composedPath") {
+                return () => [fake];
+              }
+              const value = Reflect.get(e, prop, receiver);
+              return typeof value === "function" ? value.bind(e) : value;
+            },
+          });
+        const captureFor = (options) =>
+          typeof options === "boolean" ? options : !!(options && options.capture);
+        const addEventListener = stealth(
+          function addEventListener(type, listener, options) {
+            if (listener == null) return;
+            const wrapped = (event) => {
+              const eventForPage = wrapEvent(event);
+              if (typeof listener === "function") return listener.call(fake, eventForPage);
+              if (listener && typeof listener.handleEvent === "function") {
+                return listener.handleEvent.call(listener, eventForPage);
+              }
+            };
+            listenerWrappers.push({
+              type,
+              listener,
+              capture: captureFor(options),
+              wrapped,
+            });
+            target.addEventListener(type, wrapped, options);
+          },
+          "addEventListener",
+          { length: 2 }
+        );
+        const removeEventListener = stealth(
+          function removeEventListener(type, listener, options) {
+            const capture = captureFor(options);
+            const index = listenerWrappers.findIndex(
+              (entry) =>
+                entry.type === type && entry.listener === listener && entry.capture === capture
+            );
+            if (index === -1) return;
+            const [entry] = listenerWrappers.splice(index, 1);
+            target.removeEventListener(type, entry.wrapped, options);
+          },
+          "removeEventListener",
+          { length: 2 }
+        );
+        const fake = new Proxy(target, {
+          get(t, prop, receiver) {
+            if (prop === "readyState") return readyState;
+            if (prop === "url") return String(url);
+            if (prop === "withCredentials") return !!(opts && opts.withCredentials);
+            if (prop === "onerror") return onerror;
+            if (prop === "close") return close;
+            if (prop === "addEventListener") return addEventListener;
+            if (prop === "removeEventListener") return removeEventListener;
+            const value = Reflect.get(t, prop, receiver);
+            return typeof value === "function" ? value.bind(t) : value;
+          },
+          set(t, prop, value) {
+            if (prop === "onerror") {
+              if (onerrorHandler) target.removeEventListener("error", onerrorHandler);
+              onerror = typeof value === "function" ? value : null;
+              onerrorHandler = onerror
+                ? (event) => {
+                    try {
+                      onerror.call(fake, wrapEvent(event));
+                    } catch {}
+                  }
+                : null;
+              if (onerrorHandler) target.addEventListener("error", onerrorHandler);
+              return true;
+            }
+            return Reflect.set(t, prop, value);
+          },
+          getPrototypeOf() {
+            return origES.prototype;
+          },
         });
         queueMicrotask(() => {
+          readyState = origES.CLOSED;
           try {
-            fake.dispatchEvent(new Event("error"));
+            target.dispatchEvent(new Event("error"));
           } catch {}
         });
         return fake;
@@ -452,19 +581,26 @@
   // so the whole section is wrapped.
   try {
     if (navigator.serviceWorker && typeof navigator.serviceWorker.register === "function") {
-      const origRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
-      const wrappedRegister = {
-        register(url) {
-          const opts = arguments[1];
-          if (isBad(url)) {
-            bump("serviceWorker.register", url);
-            return Promise.reject(new TypeError("Failed to register a ServiceWorker"));
-          }
-          return origRegister(url, opts);
-        },
-      }.register;
       try {
-        navigator.serviceWorker.register = stealth(wrappedRegister, "register", { length: 1 });
+        const sw = navigator.serviceWorker;
+        const swProto = Object.getPrototypeOf(sw);
+        const registerDesc = swProto && Object.getOwnPropertyDescriptor(swProto, "register");
+        const origRegister = registerDesc && registerDesc.value;
+        if (typeof origRegister === "function") {
+          const wrappedRegister = {
+            register(url) {
+              if (isBad(url)) {
+                bump("serviceWorker.register", url);
+                return Promise.reject(new TypeError("Failed to register a ServiceWorker"));
+              }
+              return origRegister.apply(this, arguments);
+            },
+          }.register;
+          Object.defineProperty(swProto, "register", {
+            ...registerDesc,
+            value: stealth(wrappedRegister, "register", { length: 1 }),
+          });
+        }
       } catch {}
     }
   } catch {}

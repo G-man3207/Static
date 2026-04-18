@@ -62,7 +62,7 @@
   } catch {}
 
   try {
-    window.postMessage({ __static_bridge_init__: true }, "*", [channel.port2]);
+    document.dispatchEvent(new MessageEvent("__static_bridge_init__", { ports: [channel.port2] }));
   } catch {}
 
   const refreshPersona = async () => {
