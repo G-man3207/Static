@@ -77,7 +77,7 @@ test.describe("Static extension integration", () => {
         <!doctype html>
         <meta charset="utf-8">
         <input id="secret" type="email" />
-        <script src="/assets/sentry/bundle.tracing.replay.min.js"></script>
+        <script src="/assets/sentry/bundle.tracing.replay.min.js?user_token=should-not-log"></script>
         <script>
           window.__appValues = [];
           document.addEventListener("input", (event) => {
@@ -177,83 +177,65 @@ test.describe("Static extension integration", () => {
     const page = await extension.context.newPage();
     await page.goto(server.url("/blank.html"));
 
-    const surface = await page.evaluate(() => ({
-      fetch: {
-        length: fetch.length,
-        ownPrototype: Object.prototype.hasOwnProperty.call(fetch, "prototype"),
-        toString: Function.prototype.toString.call(fetch),
-      },
-      xhrOpen: {
-        length: XMLHttpRequest.prototype.open.length,
-        ownPrototype: Object.prototype.hasOwnProperty.call(
-          XMLHttpRequest.prototype.open,
-          "prototype"
-        ),
-        toString: Function.prototype.toString.call(XMLHttpRequest.prototype.open),
-      },
-      xhrSend: {
-        length: XMLHttpRequest.prototype.send.length,
-        ownPrototype: Object.prototype.hasOwnProperty.call(
-          XMLHttpRequest.prototype.send,
-          "prototype"
-        ),
-        toString: Function.prototype.toString.call(XMLHttpRequest.prototype.send),
-      },
-      setAttribute: {
-        length: Element.prototype.setAttribute.length,
-        ownPrototype: Object.prototype.hasOwnProperty.call(
-          Element.prototype.setAttribute,
-          "prototype"
-        ),
-        toString: Function.prototype.toString.call(Element.prototype.setAttribute),
-      },
-      setAttributeNS: {
-        length: Element.prototype.setAttributeNS.length,
-        ownPrototype: Object.prototype.hasOwnProperty.call(
-          Element.prototype.setAttributeNS,
-          "prototype"
-        ),
-        toString: Function.prototype.toString.call(Element.prototype.setAttributeNS),
-      },
-      sendBeacon: {
-        length: navigator.sendBeacon.length,
-        ownOnNavigator: Object.prototype.hasOwnProperty.call(navigator, "sendBeacon"),
-        ownPrototype: Object.prototype.hasOwnProperty.call(navigator.sendBeacon, "prototype"),
-        toString: Function.prototype.toString.call(navigator.sendBeacon),
-      },
-      worker: {
-        length: Worker.length,
-        ownPrototype: Object.prototype.hasOwnProperty.call(Worker, "prototype"),
-        toString: Function.prototype.toString.call(Worker),
-      },
-      sharedWorker:
-        typeof SharedWorker === "function"
+    const surface = await page.evaluate(() => {
+      const fnSurface = (fn) => ({
+        length: fn.length,
+        ownPrototype: Object.prototype.hasOwnProperty.call(fn, "prototype"),
+        toString: Function.prototype.toString.call(fn),
+      });
+      const setterSurface = (proto, prop) => {
+        const desc = Object.getOwnPropertyDescriptor(proto, prop);
+        return {
+          length: desc.set.length,
+          ownPrototype: Object.prototype.hasOwnProperty.call(desc.set, "prototype"),
+          toString: Function.prototype.toString.call(desc.set),
+        };
+      };
+
+      return {
+        fetch: fnSurface(fetch),
+        xhrOpen: fnSurface(XMLHttpRequest.prototype.open),
+        xhrSend: fnSurface(XMLHttpRequest.prototype.send),
+        setAttribute: fnSurface(Element.prototype.setAttribute),
+        setAttributeNS: fnSurface(Element.prototype.setAttributeNS),
+        sendBeacon: {
+          ...fnSurface(navigator.sendBeacon),
+          ownOnNavigator: Object.prototype.hasOwnProperty.call(navigator, "sendBeacon"),
+        },
+        worker: {
+          ...fnSurface(Worker),
+          prototypeConstructorMatches: Worker.prototype.constructor === Worker,
+        },
+        sharedWorker:
+          typeof SharedWorker === "function"
+            ? {
+                ...fnSurface(SharedWorker),
+                prototypeConstructorMatches: SharedWorker.prototype.constructor === SharedWorker,
+              }
+            : null,
+        eventSource: {
+          ...fnSurface(EventSource),
+          prototypeConstructorMatches: EventSource.prototype.constructor === EventSource,
+        },
+        mutationObserver: {
+          ...fnSurface(MutationObserver),
+          prototypeConstructorMatches:
+            MutationObserver.prototype.constructor === MutationObserver,
+        },
+        imageSrcSetter: setterSurface(HTMLImageElement.prototype, "src"),
+        scriptSrcSetter: setterSurface(HTMLScriptElement.prototype, "src"),
+        linkHrefSetter: setterSurface(HTMLLinkElement.prototype, "href"),
+        serviceWorkerRegister: navigator.serviceWorker
           ? {
-              length: SharedWorker.length,
-              ownPrototype: Object.prototype.hasOwnProperty.call(SharedWorker, "prototype"),
-              toString: Function.prototype.toString.call(SharedWorker),
+              ...fnSurface(navigator.serviceWorker.register),
+              ownOnContainer: Object.prototype.hasOwnProperty.call(
+                navigator.serviceWorker,
+                "register"
+              ),
             }
           : null,
-      eventSource: {
-        length: EventSource.length,
-        ownPrototype: Object.prototype.hasOwnProperty.call(EventSource, "prototype"),
-        toString: Function.prototype.toString.call(EventSource),
-      },
-      serviceWorkerRegister: navigator.serviceWorker
-        ? {
-            length: navigator.serviceWorker.register.length,
-            ownOnContainer: Object.prototype.hasOwnProperty.call(
-              navigator.serviceWorker,
-              "register"
-            ),
-            ownPrototype: Object.prototype.hasOwnProperty.call(
-              navigator.serviceWorker.register,
-              "prototype"
-            ),
-            toString: Function.prototype.toString.call(navigator.serviceWorker.register),
-          }
-        : null,
-    }));
+      };
+    });
 
     expect(surface.fetch).toEqual({
       length: 1,
@@ -282,33 +264,52 @@ test.describe("Static extension integration", () => {
     });
     expect(surface.sendBeacon).toEqual({
       length: 1,
-      ownOnNavigator: false,
       ownPrototype: false,
       toString: "function sendBeacon() { [native code] }",
+      ownOnNavigator: false,
     });
     expect(surface.worker).toEqual({
       length: 1,
       ownPrototype: true,
       toString: "function Worker() { [native code] }",
+      prototypeConstructorMatches: true,
     });
     if (surface.sharedWorker) {
       expect(surface.sharedWorker).toEqual({
         length: 1,
         ownPrototype: true,
         toString: "function SharedWorker() { [native code] }",
+        prototypeConstructorMatches: true,
       });
     }
     expect(surface.eventSource).toEqual({
       length: 1,
       ownPrototype: true,
       toString: "function EventSource() { [native code] }",
+      prototypeConstructorMatches: true,
     });
+    expect(surface.mutationObserver).toEqual({
+      length: 1,
+      ownPrototype: true,
+      toString: "function MutationObserver() { [native code] }",
+      prototypeConstructorMatches: true,
+    });
+    for (const accessor of [
+      surface.imageSrcSetter,
+      surface.scriptSrcSetter,
+      surface.linkHrefSetter,
+    ]) {
+      expect(accessor.length).toBe(1);
+      expect(accessor.ownPrototype).toBe(false);
+      expect(accessor.toString).toContain("[native code]");
+      expect(accessor.toString).not.toContain("isBad");
+    }
     if (surface.serviceWorkerRegister) {
       expect(surface.serviceWorkerRegister).toEqual({
         length: 1,
-        ownOnContainer: false,
         ownPrototype: false,
         toString: "function register() { [native code] }",
+        ownOnContainer: false,
       });
     }
   });
@@ -356,6 +357,21 @@ test.describe("Static extension integration", () => {
     );
     expect(storage.cumulative).toBeUndefined();
     expect(storage.probe_log).toBeUndefined();
+  });
+
+  test("does not leak probe activity through page-owned console hooks", async () => {
+    const page = await extension.context.newPage();
+    await page.goto(server.url("/blank.html"));
+
+    const observed = await page.evaluate(async (url) => {
+      const logs = [];
+      console.debug = (...args) => logs.push(args.map(String).join(" "));
+      await fetch(url).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return logs;
+    }, probedUrl());
+
+    expect(observed).toEqual([]);
   });
 
   test("blocks broad extension URL vectors and accumulates per-origin ID counts", async () => {

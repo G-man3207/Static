@@ -454,7 +454,9 @@ const personaFor = async (origin) => {
   const target = sizeRange.min + Math.floor(rng() * (sizeRange.max - sizeRange.min + 1));
 
   const selected = [];
-  for (const slotName of Object.keys(bySlot).sort()) {
+  const slotNames = Object.keys(bySlot).sort();
+  shuffleInPlace(slotNames, rng);
+  for (const slotName of slotNames) {
     if (selected.length >= target) break;
     const opts = bySlot[slotName];
     shuffleInPlace(opts, rng);
@@ -476,6 +478,13 @@ const originFromUrl = (url) => {
   }
 };
 
+const originFromSender = (sender) => {
+  const senderOrigin = originFromUrl(sender && sender.origin);
+  if (senderOrigin && senderOrigin !== "null") return senderOrigin;
+  const senderUrlOrigin = originFromUrl(sender && sender.url);
+  return senderUrlOrigin && senderUrlOrigin !== "null" ? senderUrlOrigin : null;
+};
+
 // ─── Message router ───────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return;
@@ -483,7 +492,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "static_probe_blocked" && sender.tab) {
     const tabId = sender.tab.id;
     const frameId = sender.frameId || 0;
-    const origin = originFromUrl(sender.url);
+    const origin = originFromSender(sender);
     const s = getOrInitTab(tabId);
     if (origin) s.origin = origin;
 
@@ -513,7 +522,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "static_replay_detected" && sender.tab) {
     const tabId = sender.tab.id;
-    const origin = originFromUrl(sender.url);
+    const origin = originFromSender(sender);
     if (origin) getOrInitTab(tabId).origin = origin;
     const signal = typeof msg.signal === "string" ? msg.signal : "unknown";
     if (origin) serialize(() => recordReplayDetection(origin, signal));
@@ -522,7 +531,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "static_adaptive_signal" && sender.tab) {
     const tabId = sender.tab.id;
-    const origin = originFromUrl(sender.url);
+    const origin = originFromSender(sender);
     if (origin) getOrInitTab(tabId).origin = origin;
     if (origin) serialize(() => recordAdaptiveSignal(origin, msg.signal));
     return;
@@ -573,7 +582,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         noise_enabled: false,
         replay_mode: "off",
       });
-      const origin = originFromUrl(sender.url);
+      const origin = originFromSender(sender);
       if (!noise_enabled || !origin) {
         sendResponse({
           ids: [],
