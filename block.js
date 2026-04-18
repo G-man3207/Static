@@ -214,9 +214,6 @@
 
   const bump = (where, url) => {
     blocked++;
-    if (blocked === 1 || blocked === 10 || blocked === 100 || blocked % 500 === 0) {
-      console.debug("[Static]", where, "— total blocked:", blocked);
-    }
     try {
       postProbe(url, where);
     } catch {}
@@ -240,8 +237,23 @@
     }
   };
 
+  const stableUrlLabelFor = (url) => {
+    try {
+      const parsed = new URL(String(url), location.href);
+      return parsed.origin + parsed.pathname;
+    } catch {
+      try {
+        return String(url || "").split(/[?#]/)[0].slice(0, 160);
+      } catch {
+        return "";
+      }
+    }
+  };
+
   const maybeDetectReplayScript = (url) => {
-    if (isReplayScriptUrl(url)) markReplayDetected("script:" + String(url).slice(0, 72));
+    if (isReplayScriptUrl(url)) {
+      markReplayDetected("script:" + stableUrlLabelFor(url).slice(0, 72));
+    }
   };
 
   const getUrl = (input) => {
@@ -353,7 +365,7 @@
   Function.prototype.toString = patchedFnToString;
 
   const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, "function " + nativeName + "() { [native code] }");
+    stealthFns.set(fn, opts.source || "function " + nativeName + "() { [native code] }");
     try {
       Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
     } catch {}
@@ -363,6 +375,30 @@
       } catch {}
     }
     return fn;
+  };
+
+  const nativeSourceFor = (fn, fallbackName) => {
+    try {
+      return origFnToString.call(fn);
+    } catch {
+      return "function " + fallbackName + "() { [native code] }";
+    }
+  };
+
+  const alignPrototypeConstructor = (wrapped, original) => {
+    try {
+      const proto = original && original.prototype;
+      if (!proto) return;
+      const desc = Object.getOwnPropertyDescriptor(proto, "constructor") || {
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      };
+      Object.defineProperty(proto, "constructor", {
+        ...desc,
+        value: wrapped,
+      });
+    } catch {}
   };
 
   // ─── Adaptive behavior scoring (observe-only) ──────────────────────────
@@ -395,7 +431,7 @@
   const currentAdaptiveSource = () => {
     try {
       if (document.currentScript && document.currentScript.src) {
-        return document.currentScript.src;
+        return stableUrlLabelFor(document.currentScript.src);
       }
     } catch {}
     return "inline-or-runtime";
@@ -626,6 +662,7 @@
       return observer;
     };
     WrappedMutationObserver.prototype = OrigMutationObserver.prototype;
+    alignPrototypeConstructor(WrappedMutationObserver, OrigMutationObserver);
     window.MutationObserver = stealth(WrappedMutationObserver, "MutationObserver", { length: 1 });
   }
 
@@ -757,7 +794,9 @@
   const shouldWrapReplayListener = (type, listener) => {
     if (!REPLAY_EVENT_TYPES.has(String(type))) return false;
     if (currentScriptLooksReplay()) {
-      markReplayDetected("listener-script:" + document.currentScript.src.slice(0, 72));
+      markReplayDetected(
+        "listener-script:" + stableUrlLabelFor(document.currentScript.src).slice(0, 72)
+      );
       return true;
     }
     const src = listenerSource(listener);
@@ -1067,11 +1106,8 @@
     if (!proto) return;
     const desc = Object.getOwnPropertyDescriptor(proto, prop);
     if (!desc || !desc.set) return;
-    Object.defineProperty(proto, prop, {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set(v) {
+    const setterHolder = {
+      set [prop](v) {
         if (label === "script.src") maybeDetectReplayScript(v);
         if (isBad(v)) {
           bump(label, v);
@@ -1079,6 +1115,16 @@
         }
         return desc.set.call(this, v);
       },
+    };
+    const guardedSetter = Object.getOwnPropertyDescriptor(setterHolder, prop).set;
+    Object.defineProperty(proto, prop, {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get: desc.get,
+      set: stealth(guardedSetter, "set " + prop, {
+        length: desc.set.length,
+        source: nativeSourceFor(desc.set, "set " + prop),
+      }),
     });
   };
   guardProp(HTMLLinkElement.prototype, "href", "link.href");
@@ -1186,6 +1232,7 @@
       return new Ctor(url, opts);
     };
     wrapped.prototype = Ctor.prototype;
+    alignPrototypeConstructor(wrapped, Ctor);
     return stealth(wrapped, label, { length: 1 });
   };
   if (window.Worker) window.Worker = patchWorkerCtor(window.Worker, "Worker");
@@ -1303,6 +1350,7 @@
       return new origES(url, opts);
     };
     wrappedES.prototype = origES.prototype;
+    alignPrototypeConstructor(wrappedES, origES);
     wrappedES.CONNECTING = 0;
     wrappedES.OPEN = 1;
     wrappedES.CLOSED = 2;
