@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [2.0.4] — 2026-04-18
+
+### Fixed
+
+- Released the formatter-stable replay lint fix so the tagged version is based on the CI-passing `main` state.
+
 ## [2.0.3] — 2026-04-18
 
 ### Added
@@ -95,7 +101,8 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.3...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.4...HEAD
+[2.0.4]: https://github.com/G-man3207/Static/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/G-man3207/Static/compare/v2.0.1...v2.0.3
 [2.0.1]: https://github.com/G-man3207/Static/releases/tag/v2.0.1
 [2.0.0]: https://github.com/G-man3207/Static/releases/tag/v2.0.0
