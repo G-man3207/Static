@@ -16,6 +16,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Popup Replay poisoning selector plus an active-site replay detection indicator.
 - Local replay detection summaries in raw log exports and Clear-log cleanup.
 - Playwright coverage proving replay listeners receive redacted/jittered data while ordinary page handlers receive real values.
+- Local-only adaptive blocking design document covering threat model, calibration, cost asymmetry, DNR race handling, initiator scoping, sampling, and circuit breakers.
+- Observe-only adaptive behavior logging for multi-signal fingerprinting, replay, and anti-bot patterns. No dynamic/session DNR rules are created yet.
+- Popup/log/export visibility for local adaptive signals, plus Playwright calibration coverage for a multi-signal collector and a canvas-heavy negative fixture.
 
 ## [2.0.1] — 2026-04-18
 

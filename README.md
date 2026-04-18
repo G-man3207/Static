@@ -70,6 +70,19 @@ Expanding an origin shows the concrete reasons. The popup also shows a compact w
 
 This is an early-warning system, not attribution. It means "this origin changed how it checks for extensions," not necessarily "this origin adapted to Static."
 
+## Adaptive behavior log _(observe-only)_
+
+Static also has a local-only adaptive behavior logger for future dynamic blocking work. It watches for correlated behavior windows such as canvas/WebGL/audio readback plus navigator reads and network transmission, crypto plus network transmission, or document-wide mutation observation plus aggressive input hooks.
+
+This is intentionally **observe-only** today:
+
+- No backend, no telemetry, no automatic sharing.
+- No dynamic or session DNR rules are created from these signals yet.
+- No request bodies, form values, cookies, local storage, or full URLs are stored.
+- Only compact local metadata is recorded: category, score, origin/path endpoint, source label, reasons, counts, and timestamps.
+
+The design, cost model, calibration requirements, and future blocking stages are documented in `docs/adaptive-blocking.md`.
+
 ## Noise mode _(opt-in)_
 
 Blocking a probe proves one thing: "some defense is present." **Noise mode** goes further — it learns each site's probe dictionary from its own behavior, then returns plausible decoy responses for a stable subset of those same IDs. The site sees its targets as "installed" and logs them; the logs get poisoned with IDs the site itself cared about.

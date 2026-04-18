@@ -11,7 +11,8 @@
 //      then relay it into the MAIN world over the MessageChannel so block.js can
 //      decide fetch-by-fetch whether to reject the probe or return a decoy.
 //      The same channel also forwards local replay-SDK detections and the
-//      opt-in Replay poisoning mode.
+//      opt-in Replay poisoning mode, plus observe-only adaptive behavior
+//      signals. All data stays in chrome.storage.local.
 (() => {
   const EXT_ID_RE = /^(?:chrome|moz|ms-browser|safari-web|edge)-extension:\/\/([a-z0-9]+)/i;
 
@@ -106,6 +107,22 @@
         chrome.runtime.sendMessage({
           type: "static_replay_detected",
           signal: String(data.signal || "unknown").slice(0, 96),
+        });
+      } catch {}
+    } else if (data && data.type === "adaptive_signal") {
+      try {
+        const signal = data.signal || {};
+        chrome.runtime.sendMessage({
+          type: "static_adaptive_signal",
+          signal: {
+            category: String(signal.category || "unknown").slice(0, 48),
+            score: Math.max(0, Math.min(100, Math.round(signal.score || 0))),
+            source: String(signal.source || "unknown").slice(0, 160),
+            endpoint: String(signal.endpoint || "").slice(0, 160),
+            reasons: Array.isArray(signal.reasons)
+              ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
+              : [],
+          },
         });
       } catch {}
     }

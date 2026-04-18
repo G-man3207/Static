@@ -99,6 +99,48 @@ test.describe("Static extension integration", () => {
         }
         document.addEventListener("input", sentryReplayIntegrationRecorder, true);
       `,
+      "/adaptive-positive.html": `
+        <!doctype html>
+        <meta charset="utf-8">
+        <script>
+          (async () => {
+            const canvas = document.createElement("canvas");
+            canvas.width = 32;
+            canvas.height = 32;
+            const ctx = canvas.getContext("2d");
+            ctx.fillStyle = "#123456";
+            ctx.fillRect(0, 0, 32, 32);
+            canvas.toDataURL();
+            const gl = canvas.getContext("webgl");
+            if (gl) {
+              gl.getParameter(gl.VENDOR);
+              gl.getParameter(gl.RENDERER);
+            }
+            void navigator.hardwareConcurrency;
+            void navigator.languages;
+            await crypto.subtle.digest("SHA-256", new TextEncoder().encode("sensor"));
+            await fetch("/collector", { method: "POST", body: "x".repeat(4096) }).catch(() => {});
+            navigator.sendBeacon("/beacon", "x".repeat(4096));
+            window.__adaptiveDone = true;
+          })();
+        </script>
+      `,
+      "/adaptive-canvas-app.html": `
+        <!doctype html>
+        <meta charset="utf-8">
+        <script>
+          const canvas = document.createElement("canvas");
+          canvas.width = 128;
+          canvas.height = 128;
+          const ctx = canvas.getContext("2d");
+          for (let i = 0; i < 40; i++) {
+            ctx.fillStyle = "rgb(" + i + ",20,30)";
+            ctx.fillRect(i % 128, (i * 3) % 128, 10, 10);
+            canvas.toDataURL();
+          }
+          window.__canvasAppDone = true;
+        </script>
+      `,
     });
   });
 
@@ -674,6 +716,61 @@ test.describe("Static extension integration", () => {
     );
   });
 
+  test("Adaptive observe-only logging records multi-signal collectors without adding DNR rules", async () => {
+    const page = await extension.context.newPage();
+    await page.goto(server.url("/adaptive-positive.html"));
+    await expect.poll(() => page.evaluate(() => window.__adaptiveDone === true)).toBe(true);
+
+    await expect
+      .poll(() =>
+        extension.serviceWorker.evaluate(
+          (origin) =>
+            chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => {
+              const entry = adaptive_log && adaptive_log[origin];
+              return entry
+                ? {
+                    scoreMax: entry.scoreMax,
+                    categories: entry.categories,
+                    reasons: entry.reasons,
+                  }
+                : null;
+            }),
+          server.origin
+        )
+      )
+      .toMatchObject({
+        scoreMax: expect.any(Number),
+        categories: { "anti-bot": 1 },
+        reasons: expect.objectContaining({
+          canvas: expect.any(Number),
+          navigator: expect.any(Number),
+          crypto: expect.any(Number),
+          network: expect.any(Number),
+        }),
+      });
+
+    const dynamicRules = await extension.serviceWorker.evaluate(() =>
+      chrome.declarativeNetRequest.getDynamicRules()
+    );
+    const sessionRules = await extension.serviceWorker.evaluate(() =>
+      chrome.declarativeNetRequest.getSessionRules()
+    );
+    expect(dynamicRules).toEqual([]);
+    expect(sessionRules).toEqual([]);
+  });
+
+  test("Adaptive observe-only logging ignores canvas-heavy apps without corroborating signals", async () => {
+    const page = await extension.context.newPage();
+    await page.goto(server.url("/adaptive-canvas-app.html"));
+    await expect.poll(() => page.evaluate(() => window.__canvasAppDone === true)).toBe(true);
+    await page.waitForTimeout(400);
+
+    const storage = await extension.serviceWorker.evaluate(() =>
+      chrome.storage.local.get("adaptive_log")
+    );
+    expect(storage.adaptive_log).toBeUndefined();
+  });
+
   test("blocked EventSource probes keep EventSource shape while failing closed", async () => {
     const page = await extension.context.newPage();
     await page.goto(server.url("/blank.html"));
@@ -828,6 +925,17 @@ test.describe("Static extension integration", () => {
               lastUpdated: Date.now(),
             },
           },
+          adaptive_log: {
+            "https://example.test": {
+              total: 1,
+              scoreMax: 9,
+              categories: { "anti-bot": 1 },
+              reasons: { canvas: 1, crypto: 1, network: 1 },
+              endpoints: { "https://example.test/collect": 1 },
+              sources: { "inline-or-runtime": 1 },
+              lastUpdated: Date.now(),
+            },
+          },
           user_secret: "secret",
           probe_log: {
             "https://example.test": {
@@ -853,6 +961,7 @@ test.describe("Static extension integration", () => {
             "replay_mode",
             "probe_log",
             "replay_log",
+            "adaptive_log",
             "user_secret",
           ])
         )
