@@ -218,7 +218,6 @@
         sendBeacon(url) {
           if (isBad(url)) {
             bump("sendBeacon", url);
-            return true;
           }
           return origBeacon.apply(this, arguments);
         },
@@ -240,7 +239,6 @@
         const data = arguments[1];
         if (isBad(url)) {
           bump("sendBeacon", url);
-          return true;
         }
         return origBeacon(url, data);
       },

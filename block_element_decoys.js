@@ -179,10 +179,24 @@
     return "data:text/plain,";
   };
 
-  const canDecoyElement = (el, prop, value) => {
-    if (!shouldDecoy(value)) return false;
+  const blockedUrlFor = () => "data:image/png;base64,not-valid";
+
+  const canHandlePassiveElement = (el, prop) => {
     const tag = String((el && el.tagName) || "").toLowerCase();
-    return !(prop === "src" && tag === "iframe");
+    if (prop === "src") return ["img", "script", "source", "embed"].includes(tag);
+    if (prop === "href") return tag === "link" || tag === "use" || tag === "image";
+    if (prop === "data") return tag === "object";
+    return false;
+  };
+
+  const elementProbeMode = (el, prop, value) => {
+    if (!isBad(value) || !canHandlePassiveElement(el, prop)) return null;
+    return shouldDecoy(value) ? "decoy" : "block";
+  };
+
+  const replacementUrlFor = (mode, url, prop, el) => {
+    if (mode === "decoy") return decoyUrlFor(url, prop, el);
+    return blockedUrlFor();
   };
 
   const guardProp = (proto, prop, label) => {
@@ -191,11 +205,12 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (isBad(value) && canDecoyElement(this, prop, value)) {
+        const mode = elementProbeMode(this, prop, value);
+        if (mode) {
           const url = getUrl(value);
           rememberOriginal(this, prop, url);
-          postProbe(url, `${label}-decoy`);
-          desc.set.call(this, decoyUrlFor(url, prop, this));
+          postProbe(url, mode === "decoy" ? `${label}-decoy` : label);
+          desc.set.call(this, replacementUrlFor(mode, url, prop, this));
           return;
         }
         forgetOriginal(this, prop);
@@ -238,22 +253,24 @@
     const wrapped = {
       setAttribute(name, value) {
         const prop = attrPropFor(name);
-        if (prop && isBad(value) && canDecoyElement(this, prop, value)) {
+        const mode = prop && elementProbeMode(this, prop, value);
+        if (mode) {
           const url = getUrl(value);
           rememberOriginal(this, prop, url);
-          postProbe(url, `setAttribute-${prop}-decoy`);
-          return origSetAttribute.call(this, name, decoyUrlFor(url, prop, this));
+          postProbe(url, mode === "decoy" ? `setAttribute-${prop}-decoy` : "setAttribute");
+          return origSetAttribute.call(this, name, replacementUrlFor(mode, url, prop, this));
         }
         if (prop) forgetOriginal(this, prop);
         return origSetAttribute.apply(this, arguments);
       },
       setAttributeNS(ns, name, value) {
         const prop = attrPropFor(name);
-        if (prop && isBad(value) && canDecoyElement(this, prop, value)) {
+        const mode = prop && elementProbeMode(this, prop, value);
+        if (mode) {
           const url = getUrl(value);
           rememberOriginal(this, prop, url);
-          postProbe(url, `setAttributeNS-${prop}-decoy`);
-          return origSetAttributeNS.call(this, ns, name, decoyUrlFor(url, prop, this));
+          postProbe(url, mode === "decoy" ? `setAttributeNS-${prop}-decoy` : "setAttributeNS");
+          return origSetAttributeNS.call(this, ns, name, replacementUrlFor(mode, url, prop, this));
         }
         if (prop) forgetOriginal(this, prop);
         return origSetAttributeNS.apply(this, arguments);

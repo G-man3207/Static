@@ -212,8 +212,15 @@ async function probeActiveSurfaces(page, urls) {
         )
       : "unavailable";
 
+    let beacon;
+    try {
+      beacon = navigator.sendBeacon(manifestUrl, "");
+    } catch (error) {
+      beacon = error.name;
+    }
+
     return {
-      beacon: navigator.sendBeacon(manifestUrl, ""),
+      beacon,
       eventSource,
       frame: {
         attr: frame.getAttribute("src"),
@@ -363,7 +370,7 @@ function checkActive(probe) {
   const sharedWorkerOk =
     probe.active.sharedWorker === "unavailable" || probe.active.sharedWorker === "SecurityError";
   return (
-    probe.active.beacon === true &&
+    probe.active.beacon === "TypeError" &&
     probe.active.eventSource.finalReadyState === 2 &&
     probe.active.eventSource.instance === true &&
     probe.active.eventSource.listenerErrors === 1 &&

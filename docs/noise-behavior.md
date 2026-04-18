@@ -5,6 +5,10 @@ Noise mode should be internally consistent before it is broad. A decoy ID should
 
 ## Current Contract
 
+Known plausible extension IDs can enter an origin persona after 2 probes. Unknown extension-shaped
+IDs need stronger repeated evidence before they are eligible, so a site cannot cheaply seed Static's
+persona with fake two-hit canaries.
+
 | Probe vector                                | Eligible Noise persona ID                                                                        | Non-persona or invalid ID       |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------- |
 | `fetch(.../manifest.json)`                  | `200 OK` generic MV3 manifest                                                                    | Native-like `TypeError` failure |
