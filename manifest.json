@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Static",
-  "version": "2.0.1",
+  "version": "2.0.3",
   "description": "Blocks websites from fingerprinting which browser extensions you have installed, and known tracker/session-replay telemetry.",
   "permissions": ["declarativeNetRequest", "storage"],
   "icons": {
