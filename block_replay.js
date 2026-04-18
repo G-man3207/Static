@@ -4,11 +4,11 @@
   const REPLAY_RE =
     /(fullstory|fs\.js|logrocket|mouseflow|smartlook|clarity|heap|pendo|luckyorange|inspectlet|browsee|contentsquare|quantummetric|session[-_]?replay|@sentry\/replay|sentry.*(?:replay|rrweb)|browser\.sentry-cdn\.com\/.*replay|replayIntegration|replayCanvasIntegration|replaysSessionSampleRate|replaysOnErrorSampleRate|beforeAddRecordingEvent|ReplayCanvas|rrweb)/i;
   const REPLAY_GLOBALS =
-    "FS _fs_org _fs_host LogRocket Mouseflow mouseflow smartlook clarity heap pendo __lo_site_id __insp Inspectlet Browsee QuantumMetricAPI".split(
+    `FS _fs_org _fs_host LogRocket Mouseflow mouseflow smartlook clarity heap pendo __lo_site_id __insp Inspectlet Browsee QuantumMetricAPI`.split(
       " "
     );
   const REPLAY_EVENT_TYPES = new Set(
-    "input change keydown keyup keypress click dblclick mousedown mouseup mousemove pointerdown pointerup pointermove scroll focus blur".split(
+    `input change keydown keyup keypress click dblclick mousedown mouseup mousemove pointerdown pointerup pointermove scroll focus blur`.split(
       " "
     )
   );
@@ -126,8 +126,9 @@
 
   const redactPathSegment = (segment) => {
     if (!segment) return segment;
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(segment))
+    if (/^[0-9a-f-]{36}$/i.test(segment)) {
       return ":uuid";
+    }
     if (/^[0-9a-f]{16,}$/i.test(segment)) return ":hex";
     if (/^\d{5,}$/.test(segment)) return ":num";
     if (segment.length < 24 || !/[a-z]/i.test(segment) || !/\d/.test(segment)) return segment;
