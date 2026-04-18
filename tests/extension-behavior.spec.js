@@ -40,6 +40,65 @@ test.describe("Static extension integration", () => {
           <grammarly-card id="custom-card"></grammarly-card>
         </body>
       `,
+      "/replay.html": `
+        <!doctype html>
+        <meta charset="utf-8">
+        <input id="secret" type="email" />
+        <script src="/logrocket-recorder.js"></script>
+        <script>
+          window.__appValues = [];
+          window.__appMoves = [];
+          document.addEventListener("input", (event) => {
+            window.__appValues.push(event.target.value);
+          });
+          document.addEventListener("mousemove", (event) => {
+            window.__appMoves.push({ clientX: event.clientX, clientY: event.clientY });
+          });
+        </script>
+      `,
+      "/logrocket-recorder.js": `
+        window.__replayRecords = [];
+        function LogRocketRecorder(event) {
+          window.__replayRecords.push({
+            type: event.type,
+            value: event.target && event.target.value,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            key: event.key,
+            code: event.code,
+            data: event.data,
+          });
+        }
+        document.addEventListener("input", LogRocketRecorder, true);
+        document.addEventListener("mousemove", LogRocketRecorder, true);
+        window.LogRocket = { init() {} };
+      `,
+      "/sentry-replay.html": `
+        <!doctype html>
+        <meta charset="utf-8">
+        <input id="secret" type="email" />
+        <script src="/assets/sentry/bundle.tracing.replay.min.js"></script>
+        <script>
+          window.__appValues = [];
+          document.addEventListener("input", (event) => {
+            window.__appValues.push(event.target.value);
+          });
+        </script>
+      `,
+      "/assets/sentry/bundle.tracing.replay.min.js": `
+        window.__sentryReplayRecords = [];
+        window.Sentry = {
+          replayIntegration() {},
+          replayCanvasIntegration() {},
+        };
+        function sentryReplayIntegrationRecorder(event) {
+          window.__sentryReplayRecords.push({
+            type: event.type,
+            value: event.target && event.target.value,
+          });
+        }
+        document.addEventListener("input", sentryReplayIntegrationRecorder, true);
+      `,
     });
   });
 
@@ -512,6 +571,109 @@ test.describe("Static extension integration", () => {
     expect(result).toBe("TypeError");
   });
 
+  test("Replay mask mode redacts replay listener values without breaking page handlers", async () => {
+    const page = await extension.context.newPage();
+    await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
+
+    await page.goto(server.url("/replay.html"));
+    await expect.poll(() => page.evaluate(() => Array.isArray(window.__replayRecords))).toBe(true);
+    await page.waitForTimeout(300);
+    await page.locator("#secret").fill("person@example.com");
+
+    const observed = await page.evaluate(() => ({
+      appValue: window.__appValues.at(-1),
+      replayValue: window.__replayRecords.filter((record) => record.type === "input").at(-1).value,
+    }));
+
+    expect(observed).toEqual({
+      appValue: "person@example.com",
+      replayValue: "redacted@example.invalid",
+    });
+
+    await expect
+      .poll(() =>
+        extension.serviceWorker.evaluate(
+          (origin) =>
+            chrome.storage.local.get("replay_log").then(({ replay_log }) => {
+              const entry = replay_log && replay_log[origin];
+              return !!(entry && entry.total > 0);
+            }),
+          server.origin
+        )
+      )
+      .toBe(true);
+  });
+
+  test("Replay noise mode jitters coordinates for replay listeners only", async () => {
+    const page = await extension.context.newPage();
+    await extension.serviceWorker.evaluate(() =>
+      chrome.storage.local.set({ replay_mode: "noise" })
+    );
+
+    await page.goto(server.url("/replay.html"));
+    await expect.poll(() => page.evaluate(() => Array.isArray(window.__replayRecords))).toBe(true);
+    await page.waitForTimeout(300);
+
+    const observed = await page.evaluate(() => {
+      window.__replayRecords.length = 0;
+      window.__appMoves.length = 0;
+      for (let i = 0; i < 12; i++) {
+        document.dispatchEvent(
+          new MouseEvent("mousemove", {
+            bubbles: true,
+            clientX: 100,
+            clientY: 120,
+            screenX: 100,
+            screenY: 120,
+          })
+        );
+      }
+      return {
+        appMoves: window.__appMoves,
+        replayMoves: window.__replayRecords.filter((record) => record.type === "mousemove"),
+      };
+    });
+
+    expect(observed.appMoves).toHaveLength(12);
+    expect(observed.appMoves.every((move) => move.clientX === 100 && move.clientY === 120)).toBe(
+      true
+    );
+    expect(observed.replayMoves).toHaveLength(12);
+    expect(observed.replayMoves.some((move) => move.clientX !== 100 || move.clientY !== 120)).toBe(
+      true
+    );
+  });
+
+  test("Replay poisoning detects Sentry Replay bundle signatures", async () => {
+    const page = await extension.context.newPage();
+    await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
+
+    await page.goto(server.url("/sentry-replay.html"));
+    await expect
+      .poll(() => page.evaluate(() => Array.isArray(window.__sentryReplayRecords)))
+      .toBe(true);
+    await page.waitForTimeout(300);
+    await page.locator("#secret").fill("sentry@example.com");
+
+    const observed = await page.evaluate(() => ({
+      appValue: window.__appValues.at(-1),
+      replayValue: window.__sentryReplayRecords.filter((record) => record.type === "input").at(-1)
+        .value,
+    }));
+
+    expect(observed).toEqual({
+      appValue: "sentry@example.com",
+      replayValue: "redacted@example.invalid",
+    });
+
+    const replayLog = await extension.serviceWorker.evaluate((origin) => {
+      return chrome.storage.local.get("replay_log").then(({ replay_log }) => replay_log[origin]);
+    }, server.origin);
+    expect(Object.keys(replayLog.signals)).toContain(
+      "listener-script:" + server.url("/assets/sentry/bundle.tracing.replay.min.js")
+    );
+  });
+
   test("blocked EventSource probes keep EventSource shape while failing closed", async () => {
     const page = await extension.context.newPage();
     await page.goto(server.url("/blank.html"));
@@ -658,6 +820,14 @@ test.describe("Static extension integration", () => {
         chrome.storage.local.set({
           cumulative: 42,
           noise_enabled: true,
+          replay_mode: "chaos",
+          replay_log: {
+            "https://example.test": {
+              total: 2,
+              signals: { "global:LogRocket": 2 },
+              lastUpdated: Date.now(),
+            },
+          },
           user_secret: "secret",
           probe_log: {
             "https://example.test": {
@@ -677,9 +847,16 @@ test.describe("Static extension integration", () => {
     await expect
       .poll(() =>
         extension.serviceWorker.evaluate(() =>
-          chrome.storage.local.get(["cumulative", "noise_enabled", "probe_log", "user_secret"])
+          chrome.storage.local.get([
+            "cumulative",
+            "noise_enabled",
+            "replay_mode",
+            "probe_log",
+            "replay_log",
+            "user_secret",
+          ])
         )
       )
-      .toEqual({ noise_enabled: true });
+      .toEqual({ noise_enabled: true, replay_mode: "chaos" });
   });
 });

@@ -19,7 +19,7 @@
 
 ## What it does (10-second version)
 
-Websites quietly probe your browser to figure out **which extensions you have installed**, fingerprint your browser, and record your session via vendors like FullStory and LogRocket. Static blocks all three — and in **Noise mode** it goes one step further and feeds those probes plausible-but-fake answers, so the trackers' logs get poisoned with the IDs _they_ cared about.
+Websites quietly probe your browser to figure out **which extensions you have installed**, fingerprint your browser, and record your session via vendors like FullStory and LogRocket. Static blocks all three — and in **Noise mode** it feeds extension probes plausible-but-fake answers, while optional **Replay poisoning** masks and perturbs what detected session-replay listeners see.
 
 > On LinkedIn, Static blocks ~4,500 extension-enumeration probes per page load. The popup shows the live count.
 
@@ -47,10 +47,11 @@ Websites quietly probe your browser to figure out **which extensions you have in
 4. **Network-layer blocklists (togglable).** Declarative-Net-Request rulesets block known:
    - **Fingerprinting / anti-bot vendors** — FingerprintJS, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
    - **CAPTCHA vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA.
-   - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee.
+   - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, and Sentry Replay CDN bundles.
    - **Datadog RUM** _(off by default, also used for legitimate monitoring)_.
    - **LinkedIn** — sensor/metrics collection, conversion tracking, ad pixel, adblock detection, internal Piwik, marketing tag system, LMS analytics.
 5. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` of wrapped functions → native-looking strings, so the blocker's API overrides are indistinguishable from natives under any `toString` check.
+6. **Replay poisoning _(opt-in)._** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
 
 The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds.
 
@@ -90,6 +91,21 @@ Two export formats are available in the log viewer (click **View probe log** in 
 - **Export for research** — anonymized. Replaces precise `exportedAt` with a coarse `"exportMonth": "YYYY-MM"` bucket, drops per-origin `lastUpdated`, drops the `cumulative` counter, coarsens per-ID counts into log-scale buckets (`"2-5"`, `"6-20"`, `"21-100"`, `"101-1000"`, `"1000+"`), drops any ID that was probed fewer than 2 times (canary filter), and drops any origin with fewer than 3 surviving IDs (low-signal noise). Safe to publish or contribute to aggregate datasets documenting how the web fingerprints browser extensions.
 
 Noise mode is **off by default** — turning it on is an active choice to shift Static from pure defense to counter-intelligence. Toggle it from the popup.
+
+## Replay poisoning _(opt-in)_
+
+The session-replay ruleset blocks known replay vendors at the network layer. If a replay SDK still runs because it is self-hosted, newly named, or the ruleset is disabled, Replay poisoning can make its local recording stream less trustworthy without sending fake traffic to the vendor.
+
+Replay poisoning detects likely replay code from script URLs, known globals, and replay-looking listener sources, then wraps only those listeners:
+
+- **Off** — detect and log replay SDK signals locally, but do not alter events.
+- **Mask** — replay listeners see redacted input values (`redacted`, `redacted@example.invalid`, `0`) and generic key/input data. Normal page listeners still see the real value.
+- **Noise** — Mask plus small per-event coordinate and rectangle jitter, so pointer paths and element geometry become less stable.
+- **Chaos** — Noise plus local decoy click/focus/input/blur events delivered directly to detected replay listeners. These synthetic events are not dispatched through the DOM, so normal page handlers do not receive them.
+
+The feature is scoped to replay listeners rather than the whole page. It does not originate network requests, does not call replay vendor APIs, and does not store form contents. Replay detection signals are stored locally by origin so the popup can show when a site has active replay behavior.
+
+Sentry Replay is handled here too. Static looks for replay-specific Sentry signatures such as `replayIntegration`, `replayCanvasIntegration`, replay sample-rate options, `@sentry/replay`, `rrweb`, and Sentry CDN bundle paths containing `replay`. It intentionally does not block all `*.ingest.sentry.io` traffic because regular Sentry error monitoring and Session Replay share envelope transport URLs.
 
 ## Install
 

@@ -23,6 +23,43 @@
 // MessageChannel that bridge.js transfers at document_start.
 (() => {
   const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
+  const REPLAY_RE =
+    /(fullstory|fs\.js|logrocket|mouseflow|smartlook|clarity|heap|pendo|luckyorange|inspectlet|browsee|contentsquare|quantummetric|session[-_]?replay|@sentry\/replay|sentry.*(?:replay|rrweb)|browser\.sentry-cdn\.com\/.*replay|replayIntegration|replayCanvasIntegration|replaysSessionSampleRate|replaysOnErrorSampleRate|beforeAddRecordingEvent|ReplayCanvas|rrweb)/i;
+  const REPLAY_GLOBALS = [
+    "FS",
+    "_fs_org",
+    "_fs_host",
+    "LogRocket",
+    "Mouseflow",
+    "mouseflow",
+    "smartlook",
+    "clarity",
+    "heap",
+    "pendo",
+    "__lo_site_id",
+    "__insp",
+    "Inspectlet",
+    "Browsee",
+    "QuantumMetricAPI",
+  ];
+  const REPLAY_EVENT_TYPES = new Set([
+    "input",
+    "change",
+    "keydown",
+    "keyup",
+    "keypress",
+    "click",
+    "dblclick",
+    "mousedown",
+    "mouseup",
+    "mousemove",
+    "pointerdown",
+    "pointerup",
+    "pointermove",
+    "scroll",
+    "focus",
+    "blur",
+  ]);
   const STRIP_GLOBALS = [
     "__REACT_DEVTOOLS_GLOBAL_HOOK__",
     "__REDUX_DEVTOOLS_EXTENSION__",
@@ -47,9 +84,15 @@
   // Persona state — populated from bridge.js over the private MessageChannel.
   let persona = new Set();
   let noiseEnabled = false;
+  let replayMode = "off";
+  let replayDetected = false;
+  let replayNoiseStarted = false;
   let bridgePort = null;
   const queuedProbeEvents = [];
+  const queuedReplaySignals = [];
+  const reportedReplaySignals = new Set();
   const MAX_QUEUED_PROBES = 1000;
+  const MAX_QUEUED_REPLAY_SIGNALS = 50;
   const BRIDGE_EVENT = "__static_bridge_init__";
 
   const applyConfigUpdate = (d) => {
@@ -58,6 +101,10 @@
       persona = new Set(d.persona.filter((id) => typeof id === "string"));
     }
     if (typeof d.noiseEnabled === "boolean") noiseEnabled = d.noiseEnabled;
+    if (typeof d.replayMode === "string") {
+      replayMode = d.replayMode;
+      if (replayDetected) startReplayNoise();
+    }
   };
 
   const postProbe = (url, where) => {
@@ -76,12 +123,36 @@
     }
   };
 
+  const postReplayDetected = (signal) => {
+    const safeSignal = signal == null ? "unknown" : String(signal).slice(0, 96);
+    if (bridgePort) {
+      try {
+        bridgePort.postMessage({ type: "replay_detected", signal: safeSignal });
+        return;
+      } catch {
+        bridgePort = null;
+      }
+    }
+    if (queuedReplaySignals.length < MAX_QUEUED_REPLAY_SIGNALS) {
+      queuedReplaySignals.push(safeSignal);
+    }
+  };
+
   const flushQueuedProbes = () => {
-    if (!bridgePort || queuedProbeEvents.length === 0) return;
+    if (!bridgePort) return;
     const batch = queuedProbeEvents.splice(0, queuedProbeEvents.length);
     for (const event of batch) {
       try {
         bridgePort.postMessage({ type: "probe_blocked", ...event });
+      } catch {
+        bridgePort = null;
+        return;
+      }
+    }
+    const replaySignals = queuedReplaySignals.splice(0, queuedReplaySignals.length);
+    for (const signal of replaySignals) {
+      try {
+        bridgePort.postMessage({ type: "replay_detected", signal });
       } catch {
         bridgePort = null;
         return;
@@ -115,6 +186,28 @@
     try {
       postProbe(url, where);
     } catch {}
+  };
+
+  const markReplayDetected = (signal) => {
+    if (!replayDetected) replayDetected = true;
+    const safeSignal = signal == null ? "unknown" : String(signal).slice(0, 96);
+    if (!reportedReplaySignals.has(safeSignal)) {
+      reportedReplaySignals.add(safeSignal);
+      postReplayDetected(safeSignal);
+    }
+    startReplayNoise();
+  };
+
+  const isReplayScriptUrl = (url) => {
+    try {
+      return REPLAY_RE.test(String(url || ""));
+    } catch {
+      return false;
+    }
+  };
+
+  const maybeDetectReplayScript = (url) => {
+    if (isReplayScriptUrl(url)) markReplayDetected("script:" + String(url).slice(0, 72));
   };
 
   const getUrl = (input) => {
@@ -238,6 +331,319 @@
     return fn;
   };
 
+  // ─── Replay poisoning (opt-in) ──────────────────────────────────────────
+  const eventJitter = new WeakMap();
+  const targetProxyCache = new WeakMap();
+  const replayListenerWrappers = new WeakMap();
+  const activeReplayListeners = [];
+  let decoySurface = null;
+  let replayScanTicks = 0;
+
+  const shouldRedactTarget = (target) => {
+    if (!target || target.nodeType !== 1) return false;
+    const tag = String(target.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || !!target.isContentEditable;
+  };
+
+  const redactedValueFor = (target) => {
+    const type = String((target && target.type) || "").toLowerCase();
+    if (type === "email") return "redacted@example.invalid";
+    if (type === "number" || type === "range") return "0";
+    if (type === "checkbox" || type === "radio") return target.checked ? "on" : "";
+    return "redacted";
+  };
+
+  const jitterFor = (event) => {
+    let jitter = eventJitter.get(event);
+    if (!jitter) {
+      jitter = {
+        x: Math.floor(Math.random() * 17) - 8,
+        y: Math.floor(Math.random() * 13) - 6,
+      };
+      eventJitter.set(event, jitter);
+    }
+    return jitter;
+  };
+
+  const jitteredNumber = (event, prop, value) => {
+    if (replayMode !== "noise" && replayMode !== "chaos") return value;
+    if (typeof value !== "number") return value;
+    const jitter = jitterFor(event);
+    if (prop === "clientX" || prop === "pageX" || prop === "screenX") return value + jitter.x;
+    if (prop === "clientY" || prop === "pageY" || prop === "screenY") return value + jitter.y;
+    if (prop === "movementX") return value + Math.round(jitter.x / 3);
+    if (prop === "movementY") return value + Math.round(jitter.y / 3);
+    return value;
+  };
+
+  const proxiedReplayTarget = (target) => {
+    if (!target || (typeof target !== "object" && typeof target !== "function")) return target;
+    const cached = targetProxyCache.get(target);
+    if (cached) return cached;
+    const proxy = new Proxy(target, {
+      get(t, prop, receiver) {
+        if (replayMode !== "off" && shouldRedactTarget(t)) {
+          if (prop === "value" || prop === "defaultValue") return redactedValueFor(t);
+          if (prop === "textContent" || prop === "innerText") return "redacted";
+          if (prop === "getAttribute") {
+            return (name) => {
+              if (String(name).toLowerCase() === "value") return redactedValueFor(t);
+              return t.getAttribute(name);
+            };
+          }
+        }
+        if (
+          (replayMode === "noise" || replayMode === "chaos") &&
+          prop === "getBoundingClientRect"
+        ) {
+          return () => {
+            const rect = t.getBoundingClientRect();
+            const x = Math.floor(Math.random() * 7) - 3;
+            const y = Math.floor(Math.random() * 7) - 3;
+            return new DOMRect(rect.x + x, rect.y + y, rect.width, rect.height);
+          };
+        }
+        const value = Reflect.get(t, prop, t);
+        return typeof value === "function" ? value.bind(t) : value;
+      },
+    });
+    targetProxyCache.set(target, proxy);
+    return proxy;
+  };
+
+  const proxiedReplayEvent = (event) => {
+    if (!event || (typeof event !== "object" && typeof event !== "function")) return event;
+    return new Proxy(event, {
+      get(e, prop, receiver) {
+        if (prop === "target" || prop === "currentTarget" || prop === "srcElement") {
+          return proxiedReplayTarget(Reflect.get(e, prop, e));
+        }
+        if (prop === "composedPath") {
+          return () => {
+            try {
+              return e.composedPath().map((node) => proxiedReplayTarget(node));
+            } catch {
+              return [];
+            }
+          };
+        }
+        if (replayMode !== "off") {
+          if (prop === "key") return "x";
+          if (prop === "code") return "KeyX";
+          if (prop === "data") return "x";
+        }
+        const value = Reflect.get(e, prop, e);
+        return jitteredNumber(e, prop, typeof value === "function" ? value.bind(e) : value);
+      },
+    });
+  };
+
+  const listenerSource = (listener) => {
+    try {
+      if (typeof listener === "function") return origFnToString.call(listener);
+      if (listener && typeof listener.handleEvent === "function") {
+        return origFnToString.call(listener.handleEvent);
+      }
+    } catch {}
+    return "";
+  };
+
+  const currentScriptLooksReplay = () => {
+    try {
+      return document.currentScript && isReplayScriptUrl(document.currentScript.src);
+    } catch {
+      return false;
+    }
+  };
+
+  const shouldWrapReplayListener = (type, listener) => {
+    if (!REPLAY_EVENT_TYPES.has(String(type))) return false;
+    if (currentScriptLooksReplay()) {
+      markReplayDetected("listener-script:" + document.currentScript.src.slice(0, 72));
+      return true;
+    }
+    const src = listenerSource(listener);
+    if (src && REPLAY_RE.test(src)) {
+      markReplayDetected("listener-source");
+      return true;
+    }
+    return false;
+  };
+
+  const invokeReplayListener = (listener, thisArg, event) => {
+    const eventForListener = replayMode === "off" ? event : proxiedReplayEvent(event);
+    if (typeof listener === "function") return listener.call(thisArg, eventForListener);
+    if (listener && typeof listener.handleEvent === "function") {
+      return listener.handleEvent.call(listener, eventForListener);
+    }
+  };
+
+  if (typeof EventTarget !== "undefined" && EventTarget.prototype) {
+    const origAddEventListener = EventTarget.prototype.addEventListener;
+    const origRemoveEventListener = EventTarget.prototype.removeEventListener;
+    const wrappedAddEventListener = {
+      addEventListener(type, listener, options) {
+        if (!listener || !shouldWrapReplayListener(type, listener)) {
+          return origAddEventListener.apply(this, arguments);
+        }
+        let wrapped = replayListenerWrappers.get(listener);
+        if (!wrapped) {
+          wrapped = function (event) {
+            return invokeReplayListener(listener, this, event);
+          };
+          replayListenerWrappers.set(listener, wrapped);
+        }
+        const result = origAddEventListener.call(this, type, wrapped, options);
+        const eventType = String(type);
+        if (
+          !activeReplayListeners.some(
+            (entry) =>
+              entry.target === this && entry.type === eventType && entry.listener === listener
+          )
+        ) {
+          activeReplayListeners.push({ target: this, type: eventType, listener });
+        }
+        return result;
+      },
+    }.addEventListener;
+    const wrappedRemoveEventListener = {
+      removeEventListener(type, listener, options) {
+        const wrapped = replayListenerWrappers.get(listener);
+        const eventType = String(type);
+        for (let i = activeReplayListeners.length - 1; i >= 0; i--) {
+          const entry = activeReplayListeners[i];
+          if (entry.target === this && entry.type === eventType && entry.listener === listener) {
+            activeReplayListeners.splice(i, 1);
+          }
+        }
+        return origRemoveEventListener.call(this, type, wrapped || listener, options);
+      },
+    }.removeEventListener;
+    EventTarget.prototype.addEventListener = stealth(wrappedAddEventListener, "addEventListener", {
+      length: 2,
+    });
+    EventTarget.prototype.removeEventListener = stealth(
+      wrappedRemoveEventListener,
+      "removeEventListener",
+      { length: 2 }
+    );
+  }
+
+  const ensureDecoySurface = () => {
+    if (decoySurface && decoySurface.isConnected) return decoySurface;
+    if (!document.documentElement) return null;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.tabIndex = -1;
+    input.autocomplete = "off";
+    input.setAttribute("aria-hidden", "true");
+    input.style.cssText =
+      "position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0;pointer-events:none";
+    document.documentElement.appendChild(input);
+    decoySurface = input;
+    return decoySurface;
+  };
+
+  const replayPathFor = (target) => {
+    if (target === window) return [window];
+    const path = [target];
+    if (target !== document) path.push(document);
+    if (document.documentElement && !path.includes(document.documentElement)) {
+      path.push(document.documentElement);
+    }
+    if (document.body && !path.includes(document.body)) path.push(document.body);
+    path.push(window);
+    return path.filter(Boolean);
+  };
+
+  const makeReplayEvent = (type, target, props) => {
+    const event = {
+      type,
+      target,
+      currentTarget: target,
+      srcElement: target,
+      bubbles: true,
+      cancelable: true,
+      defaultPrevented: false,
+      isTrusted: false,
+      timeStamp:
+        typeof performance !== "undefined" && performance.now ? performance.now() : Date.now(),
+      composedPath: () => replayPathFor(target),
+      preventDefault() {
+        this.defaultPrevented = true;
+      },
+      stopPropagation() {},
+      stopImmediatePropagation() {},
+    };
+    return Object.assign(event, props || {});
+  };
+
+  const invokeActiveReplayListeners = (type, event) => {
+    for (const entry of activeReplayListeners.slice()) {
+      if (entry.type !== type) continue;
+      try {
+        event.currentTarget = entry.target;
+        invokeReplayListener(entry.listener, entry.target, event);
+      } catch {}
+    }
+  };
+
+  const dispatchReplayNoise = () => {
+    if (!replayDetected || (replayMode !== "noise" && replayMode !== "chaos")) return;
+    const x = 40 + Math.floor(Math.random() * Math.max(1, innerWidth - 80));
+    const y = 40 + Math.floor(Math.random() * Math.max(1, innerHeight - 80));
+    invokeActiveReplayListeners(
+      "mousemove",
+      makeReplayEvent("mousemove", document, { clientX: x, clientY: y, screenX: x, screenY: y })
+    );
+    if (replayMode === "chaos") {
+      const target = ensureDecoySurface();
+      if (target) {
+        target.value = "redacted";
+        invokeActiveReplayListeners(
+          "click",
+          makeReplayEvent("click", target, { clientX: x, clientY: y, screenX: x, screenY: y })
+        );
+        invokeActiveReplayListeners("focus", makeReplayEvent("focus", target));
+        invokeActiveReplayListeners(
+          "input",
+          makeReplayEvent("input", target, { data: "x", inputType: "insertText" })
+        );
+        invokeActiveReplayListeners("blur", makeReplayEvent("blur", target));
+      }
+    }
+  };
+
+  function startReplayNoise() {
+    if (replayNoiseStarted || (replayMode !== "noise" && replayMode !== "chaos")) return;
+    replayNoiseStarted = true;
+    let sent = 0;
+    const loop = () => {
+      if (!replayDetected || (replayMode !== "noise" && replayMode !== "chaos") || sent >= 24) {
+        replayNoiseStarted = false;
+        return;
+      }
+      sent++;
+      dispatchReplayNoise();
+      setTimeout(loop, 900 + Math.floor(Math.random() * 900));
+    };
+    setTimeout(loop, 500 + Math.floor(Math.random() * 500));
+  }
+
+  const scanReplaySignals = () => {
+    replayScanTicks++;
+    for (const key of REPLAY_GLOBALS) {
+      try {
+        if (window[key] != null) markReplayDetected("global:" + key);
+      } catch {}
+    }
+    try {
+      for (const script of document.scripts || []) maybeDetectReplayScript(script.src);
+    } catch {}
+    if (replayScanTicks < 20) setTimeout(scanReplaySignals, 500);
+  };
+  setTimeout(scanReplaySignals, 0);
+
   // ─── 1. fetch ───────────────────────────────────────────────────────────
   const origFetch = window.fetch;
   if (typeof origFetch === "function") {
@@ -345,6 +751,7 @@
       enumerable: desc.enumerable,
       get: desc.get,
       set(v) {
+        if (label === "script.src") maybeDetectReplayScript(v);
         if (isBad(v)) {
           bump(label, v);
           return;
@@ -372,6 +779,7 @@
         const argValue = args.length >= 3 ? args[2] : args[1];
         if (typeof argName === "string") {
           const n = argName.toLowerCase();
+          if (n === "src") maybeDetectReplayScript(argValue);
           if ((n === "src" || n === "href" || n === "data") && isBad(argValue)) {
             bump(label, argValue);
             return;

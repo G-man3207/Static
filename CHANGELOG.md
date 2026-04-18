@@ -11,6 +11,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Local playbook drift detection. Static now stores weekly per-origin probe summaries for vector mix, path-kind mix, repeated ID dictionaries, and one-shot ID pressure, then surfaces `Learning` / `Stable` / `Changed` / `High drift` indicators in the probe log.
 - Popup warning for active sites whose probe behavior has recently changed or drifted heavily from their local baseline.
 - Playwright coverage for playbook summary recording and log-viewer drift indicators.
+- Opt-in Replay poisoning modes (`off`, `mask`, `noise`, `chaos`) that detect likely session-replay SDKs, redact form values for replay listeners, jitter replay-only coordinates/geometry, and deliver local decoy events directly to replay listeners in Chaos mode.
+- Sentry Replay coverage via replay-specific Sentry signatures and narrow blocking for Sentry CDN replay bundles.
+- Popup Replay poisoning selector plus an active-site replay detection indicator.
+- Local replay detection summaries in raw log exports and Clear-log cleanup.
+- Playwright coverage proving replay listeners receive redacted/jittered data while ordinary page handlers receive real values.
 
 ## [2.0.1] — 2026-04-18
 

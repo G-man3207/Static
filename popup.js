@@ -33,6 +33,13 @@ const fetchRuleCount = async (rulesetId) => {
   }
 };
 
+const pushConfigUpdateToActiveTab = async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab && tab.id != null) {
+    chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {});
+  }
+};
+
 const renderDetails = (resp) => {
   const total = resp && typeof resp.total === "number" ? resp.total : 0;
   const cumulative = resp && typeof resp.cumulative === "number" ? resp.cumulative : 0;
@@ -92,10 +99,7 @@ const renderNoiseSection = (resp) => {
       await chrome.runtime.sendMessage({ type: "static_set_noise", enabled: desired });
       // Push the new state to the active tab's content scripts via activeTab
       // so the current page sees the change without a reload.
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab && tab.id != null) {
-        chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {});
-      }
+      await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] noise toggle failed", e);
       toggle.checked = !desired;
@@ -114,6 +118,29 @@ const renderNoiseSection = (resp) => {
       window.close();
     });
   }
+};
+
+const renderReplaySection = (resp) => {
+  const select = document.getElementById("replay-mode");
+  const detected = document.getElementById("replay-detected");
+  const allowed = new Set(["off", "mask", "noise", "chaos"]);
+  let current = resp && allowed.has(resp.replayMode) ? resp.replayMode : "off";
+  select.value = current;
+  detected.hidden = !(resp && resp.replayDetected);
+
+  select.addEventListener("change", async () => {
+    const desired = allowed.has(select.value) ? select.value : "off";
+    const previous = current;
+    try {
+      const saved = await chrome.runtime.sendMessage({ type: "static_set_replay", mode: desired });
+      current = saved && allowed.has(saved.mode) ? saved.mode : desired;
+      select.value = current;
+      await pushConfigUpdateToActiveTab();
+    } catch (e) {
+      console.error("[Static] replay mode update failed", e);
+      select.value = previous;
+    }
+  });
 };
 
 const renderRulesets = (enabledArr, counts) => {
@@ -180,5 +207,6 @@ const renderRulesets = (enabledArr, counts) => {
 
   renderDetails(details);
   renderNoiseSection(details);
+  renderReplaySection(details);
   renderRulesets(enabledArr, counts);
 })();

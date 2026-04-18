@@ -200,6 +200,54 @@
         margin-top: 3px;
         line-height: 1.4;
       }
+      .replay-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+      }
+      .replay-row .col {
+        flex: 1;
+        min-width: 0;
+      }
+      .replay-row .ttl {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .replay-row .desc {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 3px;
+        line-height: 1.4;
+      }
+      .replay-select {
+        min-width: 76px;
+        margin-top: 1px;
+        padding: 4px 6px;
+        color: var(--text);
+        background: #f6f6f6;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        font: inherit;
+        font-size: 11px;
+      }
+      .replay-detected {
+        display: inline-flex;
+        margin-top: 8px;
+        padding: 4px 7px;
+        border: 1px solid #ead0d0;
+        border-radius: 6px;
+        color: var(--accent);
+        background: #fff5f5;
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .replay-detected[hidden] {
+        display: none;
+      }
       /* iOS-style switch */
       .switch {
         position: relative;
@@ -369,6 +417,22 @@
           <span class="switch-bg"></span>
         </label>
       </div>
+      <div class="replay-row">
+        <div class="col">
+          <div class="ttl">Replay poisoning</div>
+          <div class="desc">
+            When a replay SDK is detected, mask what its listeners see and optionally add local
+            motion noise. No fake traffic is sent to replay vendors.
+          </div>
+        </div>
+        <select class="replay-select" id="replay-mode" aria-label="Replay poisoning mode">
+          <option value="off">Off</option>
+          <option value="mask">Mask</option>
+          <option value="noise">Noise</option>
+          <option value="chaos">Chaos</option>
+        </select>
+      </div>
+      <div class="replay-detected" id="replay-detected" hidden>Replay SDK detected here</div>
       <button class="log-link" id="view-log" hidden>
         <span class="log-link-text">View probe log</span>
         <span class="log-link-stats" id="noise-stats"></span>
