@@ -45,6 +45,96 @@
     }
   },
   {
+    "id": 20,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||lr-ingest.io^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 21,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||lr-in-prod.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 22,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||lr-ingest.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 23,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||ingest-lr.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 24,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||lr-intake.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 25,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||intake-lr.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 26,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||logr-ingest.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 27,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||lrkt-in.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 28,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||lgrckt-in.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 29,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||logr-in.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
     "id": 6,
     "priority": 1,
     "action": { "type": "block" },
@@ -108,6 +198,15 @@
     }
   },
   {
+    "id": 30,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||c.bing.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
     "id": 13,
     "priority": 1,
     "action": { "type": "block" },
@@ -122,6 +221,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||heapanalytics.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 31,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||heap-api.com^",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
   },

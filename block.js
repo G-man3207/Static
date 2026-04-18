@@ -385,28 +385,32 @@
     window.fetch = stealth(wrappedFetch, "fetch", { length: 1 });
   };
 
-  const fakeXhrSuccess = (xhr, url, decoyBody = buildDecoyBody(url)) => {
+  const emptyFakeXhr = (readyState) => ({
+    allHeaders: "",
+    contentType: null,
+    readyState,
+    response: "",
+    responseText: "",
+    responseTextError: false,
+    responseURL: "",
+    status: 0,
+    statusText: "",
+  });
+
+  const fakeXhrSuccess = (xhr, blocked, decoyBody = buildDecoyBody(blocked.url)) => {
+    const { async = true, method = "GET", url } = blocked;
     if (!decoyBody) {
-      fakeXhrFailure(xhr);
+      fakeXhrFailure(xhr, async);
       return;
     }
-    const { body, contentType } = decoyBody;
-    const text = textBodyFor(body);
+    const { contentType } = decoyBody;
+    const body = method === "HEAD" ? "" : decoyBody.body;
+    const text = method === "HEAD" ? "" : textBodyFor(body);
     const responseType = String(xhr.responseType || "");
     const responseValue = responseValueFor(xhr, body, contentType, text);
-    const fake = {
-      allHeaders: "",
-      contentType: null,
-      readyState: 1,
-      response: "",
-      responseText: "",
-      responseTextError: false,
-      responseURL: "",
-      status: 0,
-      statusText: "",
-    };
+    const fake = emptyFakeXhr(1);
     fakeXhrResponses.set(xhr, fake);
-    queueMicrotask(() => {
+    const settle = () => {
       try {
         xhr.dispatchEvent(new ProgressEvent("loadstart"));
       } catch {}
@@ -432,20 +436,15 @@
         xhr.dispatchEvent(new Event("load"));
         xhr.dispatchEvent(new Event("loadend"));
       } catch {}
-    });
+    };
+    if (async) queueMicrotask(settle);
+    else settle();
   };
 
-  const fakeXhrFailure = (xhr) => {
-    const fake = {
-      readyState: 4,
-      response: "",
-      responseText: "",
-      responseURL: "",
-      status: 0,
-      statusText: "",
-    };
+  const fakeXhrFailure = (xhr, async = true) => {
+    const fake = emptyFakeXhr(4);
     fakeXhrResponses.set(xhr, { ...fake, readyState: 1 });
-    queueMicrotask(() => {
+    const settle = () => {
       try {
         xhr.dispatchEvent(new ProgressEvent("loadstart"));
       } catch {}
@@ -459,7 +458,9 @@
       try {
         xhr.dispatchEvent(new Event("loadend"));
       } catch {}
-    });
+    };
+    if (async) queueMicrotask(settle);
+    else settle();
   };
 
   const patchXhr = () => {
@@ -473,6 +474,7 @@
         const bad = isBad(url);
         if (bad) {
           blockedXHRs.set(this, {
+            async: rest.length === 0 || rest[0] !== false,
             method: String(method || "GET").toUpperCase(),
             url: getUrl(url),
           });
@@ -488,11 +490,11 @@
         const decoyBody = buildDecoyBody(blocked.url);
         if (shouldDecoy(blocked.url) && isDecoyableMethod(blocked.method) && decoyBody) {
           bump("xhr-decoy", blocked.url);
-          fakeXhrSuccess(this, blocked.url, decoyBody);
+          fakeXhrSuccess(this, blocked, decoyBody);
           return;
         }
         bump("xhr", blocked.url);
-        fakeXhrFailure(this);
+        fakeXhrFailure(this, blocked.async);
       },
     }.send;
     const wrappedGetResponseHeader = {

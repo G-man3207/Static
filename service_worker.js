@@ -459,9 +459,22 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
   return true;
 };
 
+const broadcastConfigUpdate = async () => {
+  try {
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) => {
+        if (tab.id == null) return null;
+        return chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {});
+      })
+    );
+  } catch {}
+};
+
 const handleSetNoise = (msg, _sender, sendResponse) => {
   (async () => {
     await chrome.storage.local.set({ noise_enabled: !!msg.enabled });
+    await broadcastConfigUpdate();
     sendResponse({ ok: true });
   })();
   return true;
@@ -472,6 +485,7 @@ const handleSetReplay = (msg, _sender, sendResponse) => {
     const allowed = new Set(["off", "mask", "noise", "chaos"]);
     const mode = allowed.has(msg.mode) ? msg.mode : "off";
     await chrome.storage.local.set({ replay_mode: mode });
+    await broadcastConfigUpdate();
     sendResponse({ ok: true, mode });
   })();
   return true;

@@ -22,7 +22,11 @@ persona with fake two-hit canaries.
 | `iframe.src`                                | Fail-closed                                                                                      | Fail-closed                     |
 | `object.data`, `embed.src`, `source.src`    | Receives an inert data URL matched to the path kind where possible                               | Blocked                         |
 | `audio.src`, `video.src`, `track.src`       | Fail-closed                                                                                      | Fail-closed                     |
+| `Audio(url)`                                | Fail-closed without storing extension audio targets                                              | Fail-closed                     |
+| `a.href`, `area.href`, `base.href`, `a.ping` | Fail-closed without storing extension navigation or ping targets                                | Fail-closed                     |
+| `form.action`, `button.formAction`, `input.formAction` | Fail-closed without storing extension submission targets                               | Fail-closed                     |
 | CSSOM `insertRule`, `replace`, `replaceSync` | Fail-closed without inserting extension-URL rules                                                 | Fail-closed                     |
+| `<style>` text / `innerHTML` / DOM insertion | Fail-closed before extension `@import` URLs can persist in style text                            | Fail-closed                     |
 | CSS declaration and style-attribute URLs    | Fail-closed or scrubbed before resource load                                                     | Fail-closed                     |
 | `Worker`, `SharedWorker`                    | Fail-closed                                                                                      | Fail-closed                     |
 | `EventSource`                               | Fail-closed with EventSource-shaped error behavior                                               | Fail-closed                     |

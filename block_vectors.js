@@ -136,20 +136,23 @@
     }
   };
 
+  const badUrlFor = (input) => (isBad(input) ? getUrl(input) : "");
+
   const bump = (where, url) => {
     try {
       postProbe(url, where);
     } catch {}
   };
 
-  const guardProp = (proto, prop, label) => {
+  const guardProp = (proto, prop, label, urlFinder = badUrlFor) => {
     if (!proto) return;
     const desc = Object.getOwnPropertyDescriptor(proto, prop);
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (isBad(value)) {
-          bump(label, value);
+        const url = urlFinder(value);
+        if (url) {
+          bump(label, url);
           return;
         }
         desc.set.call(this, value);
@@ -172,8 +175,25 @@
     guardProp(HTMLScriptElement.prototype, "src", "script.src");
     guardProp(HTMLImageElement.prototype, "src", "img.src");
     guardProp(HTMLIFrameElement.prototype, "src", "iframe.src");
+    if (typeof HTMLAnchorElement !== "undefined") {
+      guardProp(HTMLAnchorElement.prototype, "href", "anchor.href");
+      guardProp(HTMLAnchorElement.prototype, "ping", "anchor.ping", firstBadUrlIn);
+    }
+    if (typeof HTMLAreaElement !== "undefined") {
+      guardProp(HTMLAreaElement.prototype, "href", "area.href");
+    }
+    if (typeof HTMLBaseElement !== "undefined") {
+      guardProp(HTMLBaseElement.prototype, "href", "base.href");
+    }
     if (typeof HTMLInputElement !== "undefined") {
       guardProp(HTMLInputElement.prototype, "src", "input.src");
+      guardProp(HTMLInputElement.prototype, "formAction", "input.formAction");
+    }
+    if (typeof HTMLFormElement !== "undefined") {
+      guardProp(HTMLFormElement.prototype, "action", "form.action");
+    }
+    if (typeof HTMLButtonElement !== "undefined") {
+      guardProp(HTMLButtonElement.prototype, "formAction", "button.formAction");
     }
     if (typeof HTMLMediaElement !== "undefined") {
       guardProp(HTMLMediaElement.prototype, "src", "media.src");
@@ -196,20 +216,28 @@
   };
 
   const attrGuard = (origFn, label, name, length) => {
+    const blockedAttrUrl = (attrName, value) => {
+      if (attrName === "ping") return firstBadUrlIn(value);
+      if (
+        attrName === "src" ||
+        attrName === "href" ||
+        attrName === "data" ||
+        attrName === "poster" ||
+        attrName === "action" ||
+        attrName === "formaction"
+      ) {
+        return badUrlFor(value);
+      }
+      return "";
+    };
     const wrapped = {
       [name](...args) {
         const argName = args.length >= 3 ? args[1] : args[0];
         const argValue = args.length >= 3 ? args[2] : args[1];
         if (typeof argName === "string") {
-          const lowerName = argName.toLowerCase();
-          if (
-            (lowerName === "src" ||
-              lowerName === "href" ||
-              lowerName === "data" ||
-              lowerName === "poster") &&
-            isBad(argValue)
-          ) {
-            bump(label, argValue);
+          const url = blockedAttrUrl(argName.toLowerCase(), argValue);
+          if (url) {
+            bump(label, url);
             return;
           }
         }
@@ -244,6 +272,7 @@
         sendBeacon(url) {
           if (isBad(url)) {
             bump("sendBeacon", url);
+            throw new TypeError("Failed to execute 'sendBeacon' on 'Navigator': Invalid URL");
           }
           return origBeacon.apply(this, arguments);
         },
@@ -265,6 +294,7 @@
         const data = arguments[1];
         if (isBad(url)) {
           bump("sendBeacon", url);
+          throw new TypeError("Failed to execute 'sendBeacon' on 'Navigator': Invalid URL");
         }
         return origBeacon(url, data);
       },
@@ -296,9 +326,22 @@
 
   const patchWorkers = () => {
     if (window.Worker) window.Worker = patchWorkerCtor(window.Worker, "Worker");
-    if (window.SharedWorker) {
-      window.SharedWorker = patchWorkerCtor(window.SharedWorker, "SharedWorker");
-    }
+    if (window.SharedWorker) window.SharedWorker = patchWorkerCtor(window.SharedWorker, "SharedWorker");
+  };
+
+  const patchAudioCtor = () => {
+    if (typeof window.Audio !== "function") return;
+    const OrigAudio = window.Audio;
+    const wrappedAudio = function Audio(src) {
+      if (arguments.length > 0 && isBad(src)) {
+        bump("Audio", src);
+        return new OrigAudio();
+      }
+      return new OrigAudio(...arguments);
+    };
+    wrappedAudio.prototype = OrigAudio.prototype;
+    alignPrototypeConstructor(wrappedAudio, OrigAudio);
+    window.Audio = stealth(wrappedAudio, "Audio", { length: OrigAudio.length, source: nativeSourceFor(OrigAudio, "Audio") });
   };
 
   const makeBlockedEventSource = (url, opts, origES) => {
@@ -442,7 +485,8 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       [name](...args) {
-        const url = firstBadUrlIn(args[0]);
+        const target = name === "addRule" ? `${args[0] || ""} ${args[1] || ""}` : args[0];
+        const url = firstBadUrlIn(target);
         if (url) {
           bump(label, url);
           return onBlocked.call(this, args);
@@ -468,12 +512,16 @@
       return Promise.resolve(this);
     });
     patchCssMethod(CSSStyleSheet.prototype, "replaceSync", "css.replaceSync", function () {});
+    patchCssMethod(CSSStyleSheet.prototype, "addRule", "css.addRule", function () {
+      return -1;
+    });
   };
 
   patchElementProperties();
   patchAttributes();
   patchBeacon();
   patchWorkers();
+  patchAudioCtor();
   patchEventSource();
   patchServiceWorkerRegister();
   patchCssRules();
