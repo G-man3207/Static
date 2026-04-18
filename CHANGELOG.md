@@ -6,8 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [2.0.3] — 2026-04-18
+
 ### Added
 
+- Passive element Noise decoys for eligible personas, covering image, script, stylesheet, source, embed, and object probes while keeping active surfaces fail-closed.
+- Cross-vector Noise behavior contract and adversarial Playwright regression coverage.
 - Local playbook drift detection. Static now stores weekly per-origin probe summaries for vector mix, path-kind mix, repeated ID dictionaries, and one-shot ID pressure, then surfaces `Learning` / `Stable` / `Changed` / `High drift` indicators in the probe log.
 - Popup warning for active sites whose probe behavior has recently changed or drifted heavily from their local baseline.
 - Playwright coverage for playbook summary recording and log-viewer drift indicators.
@@ -19,6 +23,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Local-only adaptive blocking design document covering threat model, calibration, cost asymmetry, DNR race handling, initiator scoping, sampling, and circuit breakers.
 - Observe-only adaptive behavior logging for multi-signal fingerprinting, replay, and anti-bot patterns. No dynamic/session DNR rules are created yet.
 - Popup/log/export visibility for local adaptive signals, plus Playwright calibration coverage for a multi-signal collector and a canvas-heavy negative fixture.
+
+### Fixed
+
+- Tightened stealth wrapper shape, extension ID validation, local high-entropy path redaction, and open shadow-root DOM marker scrubbing.
 
 ## [2.0.1] — 2026-04-18
 
@@ -87,6 +95,7 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.3...HEAD
+[2.0.3]: https://github.com/G-man3207/Static/compare/v2.0.1...v2.0.3
 [2.0.1]: https://github.com/G-man3207/Static/releases/tag/v2.0.1
 [2.0.0]: https://github.com/G-man3207/Static/releases/tag/v2.0.0
