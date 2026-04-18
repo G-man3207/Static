@@ -29,6 +29,29 @@ const fixtureFiles = {
       <grammarly-card id="custom-card"></grammarly-card>
     </body>
   `,
+  "/shadow-dom.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <script>
+        const host = document.createElement("div");
+        host.id = "host";
+        const root = host.attachShadow({ mode: "open" });
+        root.innerHTML =
+          '<div id="inside" data-grammarly-extension="1" class="keep grammarly-card"></div>' +
+          '<grammarly-card id="shadow-card"></grammarly-card>';
+        document.body.appendChild(host);
+        setTimeout(() => {
+          const later = document.createElement("div");
+          later.id = "later";
+          later.className = "keep dashlane-panel";
+          later.setAttribute("data-dashlanecreated", "1");
+          root.appendChild(later);
+          window.__shadowDone = true;
+        }, 0);
+      </script>
+    </body>
+  `,
   "/replay.html": `
     <!doctype html>
     <meta charset="utf-8">
@@ -129,6 +152,44 @@ const fixtureFiles = {
       }
       window.__canvasAppDone = true;
     </script>
+  `,
+  "/adaptive-private.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 16;
+        canvas.height = 16;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#654321";
+        ctx.fillRect(0, 0, 16, 16);
+        canvas.toDataURL();
+        void navigator.hardwareConcurrency;
+        await crypto.subtle.digest("SHA-256", new TextEncoder().encode("sensor"));
+        await fetch(
+          "/collect/user-1234567890abcdef1234567890abcdef?token=secret-token",
+          { method: "POST", body: "payload" }
+        ).catch(() => {});
+        window.__adaptivePrivateDone = true;
+      })();
+    </script>
+  `,
+  "/replay-private.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <input id="secret" type="email" />
+    <script src="/assets/replay/logrocket-1234567890abcdef1234567890abcdef.js?token=secret-token"></script>
+  `,
+  "/assets/replay/logrocket-1234567890abcdef1234567890abcdef.js": `
+    window.__privateReplayRecords = [];
+    function LogRocketPrivateRecorder(event) {
+      window.__privateReplayRecords.push({
+        type: event.type,
+        value: event.target && event.target.value,
+      });
+    }
+    document.addEventListener("input", LogRocketPrivateRecorder, true);
   `,
 };
 
