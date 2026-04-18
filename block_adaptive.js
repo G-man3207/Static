@@ -139,7 +139,9 @@
 
   const redactPathSegment = (segment) => {
     if (!segment) return segment;
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(segment)) {
+    if (
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(segment)
+    ) {
       return ":uuid";
     }
     if (/^[0-9a-f]{16,}$/i.test(segment)) return ":hex";

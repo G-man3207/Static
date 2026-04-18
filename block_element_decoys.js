@@ -127,7 +127,10 @@
       const parsed = new URL(String(url || ""));
       const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
       const id = parsed.hostname.toLowerCase();
-      if ((scheme === "chrome-extension" || scheme === "edge-extension") && CHROME_EXT_ID_RE.test(id)) {
+      if (
+        (scheme === "chrome-extension" || scheme === "edge-extension") &&
+        CHROME_EXT_ID_RE.test(id)
+      ) {
         return id;
       }
     } catch {}
@@ -261,7 +264,9 @@
       },
       getAttributeNS(ns, name) {
         const prop = attrPropFor(name);
-        return (prop && rememberedOriginal(this, prop)) || origGetAttributeNS.apply(this, arguments);
+        return (
+          (prop && rememberedOriginal(this, prop)) || origGetAttributeNS.apply(this, arguments)
+        );
       },
       removeAttribute(name) {
         const prop = attrPropFor(name);
@@ -285,11 +290,9 @@
     Element.prototype.removeAttribute = stealth(wrapped.removeAttribute, "removeAttribute", {
       length: 1,
     });
-    Element.prototype.removeAttributeNS = stealth(
-      wrapped.removeAttributeNS,
-      "removeAttributeNS",
-      { length: 2 }
-    );
+    Element.prototype.removeAttributeNS = stealth(wrapped.removeAttributeNS, "removeAttributeNS", {
+      length: 2,
+    });
   };
 
   const patchCurrentSrc = () => {
@@ -298,9 +301,13 @@
     Object.defineProperty(HTMLImageElement.prototype, "currentSrc", {
       configurable: true,
       enumerable: desc.enumerable,
-      get: stealth(function get() {
-        return rememberedOriginal(this, "src") || desc.get.call(this);
-      }, "get currentSrc", { length: 0, source: nativeSourceFor(desc.get, "get currentSrc") }),
+      get: stealth(
+        function get() {
+          return rememberedOriginal(this, "src") || desc.get.call(this);
+        },
+        "get currentSrc",
+        { length: 0, source: nativeSourceFor(desc.get, "get currentSrc") }
+      ),
     });
   };
 
@@ -311,22 +318,29 @@
     Object.defineProperty(StyleSheet.prototype, "href", {
       configurable: true,
       enumerable: desc.enumerable,
-      get: stealth(function get() {
-        try {
-          return rememberedOriginal(this.ownerNode, "href") || desc.get.call(this);
-        } catch {
-          return desc.get.call(this);
-        }
-      }, "get href", { length: 0, source: nativeSourceFor(desc.get, "get href") }),
+      get: stealth(
+        function get() {
+          try {
+            return rememberedOriginal(this.ownerNode, "href") || desc.get.call(this);
+          } catch {
+            return desc.get.call(this);
+          }
+        },
+        "get href",
+        { length: 0, source: nativeSourceFor(desc.get, "get href") }
+      ),
     });
   };
 
   guardProp(HTMLImageElement.prototype, "src", "img.src");
   guardProp(HTMLScriptElement.prototype, "src", "script.src");
   guardProp(HTMLLinkElement.prototype, "href", "link.href");
-  if (typeof HTMLSourceElement !== "undefined") guardProp(HTMLSourceElement.prototype, "src", "source.src");
-  if (typeof HTMLEmbedElement !== "undefined") guardProp(HTMLEmbedElement.prototype, "src", "embed.src");
-  if (typeof HTMLObjectElement !== "undefined") guardProp(HTMLObjectElement.prototype, "data", "object.data");
+  if (typeof HTMLSourceElement !== "undefined")
+    guardProp(HTMLSourceElement.prototype, "src", "source.src");
+  if (typeof HTMLEmbedElement !== "undefined")
+    guardProp(HTMLEmbedElement.prototype, "src", "embed.src");
+  if (typeof HTMLObjectElement !== "undefined")
+    guardProp(HTMLObjectElement.prototype, "data", "object.data");
   patchAttributes();
   patchCurrentSrc();
   patchStyleSheetHref();
