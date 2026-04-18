@@ -108,6 +108,20 @@
         font-variant-numeric: tabular-nums;
         min-height: 14px;
       }
+      .drift {
+        display: inline-flex;
+        margin-top: 8px;
+        padding: 4px 7px;
+        border: 1px solid #ead0d0;
+        border-radius: 6px;
+        color: var(--accent);
+        background: #fff5f5;
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .drift[hidden] {
+        display: none;
+      }
       details {
         margin-top: 10px;
       }
@@ -332,6 +346,7 @@
       <div class="count" id="count">0</div>
       <div class="label">probes blocked on this tab</div>
       <div class="cumulative" id="cumulative"></div>
+      <div class="drift" id="drift" hidden></div>
 
       <details>
         <summary>Top probed extension IDs</summary>

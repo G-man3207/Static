@@ -345,7 +345,18 @@ test.describe("Static extension integration", () => {
     );
 
     expect(storage.cumulative).toBe(expectedCount);
-    expect(storage.probe_log[origin].idCounts[PROBED_ID]).toBe(expectedCount);
+    const originLog = storage.probe_log[origin];
+    expect(originLog.idCounts[PROBED_ID]).toBe(expectedCount);
+    const playbookWeek = Object.values(originLog.playbook.weeks)[0];
+    expect(playbookWeek.total).toBe(expectedCount);
+    expect(playbookWeek.pathKindCounts.manifest).toBe(expectedCount);
+    expect(playbookWeek.vectorCounts.fetch).toBe(1);
+    expect(playbookWeek.vectorCounts.xhr).toBe(1);
+    expect(playbookWeek.vectorCounts["img.src"]).toBe(1);
+    expect(playbookWeek.vectorCounts.Worker).toBe(1);
+    if (typeof SharedWorker === "function") {
+      expect(playbookWeek.vectorCounts.SharedWorker).toBe(1);
+    }
   });
 
   test("blocked XHR failures settle like native network failures", async () => {
@@ -554,6 +565,58 @@ test.describe("Static extension integration", () => {
       listenerTargetIsSource: true,
       onerrorThisIsSource: true,
     });
+  });
+
+  test("log viewer shows playbook drift indicators and reasons", async () => {
+    const baselineIds = {};
+    const currentIds = {};
+    for (let i = 0; i < 12; i++) baselineIds[`base${i}`] = 3;
+    for (let i = 0; i < 8; i++) currentIds[`new${i}`] = 3;
+    for (let i = 0; i < 10; i++) currentIds[`canary${i}`] = 1;
+
+    await extension.serviceWorker.evaluate(
+      ({ baselineIds, currentIds }) =>
+        chrome.storage.local.set({
+          cumulative: 120,
+          probe_log: {
+            "https://drift.test": {
+              idCounts: { ...baselineIds, ...currentIds },
+              lastUpdated: Date.now(),
+              playbook: {
+                weeks: {
+                  "2026-W14": {
+                    total: 60,
+                    vectorCounts: { fetch: 60 },
+                    pathKindCounts: { manifest: 60 },
+                    idCounts: baselineIds,
+                    firstSeen: 1,
+                    lastSeen: 2,
+                  },
+                  "2026-W15": {
+                    total: 60,
+                    vectorCounts: { fetch: 20, Worker: 20, EventSource: 20 },
+                    pathKindCounts: { image: 30, script: 30 },
+                    idCounts: currentIds,
+                    firstSeen: 3,
+                    lastSeen: 4,
+                  },
+                },
+              },
+            },
+          },
+        }),
+      { baselineIds, currentIds }
+    );
+
+    const logPage = await extension.context.newPage();
+    await logPage.goto(`chrome-extension://${extension.extensionId}/log.html`);
+    await expect(logPage.getByText("High drift")).toBeVisible();
+    await logPage.getByText("https://drift.test").click();
+    await expect(
+      logPage.getByText("New probe vectors appeared: EventSource, Worker.")
+    ).toBeVisible();
+    await expect(logPage.getByText("New path kinds appeared: image, script.")).toBeVisible();
+    await expect(logPage.getByText(/One-shot ID pressure is high/)).toBeVisible();
   });
 
   test("scrubs extension DOM markers on initial parse and later mutations", async () => {

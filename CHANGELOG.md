@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added
+
+- Local playbook drift detection. Static now stores weekly per-origin probe summaries for vector mix, path-kind mix, repeated ID dictionaries, and one-shot ID pressure, then surfaces `Learning` / `Stable` / `Changed` / `High drift` indicators in the probe log.
+- Popup warning for active sites whose probe behavior has recently changed or drifted heavily from their local baseline.
+- Playwright coverage for playbook summary recording and log-viewer drift indicators.
+
 ## [2.0.1] — 2026-04-18
 
 ### Fixed
