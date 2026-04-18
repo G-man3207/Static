@@ -1,24 +1,25 @@
 name: Release
 
-# Triggered when you push a tag matching v*.*.*  (e.g., v2.0.0, v2.1.0-beta).
+# Triggered when you push a new tag matching v*.*.*  (e.g., v2.0.0, v2.1.0-beta).
 # Packages the extension as a zip excluding repo-infra files, creates a GitHub
 # Release with auto-generated notes, and attaches the zip as a release asset.
 #
 # Typical flow:
 #   git tag v2.0.0
-#   git push --tags
+#   git push origin v2.0.0
 # The release artifact is ready to upload to Chrome Web Store via the developer
 # console (or to automate later with the CWS API and repo secrets).
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*.*.*"]
 
 permissions:
   contents: write
 
 jobs:
   package:
+    if: ${{ github.event.created && !github.event.deleted }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
