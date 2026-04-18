@@ -2,9 +2,41 @@
   <img src="icons/icon-128.png" alt="Static" width="128" height="128">
 </p>
 
-# Static
+<h1 align="center">Static</h1>
 
-**Anti-fingerprinting, not anti-ads.** A Chrome MV3 extension that blocks _active probing_ of your browser: extension enumeration, client-side fingerprinting, and session-replay telemetry.
+<p align="center">
+  <strong>Anti-fingerprinting Chrome extension that blocks extension enumeration, browser fingerprinting, and session-replay telemetry — and optionally poisons probe logs with plausible decoys.</strong>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/G-man3207/Static?color=blue" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/manifest-v3-brightgreen" alt="Manifest V3">
+  <img src="https://img.shields.io/github/v/release/G-man3207/Static" alt="Latest release">
+  <img src="https://img.shields.io/badge/tests-Playwright-45ba4b" alt="Playwright tests">
+</p>
+
+---
+
+## What it does (10-second version)
+
+Websites quietly probe your browser to figure out **which extensions you have installed**, fingerprint your browser, and record your session via vendors like FullStory and LogRocket. Static blocks all three — and in **Noise mode** it goes one step further and feeds those probes plausible-but-fake answers, so the trackers' logs get poisoned with the IDs *they* cared about.
+
+> On LinkedIn, Static blocks ~4,500 extension-enumeration probes per page load. The popup shows the live count.
+
+<!-- TODO: add demo.gif here -->
+<!-- ![Static popup showing 4,217 probes blocked on LinkedIn](docs/demo.gif) -->
+
+## Install
+
+**From source (today):**
+1. Clone this repository
+2. Open `chrome://extensions`
+3. Toggle **Developer mode** (top-right)
+4. Click **Load unpacked** and select the repo folder
+
+**From the Chrome Web Store:** _coming soon_
+
+---
 
 ## What it blocks
 
