@@ -90,9 +90,11 @@
   let bridgePort = null;
   const queuedProbeEvents = [];
   const queuedReplaySignals = [];
+  const queuedAdaptiveSignals = [];
   const reportedReplaySignals = new Set();
   const MAX_QUEUED_PROBES = 1000;
   const MAX_QUEUED_REPLAY_SIGNALS = 50;
+  const MAX_QUEUED_ADAPTIVE_SIGNALS = 50;
   const BRIDGE_EVENT = "__static_bridge_init__";
 
   const applyConfigUpdate = (d) => {
@@ -138,6 +140,29 @@
     }
   };
 
+  const postAdaptiveSignal = (signal) => {
+    const safeSignal = {
+      category: String((signal && signal.category) || "unknown").slice(0, 48),
+      score: Math.max(0, Math.min(100, Math.round((signal && signal.score) || 0))),
+      source: String((signal && signal.source) || "unknown").slice(0, 160),
+      endpoint: String((signal && signal.endpoint) || "").slice(0, 160),
+      reasons: Array.isArray(signal && signal.reasons)
+        ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
+        : [],
+    };
+    if (bridgePort) {
+      try {
+        bridgePort.postMessage({ type: "adaptive_signal", signal: safeSignal });
+        return;
+      } catch {
+        bridgePort = null;
+      }
+    }
+    if (queuedAdaptiveSignals.length < MAX_QUEUED_ADAPTIVE_SIGNALS) {
+      queuedAdaptiveSignals.push(safeSignal);
+    }
+  };
+
   const flushQueuedProbes = () => {
     if (!bridgePort) return;
     const batch = queuedProbeEvents.splice(0, queuedProbeEvents.length);
@@ -153,6 +178,15 @@
     for (const signal of replaySignals) {
       try {
         bridgePort.postMessage({ type: "replay_detected", signal });
+      } catch {
+        bridgePort = null;
+        return;
+      }
+    }
+    const adaptiveSignals = queuedAdaptiveSignals.splice(0, queuedAdaptiveSignals.length);
+    for (const signal of adaptiveSignals) {
+      try {
+        bridgePort.postMessage({ type: "adaptive_signal", signal });
       } catch {
         bridgePort = null;
         return;
@@ -331,6 +365,270 @@
     return fn;
   };
 
+  // ─── Adaptive behavior scoring (observe-only) ──────────────────────────
+  const ADAPTIVE_WINDOW_MS = 4000;
+  const ADAPTIVE_COOLDOWN_MS = 7000;
+  const ADAPTIVE_TRIGGER_SCORE = 7;
+  const ADAPTIVE_WEIGHTS = {
+    canvas: 2,
+    webgl: 2,
+    audio: 2,
+    navigator: 1,
+    crypto: 3,
+    dom_observer: 3,
+    input_hooks: 2,
+    replay_surface: 3,
+    network: 2,
+  };
+  const ADAPTIVE_INPUT_EVENTS = new Set([
+    "input",
+    "keydown",
+    "keyup",
+    "keypress",
+    "mousemove",
+    "pointermove",
+    "scroll",
+    "touchmove",
+  ]);
+  const adaptiveWindows = new Map();
+
+  const currentAdaptiveSource = () => {
+    try {
+      if (document.currentScript && document.currentScript.src) {
+        return document.currentScript.src;
+      }
+    } catch {}
+    return "inline-or-runtime";
+  };
+
+  const stableEndpointFor = (url) => {
+    try {
+      const parsed = new URL(String(url), location.href);
+      return parsed.origin + parsed.pathname;
+    } catch {
+      return "";
+    }
+  };
+
+  const sizeBucketFor = (value) => {
+    if (value == null) return "0";
+    let size = 0;
+    try {
+      if (typeof value === "string") size = value.length;
+      else if (value instanceof Blob) size = value.size;
+      else if (value instanceof ArrayBuffer) size = value.byteLength;
+      else if (ArrayBuffer.isView(value)) size = value.byteLength;
+      else if (value instanceof URLSearchParams) size = String(value).length;
+      else if (value instanceof FormData) size = 1024;
+      else size = String(value).length;
+    } catch {}
+    if (size === 0) return "0";
+    if (size < 1024) return "<1k";
+    if (size < 10 * 1024) return "1k-10k";
+    if (size < 100 * 1024) return "10k-100k";
+    return "100k+";
+  };
+
+  const adaptiveCategoryFor = (kinds) => {
+    if (kinds.has("dom_observer") && kinds.has("input_hooks")) return "session-replay";
+    if (kinds.has("crypto") && kinds.has("network")) return "anti-bot";
+    if (
+      (kinds.has("canvas") || kinds.has("webgl") || kinds.has("audio")) &&
+      (kinds.has("navigator") || kinds.has("network"))
+    ) {
+      return "fingerprinting";
+    }
+    return "mixed";
+  };
+
+  const recordAdaptiveSignal = (kind, detail = {}) => {
+    const now = Date.now();
+    const source = String(detail.source || currentAdaptiveSource()).slice(0, 160);
+    const key = "page-window";
+    let entry = adaptiveWindows.get(key);
+    if (!entry || now - entry.startedAt > ADAPTIVE_WINDOW_MS) {
+      entry = {
+        startedAt: now,
+        lastReportedAt: 0,
+        kinds: {},
+        endpoints: {},
+        sources: {},
+        details: {},
+      };
+      adaptiveWindows.set(key, entry);
+    }
+
+    const safeKind = String(kind || "unknown").slice(0, 48);
+    entry.kinds[safeKind] = (entry.kinds[safeKind] || 0) + 1;
+    if (source) entry.sources[source] = (entry.sources[source] || 0) + 1;
+    if (detail.endpoint) {
+      const endpoint = String(detail.endpoint).slice(0, 160);
+      entry.endpoints[endpoint] = (entry.endpoints[endpoint] || 0) + 1;
+    }
+    if (detail.detail) {
+      const safeDetail = String(detail.detail).slice(0, 64);
+      entry.details[safeDetail] = (entry.details[safeDetail] || 0) + 1;
+    }
+
+    const kinds = new Set(Object.keys(entry.kinds));
+    const score = Object.keys(entry.kinds).reduce(
+      (sum, name) => sum + (ADAPTIVE_WEIGHTS[name] || 1),
+      0
+    );
+    const endpointEntries = Object.entries(entry.endpoints).sort((a, b) => b[1] - a[1]);
+    const hasNetwork = kinds.has("network");
+    const nonNetworkKinds = [...kinds].filter((name) => name !== "network").length;
+    const strongReplay = kinds.has("dom_observer") && kinds.has("input_hooks");
+    const shouldReport =
+      score >= ADAPTIVE_TRIGGER_SCORE &&
+      (strongReplay || (hasNetwork && nonNetworkKinds >= 2)) &&
+      now - entry.lastReportedAt > ADAPTIVE_COOLDOWN_MS;
+
+    if (!shouldReport) return;
+    entry.lastReportedAt = now;
+    const category = adaptiveCategoryFor(kinds);
+    const details = Object.keys(entry.details).slice(0, 8);
+    const sourceEntries = Object.entries(entry.sources).sort((a, b) => b[1] - a[1]);
+    postAdaptiveSignal({
+      category,
+      score,
+      source: sourceEntries.length ? sourceEntries[0][0] : source,
+      endpoint: endpointEntries.length ? endpointEntries[0][0] : "",
+      reasons: [...kinds, ...details],
+    });
+  };
+
+  const recordAdaptiveNetwork = (where, url, body) => {
+    const endpoint = stableEndpointFor(url);
+    if (!endpoint) return;
+    const bucket = sizeBucketFor(body);
+    recordAdaptiveSignal("network", {
+      endpoint,
+      detail: where + ":" + bucket,
+    });
+  };
+
+  const patchMethod = (owner, name, label, recorder, opts = {}) => {
+    if (!owner || typeof owner[name] !== "function") return;
+    const orig = owner[name];
+    const wrapped = {
+      [name](...args) {
+        try {
+          recorder && recorder.apply(this, args);
+        } catch {}
+        return orig.apply(this, args);
+      },
+    }[name];
+    owner[name] = stealth(wrapped, label || name, { length: opts.length ?? orig.length });
+  };
+
+  const patchNavigatorGetter = (prop) => {
+    try {
+      const proto = Navigator.prototype;
+      const desc = Object.getOwnPropertyDescriptor(proto, prop);
+      if (!desc || typeof desc.get !== "function") return;
+      Object.defineProperty(proto, prop, {
+        configurable: true,
+        enumerable: desc.enumerable,
+        get: stealth(
+          function get() {
+            try {
+              recordAdaptiveSignal("navigator", { detail: "navigator." + prop });
+            } catch {}
+            return desc.get.call(this);
+          },
+          "get " + prop,
+          { length: 0 }
+        ),
+      });
+    } catch {}
+  };
+
+  try {
+    patchMethod(HTMLCanvasElement.prototype, "toDataURL", "toDataURL", () =>
+      recordAdaptiveSignal("canvas", { detail: "canvas.toDataURL" })
+    );
+    patchMethod(HTMLCanvasElement.prototype, "toBlob", "toBlob", () =>
+      recordAdaptiveSignal("canvas", { detail: "canvas.toBlob" })
+    );
+    if (typeof CanvasRenderingContext2D !== "undefined") {
+      patchMethod(CanvasRenderingContext2D.prototype, "getImageData", "getImageData", () =>
+        recordAdaptiveSignal("canvas", { detail: "canvas.getImageData" })
+      );
+    }
+  } catch {}
+
+  try {
+    if (typeof WebGLRenderingContext !== "undefined") {
+      patchMethod(WebGLRenderingContext.prototype, "getParameter", "getParameter", () =>
+        recordAdaptiveSignal("webgl", { detail: "webgl.getParameter" })
+      );
+    }
+    if (typeof WebGL2RenderingContext !== "undefined") {
+      patchMethod(WebGL2RenderingContext.prototype, "getParameter", "getParameter", () =>
+        recordAdaptiveSignal("webgl", { detail: "webgl2.getParameter" })
+      );
+    }
+  } catch {}
+
+  try {
+    if (typeof SubtleCrypto !== "undefined") {
+      patchMethod(SubtleCrypto.prototype, "digest", "digest", () =>
+        recordAdaptiveSignal("crypto", { detail: "crypto.digest" })
+      );
+      patchMethod(SubtleCrypto.prototype, "encrypt", "encrypt", () =>
+        recordAdaptiveSignal("crypto", { detail: "crypto.encrypt" })
+      );
+      patchMethod(SubtleCrypto.prototype, "importKey", "importKey", () =>
+        recordAdaptiveSignal("crypto", { detail: "crypto.importKey" })
+      );
+    }
+  } catch {}
+
+  try {
+    if (typeof OfflineAudioContext !== "undefined") {
+      patchMethod(OfflineAudioContext.prototype, "startRendering", "startRendering", () =>
+        recordAdaptiveSignal("audio", { detail: "audio.startRendering" })
+      );
+    }
+    if (typeof AudioBuffer !== "undefined") {
+      patchMethod(AudioBuffer.prototype, "getChannelData", "getChannelData", () =>
+        recordAdaptiveSignal("audio", { detail: "audio.getChannelData" })
+      );
+    }
+  } catch {}
+
+  for (const prop of ["hardwareConcurrency", "deviceMemory", "platform", "plugins", "languages"]) {
+    patchNavigatorGetter(prop);
+  }
+
+  if (typeof MutationObserver === "function") {
+    const OrigMutationObserver = MutationObserver;
+    const WrappedMutationObserver = function MutationObserver(callback) {
+      const observer = new OrigMutationObserver(callback);
+      const origObserve = observer.observe;
+      observer.observe = stealth(
+        function observe(target, options) {
+          try {
+            const globalTarget =
+              target === document ||
+              target === document.documentElement ||
+              target === document.body;
+            if (globalTarget && options && options.subtree) {
+              recordAdaptiveSignal("dom_observer", { detail: "mutation.subtree" });
+            }
+          } catch {}
+          return origObserve.apply(this, arguments);
+        },
+        "observe",
+        { length: 2 }
+      );
+      return observer;
+    };
+    WrappedMutationObserver.prototype = OrigMutationObserver.prototype;
+    window.MutationObserver = stealth(WrappedMutationObserver, "MutationObserver", { length: 1 });
+  }
+
   // ─── Replay poisoning (opt-in) ──────────────────────────────────────────
   const eventJitter = new WeakMap();
   const targetProxyCache = new WeakMap();
@@ -483,6 +781,17 @@
     const origRemoveEventListener = EventTarget.prototype.removeEventListener;
     const wrappedAddEventListener = {
       addEventListener(type, listener, options) {
+        try {
+          const eventType = String(type);
+          const globalTarget =
+            this === window ||
+            this === document ||
+            this === document.documentElement ||
+            this === document.body;
+          if (globalTarget && ADAPTIVE_INPUT_EVENTS.has(eventType)) {
+            recordAdaptiveSignal("input_hooks", { detail: "listener." + eventType });
+          }
+        } catch {}
         if (!listener || !shouldWrapReplayListener(type, listener)) {
           return origAddEventListener.apply(this, arguments);
         }
@@ -658,6 +967,13 @@
           bump("fetch", u);
           return Promise.reject(new TypeError("Failed to fetch"));
         }
+        recordAdaptiveNetwork(
+          "fetch",
+          getUrl(input),
+          arguments[1] && Object.prototype.hasOwnProperty.call(arguments[1], "body")
+            ? arguments[1].body
+            : null
+        );
         return origFetch.apply(this, arguments);
       },
     }.fetch;
@@ -666,12 +982,14 @@
 
   // ─── 2. XMLHttpRequest ──────────────────────────────────────────────────
   const blockedXHRs = new WeakMap();
+  const xhrUrls = new WeakMap();
   const origOpen = XMLHttpRequest.prototype.open;
   const origSend = XMLHttpRequest.prototype.send;
   const wrappedOpen = {
     open(method, url, ...rest) {
       const bad = isBad(url);
       if (bad) blockedXHRs.set(this, getUrl(url));
+      else xhrUrls.set(this, getUrl(url));
       return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
     },
   }.open;
@@ -734,6 +1052,9 @@
           } catch {}
         });
         return;
+      }
+      if (xhrUrls.has(this)) {
+        recordAdaptiveNetwork("xhr", xhrUrls.get(this), args[0]);
       }
       return origSend.apply(this, args);
     },
@@ -815,6 +1136,7 @@
             bump("sendBeacon", url);
             return true;
           }
+          recordAdaptiveNetwork("sendBeacon", getUrl(url), arguments[1]);
           return origBeacon.apply(this, arguments);
         },
       }.sendBeacon;
@@ -833,6 +1155,7 @@
             bump("sendBeacon", url);
             return true;
           }
+          recordAdaptiveNetwork("sendBeacon", getUrl(url), data);
           return origBeacon(url, data);
         },
       }.sendBeacon;

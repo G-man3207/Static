@@ -122,6 +122,20 @@
       .drift[hidden] {
         display: none;
       }
+      .adaptive {
+        display: inline-flex;
+        margin-top: 8px;
+        padding: 4px 7px;
+        border: 1px solid #efd4a8;
+        border-radius: 6px;
+        color: #8a4b00;
+        background: #fff7e8;
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .adaptive[hidden] {
+        display: none;
+      }
       details {
         margin-top: 10px;
       }
@@ -395,6 +409,7 @@
       <div class="label">probes blocked on this tab</div>
       <div class="cumulative" id="cumulative"></div>
       <div class="drift" id="drift" hidden></div>
+      <div class="adaptive" id="adaptive" hidden></div>
 
       <details>
         <summary>Top probed extension IDs</summary>

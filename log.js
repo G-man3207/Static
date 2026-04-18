@@ -160,6 +160,14 @@ const buildDriftPill = (drift) => {
   return span;
 };
 
+const buildAdaptivePill = (adaptive) => {
+  if (!adaptive) return null;
+  const span = document.createElement("span");
+  span.className = "drift-pill changed";
+  span.textContent = "Adaptive signals";
+  return span;
+};
+
 const buildDriftDetail = (drift) => {
   const box = document.createElement("div");
   box.className = "drift-detail";
@@ -172,6 +180,50 @@ const buildDriftDetail = (drift) => {
   for (const reason of drift.reasons || []) {
     const li = document.createElement("li");
     li.textContent = reason;
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  return box;
+};
+
+const buildAdaptiveDetail = (adaptive) => {
+  if (!adaptive) return null;
+  const box = document.createElement("div");
+  box.className = "drift-detail";
+  const title = document.createElement("div");
+  title.className = "drift-detail-title";
+  title.textContent = "Adaptive behavior: observe-only";
+  box.appendChild(title);
+  const list = document.createElement("ul");
+  list.className = "drift-reasons";
+  const categories = Object.entries(adaptive.categories || {}).sort((a, b) => b[1] - a[1]);
+  const endpoints = Object.entries(adaptive.endpoints || {}).sort((a, b) => b[1] - a[1]);
+  const reasons = Object.entries(adaptive.reasons || {}).sort((a, b) => b[1] - a[1]);
+  const lines = [
+    "Max local score: " + fmt(adaptive.scoreMax || 0) + ".",
+    categories.length
+      ? "Categories observed: " +
+        categories
+          .map(([category]) => category)
+          .slice(0, 4)
+          .join(", ") +
+        "."
+      : "",
+    reasons.length
+      ? "Reasons: " +
+        reasons
+          .map(([reason]) => reason)
+          .slice(0, 8)
+          .join(", ") +
+        "."
+      : "",
+    endpoints.length
+      ? "Top endpoint: " + endpoints[0][0] + "."
+      : "No endpoint was associated with the local signal.",
+  ].filter(Boolean);
+  for (const line of lines) {
+    const li = document.createElement("li");
+    li.textContent = line;
     list.appendChild(li);
   }
   box.appendChild(list);
@@ -201,6 +253,8 @@ const buildOriginDetail = (entry, drift) => {
   const box = document.createElement("div");
   box.className = "id-list";
   box.appendChild(buildDriftDetail(drift));
+  const adaptive = buildAdaptiveDetail(entry.__adaptive);
+  if (adaptive) box.appendChild(adaptive);
   const ids = buildIdList(entry);
   ids.classList.add("open");
   box.appendChild(ids);
@@ -211,7 +265,13 @@ const originMatches = (origin, entry, filter) => {
   if (!filter) return true;
   const f = filter.toLowerCase();
   if (origin.toLowerCase().includes(f)) return true;
-  return Object.keys(entry.idCounts || {}).some((id) => id.toLowerCase().includes(f));
+  if (Object.keys(entry.idCounts || {}).some((id) => id.toLowerCase().includes(f))) return true;
+  const adaptive = entry.__adaptive || {};
+  return [
+    ...Object.keys(adaptive.categories || {}),
+    ...Object.keys(adaptive.reasons || {}),
+    ...Object.keys(adaptive.endpoints || {}),
+  ].some((value) => value.toLowerCase().includes(f));
 };
 
 let fullData = null;
@@ -222,7 +282,20 @@ const render = (filter) => {
   if (!fullData) return;
 
   const origins = fullData.origins || {};
-  const allEntries = Object.entries(origins);
+  const adaptiveSignals = fullData.adaptiveSignals || {};
+  const originNames = new Set([...Object.keys(origins), ...Object.keys(adaptiveSignals)]);
+  const allEntries = [...originNames].map((origin) => {
+    const entry = origins[origin] || { idCounts: {}, lastUpdated: 0 };
+    const adaptive = adaptiveSignals[origin];
+    return [
+      origin,
+      {
+        ...entry,
+        lastUpdated: entry.lastUpdated || (adaptive && adaptive.lastUpdated) || 0,
+        __adaptive: adaptive,
+      },
+    ];
+  });
 
   if (allEntries.length === 0) {
     const empty = document.createElement("div");
@@ -242,6 +315,7 @@ const render = (filter) => {
 
   let grand = 0;
   for (const [, entry] of allEntries) grand += totalProbesFor(entry);
+  const adaptiveCount = Object.keys(adaptiveSignals).length;
 
   document.getElementById("summary").textContent =
     fmt(filtered.length) +
@@ -252,6 +326,10 @@ const render = (filter) => {
     "  ·  " +
     fmt(grand) +
     " total probes recorded  ·  " +
+    fmt(adaptiveCount) +
+    " adaptive origin" +
+    (adaptiveCount === 1 ? "" : "s") +
+    " observed  ·  " +
     fmt(fullData.cumulative || 0) +
     " probes blocked since install";
 
@@ -280,6 +358,7 @@ const render = (filter) => {
     const unique = Object.keys(entry.idCounts || {}).length;
     const total = totalProbesFor(entry);
     const drift = playbookDriftForEntry(entry);
+    const adaptivePill = buildAdaptivePill(entry.__adaptive);
 
     const tr = document.createElement("tr");
     tr.className = "origin-row";
@@ -300,6 +379,10 @@ const render = (filter) => {
       fmtDate(entry.lastUpdated) +
       "</td>";
     tr.querySelector(".drift-cell").appendChild(buildDriftPill(drift));
+    if (adaptivePill) {
+      tr.querySelector(".drift-cell").appendChild(document.createTextNode(" "));
+      tr.querySelector(".drift-cell").appendChild(adaptivePill);
+    }
     tbody.appendChild(tr);
 
     const detailTr = document.createElement("tr");

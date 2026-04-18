@@ -66,6 +66,19 @@ const renderDetails = (resp) => {
     driftEl.hidden = true;
   }
 
+  const adaptiveEl = document.getElementById("adaptive");
+  if (resp && resp.adaptiveDetected) {
+    const categories = Object.entries(resp.adaptiveCategories || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([category]) => category);
+    adaptiveEl.textContent =
+      "Adaptive signals observed" +
+      (categories.length ? ": " + categories.slice(0, 2).join(", ") : "");
+    adaptiveEl.hidden = false;
+  } else {
+    adaptiveEl.hidden = true;
+  }
+
   const topEl = document.getElementById("top-ids");
   topEl.innerHTML = "";
   if (topIds.length === 0) {

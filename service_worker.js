@@ -8,7 +8,8 @@
 //      deterministic subset of observed IDs, rotated on a weekly cadence, seeded
 //      from a per-user secret so different users claim different sets).
 //   5. Record local session-replay detector sightings for Replay poisoning.
-//   6. Answer popup queries (`static_get_details`, `static_export_log`,
+//   6. Record observe-only adaptive behavior signals for local calibration.
+//   7. Answer popup queries (`static_get_details`, `static_export_log`,
 //      `static_set_noise`, `static_set_replay`) and bridge queries
 //      (`static_get_persona`).
 
@@ -199,6 +200,51 @@ const recordReplayDetection = async (origin, signal) => {
     for (const oldOrigin of origins.slice(100)) delete replay_log[oldOrigin];
   }
   await chrome.storage.local.set({ replay_log });
+};
+
+const recordAdaptiveSignal = async (origin, signal) => {
+  if (!origin || !signal || typeof signal !== "object") return;
+  const { adaptive_log = {} } = await chrome.storage.local.get({ adaptive_log: {} });
+  const now = Date.now();
+  const entry = adaptive_log[origin] || {
+    total: 0,
+    scoreMax: 0,
+    categories: {},
+    reasons: {},
+    endpoints: {},
+    sources: {},
+    lastUpdated: 0,
+  };
+  const category = String(signal.category || "unknown").slice(0, 48);
+  const score = Math.max(0, Math.min(100, Math.round(signal.score || 0)));
+  const endpoint = String(signal.endpoint || "").slice(0, 160);
+  const source = String(signal.source || "unknown").slice(0, 160);
+  const reasons = Array.isArray(signal.reasons)
+    ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
+    : [];
+
+  entry.total = (entry.total || 0) + 1;
+  entry.scoreMax = Math.max(entry.scoreMax || 0, score);
+  entry.lastUpdated = now;
+  entry.categories ||= {};
+  entry.reasons ||= {};
+  entry.endpoints ||= {};
+  entry.sources ||= {};
+  entry.categories[category] = (entry.categories[category] || 0) + 1;
+  if (endpoint) entry.endpoints[endpoint] = (entry.endpoints[endpoint] || 0) + 1;
+  if (source) entry.sources[source] = (entry.sources[source] || 0) + 1;
+  for (const reason of reasons) entry.reasons[reason] = (entry.reasons[reason] || 0) + 1;
+
+  entry.reasons = trimCountMap(entry.reasons, 50);
+  entry.endpoints = trimCountMap(entry.endpoints, 50);
+  entry.sources = trimCountMap(entry.sources, 50);
+  adaptive_log[origin] = entry;
+  const origins = Object.keys(adaptive_log);
+  if (origins.length > 100) {
+    origins.sort((a, b) => (adaptive_log[b].lastUpdated || 0) - (adaptive_log[a].lastUpdated || 0));
+    for (const oldOrigin of origins.slice(100)) delete adaptive_log[oldOrigin];
+  }
+  await chrome.storage.local.set({ adaptive_log });
 };
 
 const latestPlaybookComparison = (entry) => {
@@ -466,9 +512,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "static_replay_detected" && sender.tab) {
+    const tabId = sender.tab.id;
     const origin = originFromUrl(sender.url);
+    if (origin) getOrInitTab(tabId).origin = origin;
     const signal = typeof msg.signal === "string" ? msg.signal : "unknown";
     if (origin) serialize(() => recordReplayDetection(origin, signal));
+    return;
+  }
+
+  if (msg.type === "static_adaptive_signal" && sender.tab) {
+    const tabId = sender.tab.id;
+    const origin = originFromUrl(sender.url);
+    if (origin) getOrInitTab(tabId).origin = origin;
+    if (origin) serialize(() => recordAdaptiveSignal(origin, msg.signal));
     return;
   }
 
@@ -479,10 +535,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         noise_enabled: false,
         probe_log: {},
         replay_log: {},
+        adaptive_log: {},
         replay_mode: "off",
       });
       const state = perTabState.get(msg.tabId);
       const origin = state ? state.origin : null;
+      const adaptiveEntry = origin ? stored.adaptive_log[origin] : null;
+      const loggedOrigins = new Set([
+        ...Object.keys(stored.probe_log),
+        ...Object.keys(stored.replay_log),
+        ...Object.keys(stored.adaptive_log),
+      ]);
       sendResponse({
         total: sumTabTotal(msg.tabId),
         topIds: topIdsForTab(msg.tabId, 5),
@@ -490,12 +553,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         noiseEnabled: stored.noise_enabled,
         replayMode: stored.replay_mode,
         replayDetected: !!(origin && stored.replay_log[origin]),
+        adaptiveDetected: !!adaptiveEntry,
+        adaptiveScore: adaptiveEntry ? adaptiveEntry.scoreMax || 0 : 0,
+        adaptiveCategories: adaptiveEntry ? adaptiveEntry.categories || {} : {},
         origin,
         drift:
           origin && stored.probe_log[origin]
             ? playbookDriftForEntry(stored.probe_log[origin])
             : null,
-        originsLogged: Object.keys(stored.probe_log).length,
+        originsLogged: loggedOrigins.size,
       });
     })();
     return true;
@@ -549,10 +615,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const {
         probe_log = {},
         replay_log = {},
+        adaptive_log = {},
         cumulative = 0,
       } = await chrome.storage.local.get({
         probe_log: {},
         replay_log: {},
+        adaptive_log: {},
         cumulative: 0,
       });
       sendResponse({
@@ -561,6 +629,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         cumulative,
         origins: probe_log,
         replayDetections: replay_log,
+        adaptiveSignals: adaptive_log,
       });
     })();
     return true;
@@ -569,7 +638,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "static_clear_log") {
     (async () => {
       cachedSecret = null;
-      await chrome.storage.local.remove(["probe_log", "replay_log", "cumulative", "user_secret"]);
+      await chrome.storage.local.remove([
+        "probe_log",
+        "replay_log",
+        "adaptive_log",
+        "cumulative",
+        "user_secret",
+      ]);
       sendResponse({ ok: true });
     })();
     return true;
