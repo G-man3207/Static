@@ -219,8 +219,7 @@ test.describe("Static extension integration", () => {
         },
         mutationObserver: {
           ...fnSurface(MutationObserver),
-          prototypeConstructorMatches:
-            MutationObserver.prototype.constructor === MutationObserver,
+          prototypeConstructorMatches: MutationObserver.prototype.constructor === MutationObserver,
         },
         imageSrcSetter: setterSurface(HTMLImageElement.prototype, "src"),
         scriptSrcSetter: setterSurface(HTMLScriptElement.prototype, "src"),
