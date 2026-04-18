@@ -19,7 +19,7 @@
 
 ## What it does (10-second version)
 
-Websites quietly probe your browser to figure out **which extensions you have installed**, fingerprint your browser, and record your session via vendors like FullStory and LogRocket. Static blocks all three — and in **Noise mode** it goes one step further and feeds those probes plausible-but-fake answers, so the trackers' logs get poisoned with the IDs *they* cared about.
+Websites quietly probe your browser to figure out **which extensions you have installed**, fingerprint your browser, and record your session via vendors like FullStory and LogRocket. Static blocks all three — and in **Noise mode** it goes one step further and feeds those probes plausible-but-fake answers, so the trackers' logs get poisoned with the IDs _they_ cared about.
 
 > On LinkedIn, Static blocks ~4,500 extension-enumeration probes per page load. The popup shows the live count.
 
@@ -29,6 +29,7 @@ Websites quietly probe your browser to figure out **which extensions you have in
 ## Install
 
 **From source (today):**
+
 1. Clone this repository
 2. Open `chrome://extensions`
 3. Toggle **Developer mode** (top-right)
