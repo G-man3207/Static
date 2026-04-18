@@ -1,6 +1,7 @@
 // Static - MAIN-world passive element decoys for Noise-mode personas.
 (() => {
   const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
+  const BAD_URL_RE = /\b(?:chrome|moz|ms-browser|safari-web|edge)-extension:[^\s"'()<>]+/i;
   const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
   const BRIDGE_EVENT = "__static_element_decoy_bridge_init__";
   const PNG_1X1_B64 =
@@ -151,7 +152,9 @@
 
   const forgetOriginal = (el, prop) => {
     const entry = elementOriginals.get(el);
-    if (entry) delete entry[prop];
+    if (!entry) return;
+    delete entry[prop];
+    if (prop === "srcset") delete entry.currentSrc;
   };
 
   const rememberedOriginal = (el, prop) => {
@@ -170,6 +173,7 @@
   const decoyUrlFor = (url, prop, el) => {
     const path = pathFor(url);
     const tag = String((el && el.tagName) || "").toLowerCase();
+    if (prop === "srcset") return `data:image/png;base64,${PNG_1X1_B64} 1x`;
     if (prop === "src" && tag === "script") return "data:application/javascript;charset=utf-8,";
     if (prop === "poster") return `data:image/png;base64,${PNG_1X1_B64}`;
     if (prop === "href" && (path.endsWith(".css") || tag === "link")) return "data:text/css,";
@@ -180,25 +184,42 @@
     return "data:text/plain,";
   };
 
-  const blockedUrlFor = () => "data:image/png;base64,not-valid";
+  const blockedUrlFor = (prop) =>
+    prop === "srcset" ? "data:image/png;base64,not-valid 1x" : "data:image/png;base64,not-valid";
 
   const canHandlePassiveElement = (el, prop) => {
     const tag = String((el && el.tagName) || "").toLowerCase();
     if (prop === "src") return ["img", "input", "script", "source", "embed"].includes(tag);
+    if (prop === "srcset") return tag === "img" || tag === "source";
     if (prop === "href") return tag === "link" || tag === "use" || tag === "image";
     if (prop === "data") return tag === "object";
     if (prop === "poster") return tag === "video";
     return false;
   };
 
-  const elementProbeMode = (el, prop, value) => {
-    if (!isBad(value) || !canHandlePassiveElement(el, prop)) return null;
-    return shouldDecoy(value) ? "decoy" : "block";
+  const firstBadUrlInText = (value) => {
+    try {
+      const match = String(value == null ? "" : value).match(BAD_URL_RE);
+      return match ? match[0] : "";
+    } catch {
+      return "";
+    }
+  };
+
+  const probeUrlFor = (prop, value) => {
+    if (prop === "srcset") return firstBadUrlInText(value);
+    return isBad(value) ? getUrl(value) : "";
+  };
+
+  const elementProbe = (el, prop, value) => {
+    const url = probeUrlFor(prop, value);
+    if (!url || !canHandlePassiveElement(el, prop)) return null;
+    return { mode: shouldDecoy(url) ? "decoy" : "block", url };
   };
 
   const replacementUrlFor = (mode, url, prop, el) => {
     if (mode === "decoy") return decoyUrlFor(url, prop, el);
-    return blockedUrlFor();
+    return blockedUrlFor(prop);
   };
 
   const guardProp = (proto, prop, label) => {
@@ -207,12 +228,13 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        const mode = elementProbeMode(this, prop, value);
-        if (mode) {
-          const url = getUrl(value);
-          rememberOriginal(this, prop, url);
-          postProbe(url, mode === "decoy" ? `${label}-decoy` : label);
-          desc.set.call(this, replacementUrlFor(mode, url, prop, this));
+        const probe = elementProbe(this, prop, value);
+        if (probe) {
+          const original = prop === "srcset" ? String(value) : probe.url;
+          rememberOriginal(this, prop, original);
+          if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
+          postProbe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
+          desc.set.call(this, replacementUrlFor(probe.mode, probe.url, prop, this));
           return;
         }
         forgetOriginal(this, prop);
@@ -241,7 +263,13 @@
 
   const attrPropFor = (name) => {
     const lower = String(name || "").toLowerCase();
-    if (lower === "src" || lower === "href" || lower === "data" || lower === "poster") {
+    if (
+      lower === "src" ||
+      lower === "srcset" ||
+      lower === "href" ||
+      lower === "data" ||
+      lower === "poster"
+    ) {
       return lower;
     }
     return null;
@@ -257,24 +285,41 @@
     const wrapped = {
       setAttribute(name, value) {
         const prop = attrPropFor(name);
-        const mode = prop && elementProbeMode(this, prop, value);
-        if (mode) {
-          const url = getUrl(value);
-          rememberOriginal(this, prop, url);
-          postProbe(url, mode === "decoy" ? `setAttribute-${prop}-decoy` : "setAttribute");
-          return origSetAttribute.call(this, name, replacementUrlFor(mode, url, prop, this));
+        const probe = prop && elementProbe(this, prop, value);
+        if (probe) {
+          const original = prop === "srcset" ? String(value) : probe.url;
+          rememberOriginal(this, prop, original);
+          if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
+          postProbe(
+            probe.url,
+            probe.mode === "decoy" ? `setAttribute-${prop}-decoy` : "setAttribute"
+          );
+          return origSetAttribute.call(
+            this,
+            name,
+            replacementUrlFor(probe.mode, probe.url, prop, this)
+          );
         }
         if (prop) forgetOriginal(this, prop);
         return origSetAttribute.apply(this, arguments);
       },
       setAttributeNS(ns, name, value) {
         const prop = attrPropFor(name);
-        const mode = prop && elementProbeMode(this, prop, value);
-        if (mode) {
-          const url = getUrl(value);
-          rememberOriginal(this, prop, url);
-          postProbe(url, mode === "decoy" ? `setAttributeNS-${prop}-decoy` : "setAttributeNS");
-          return origSetAttributeNS.call(this, ns, name, replacementUrlFor(mode, url, prop, this));
+        const probe = prop && elementProbe(this, prop, value);
+        if (probe) {
+          const original = prop === "srcset" ? String(value) : probe.url;
+          rememberOriginal(this, prop, original);
+          if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
+          postProbe(
+            probe.url,
+            probe.mode === "decoy" ? `setAttributeNS-${prop}-decoy` : "setAttributeNS"
+          );
+          return origSetAttributeNS.call(
+            this,
+            ns,
+            name,
+            replacementUrlFor(probe.mode, probe.url, prop, this)
+          );
         }
         if (prop) forgetOriginal(this, prop);
         return origSetAttributeNS.apply(this, arguments);
@@ -324,7 +369,11 @@
       enumerable: desc.enumerable,
       get: stealth(
         function get() {
-          return rememberedOriginal(this, "src") || desc.get.call(this);
+          return (
+            rememberedOriginal(this, "currentSrc") ||
+            rememberedOriginal(this, "src") ||
+            desc.get.call(this)
+          );
         },
         "get currentSrc",
         { length: 0, source: nativeSourceFor(desc.get, "get currentSrc") }
@@ -354,6 +403,7 @@
   };
 
   guardProp(HTMLImageElement.prototype, "src", "img.src");
+  guardProp(HTMLImageElement.prototype, "srcset", "img.srcset");
   if (typeof HTMLInputElement !== "undefined") {
     guardProp(HTMLInputElement.prototype, "src", "input.src");
   }
@@ -364,6 +414,7 @@
   }
   if (typeof HTMLSourceElement !== "undefined") {
     guardProp(HTMLSourceElement.prototype, "src", "source.src");
+    guardProp(HTMLSourceElement.prototype, "srcset", "source.srcset");
   }
   if (typeof HTMLEmbedElement !== "undefined") {
     guardProp(HTMLEmbedElement.prototype, "src", "embed.src");

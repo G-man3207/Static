@@ -262,7 +262,7 @@
 
   const buildDecoyBody = (url) => {
     const pathname = pathForDecoy(url);
-    if (pathname.endsWith("/manifest.json") || pathname === "/" || pathname === "") {
+    if (pathname.endsWith("/manifest.json")) {
       return {
         body: JSON.stringify(FAKE_MANIFEST),
         contentType: "application/json; charset=utf-8",
@@ -290,7 +290,7 @@
         contentType: "image/svg+xml; charset=utf-8",
       };
     }
-    return { body: "", contentType: "application/octet-stream" };
+    return null;
   };
 
   const fetchMethodFor = (input, init) => {
@@ -304,8 +304,11 @@
     return "GET";
   };
 
-  const buildDecoyResponse = (url, method = "GET") => {
-    const { body, contentType } = buildDecoyBody(url);
+  const isDecoyableMethod = (method) => method === "GET" || method === "HEAD";
+
+  const buildDecoyResponse = (url, method = "GET", decoyBody = buildDecoyBody(url)) => {
+    if (!decoyBody) return null;
+    const { body, contentType } = decoyBody;
     const responseBody = method === "HEAD" ? null : body;
     try {
       const response = new Response(responseBody, {
@@ -367,9 +370,11 @@
       fetch(input) {
         if (isBad(input)) {
           const url = getUrl(input);
-          if (shouldDecoy(url)) {
+          const method = fetchMethodFor(input, arguments[1]);
+          const decoyBody = buildDecoyBody(url);
+          if (shouldDecoy(url) && isDecoyableMethod(method) && decoyBody) {
             bump("fetch-decoy", url);
-            return Promise.resolve(buildDecoyResponse(url, fetchMethodFor(input, arguments[1])));
+            return Promise.resolve(buildDecoyResponse(url, method, decoyBody));
           }
           bump("fetch", url);
           return Promise.reject(new TypeError("Failed to fetch"));
@@ -380,27 +385,49 @@
     window.fetch = stealth(wrappedFetch, "fetch", { length: 1 });
   };
 
-  const fakeXhrSuccess = (xhr, url) => {
-    const { body, contentType } = buildDecoyBody(url);
+  const fakeXhrSuccess = (xhr, url, decoyBody = buildDecoyBody(url)) => {
+    if (!decoyBody) {
+      fakeXhrFailure(xhr);
+      return;
+    }
+    const { body, contentType } = decoyBody;
     const text = textBodyFor(body);
     const responseType = String(xhr.responseType || "");
     const responseValue = responseValueFor(xhr, body, contentType, text);
-    fakeXhrResponses.set(xhr, {
-      allHeaders: `content-type: ${contentType}\r\n`,
-      contentType,
-      readyState: 4,
-      response: responseValue,
-      responseText: text,
-      responseTextError: !!(responseType && responseType !== "text"),
-      responseURL: url,
-      status: 200,
-      statusText: "OK",
-    });
+    const fake = {
+      allHeaders: "",
+      contentType: null,
+      readyState: 1,
+      response: "",
+      responseText: "",
+      responseTextError: false,
+      responseURL: "",
+      status: 0,
+      statusText: "",
+    };
+    fakeXhrResponses.set(xhr, fake);
     queueMicrotask(() => {
       try {
         xhr.dispatchEvent(new ProgressEvent("loadstart"));
       } catch {}
       try {
+        Object.assign(fake, {
+          allHeaders: `content-type: ${contentType}\r\n`,
+          contentType,
+          readyState: 2,
+          responseURL: url,
+          status: 200,
+          statusText: "OK",
+        });
+        xhr.dispatchEvent(new Event("readystatechange"));
+        fake.readyState = 3;
+        xhr.dispatchEvent(new Event("readystatechange"));
+        Object.assign(fake, {
+          readyState: 4,
+          response: responseValue,
+          responseText: text,
+          responseTextError: !!(responseType && responseType !== "text"),
+        });
         xhr.dispatchEvent(new Event("readystatechange"));
         xhr.dispatchEvent(new Event("load"));
         xhr.dispatchEvent(new Event("loadend"));
@@ -409,19 +436,21 @@
   };
 
   const fakeXhrFailure = (xhr) => {
-    fakeXhrResponses.set(xhr, {
+    const fake = {
       readyState: 4,
       response: "",
       responseText: "",
       responseURL: "",
       status: 0,
       statusText: "",
-    });
+    };
+    fakeXhrResponses.set(xhr, { ...fake, readyState: 1 });
     queueMicrotask(() => {
       try {
         xhr.dispatchEvent(new ProgressEvent("loadstart"));
       } catch {}
       try {
+        fakeXhrResponses.set(xhr, fake);
         xhr.dispatchEvent(new Event("readystatechange"));
       } catch {}
       try {
@@ -442,22 +471,27 @@
     const wrappedOpen = {
       open(method, url, ...rest) {
         const bad = isBad(url);
-        if (bad) blockedXHRs.set(this, getUrl(url));
-        else fakeXhrResponses.delete(this);
+        if (bad) {
+          blockedXHRs.set(this, {
+            method: String(method || "GET").toUpperCase(),
+            url: getUrl(url),
+          });
+        } else fakeXhrResponses.delete(this);
         return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
       },
     }.open;
     const wrappedSend = {
       send(...args) {
         if (!blockedXHRs.has(this)) return origSend.apply(this, args);
-        const url = blockedXHRs.get(this);
+        const blocked = blockedXHRs.get(this);
         blockedXHRs.delete(this);
-        if (shouldDecoy(url)) {
-          bump("xhr-decoy", url);
-          fakeXhrSuccess(this, url);
+        const decoyBody = buildDecoyBody(blocked.url);
+        if (shouldDecoy(blocked.url) && isDecoyableMethod(blocked.method) && decoyBody) {
+          bump("xhr-decoy", blocked.url);
+          fakeXhrSuccess(this, blocked.url, decoyBody);
           return;
         }
-        bump("xhr", url);
+        bump("xhr", blocked.url);
         fakeXhrFailure(this);
       },
     }.send;

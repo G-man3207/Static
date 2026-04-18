@@ -11,9 +11,10 @@ persona with fake two-hit canaries.
 
 | Probe vector                                | Eligible Noise persona ID                                                                        | Non-persona or invalid ID       |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------- |
-| `fetch(.../manifest.json)`                  | `200 OK` generic MV3 manifest                                                                    | Native-like `TypeError` failure |
-| `XMLHttpRequest` to `manifest.json`         | `200 OK` generic MV3 manifest                                                                    | Native-like network error       |
+| `fetch(.../manifest.json)`                  | Supported static `GET` / `HEAD` paths receive path-matched decoys                                | Native-like `TypeError` failure |
+| `XMLHttpRequest` to `manifest.json`         | Supported static `GET` / `HEAD` paths receive path-matched decoys                                | Native-like network error       |
 | `Image.src` / `img.setAttribute("src")`     | Loads a 1x1 transparent PNG; page-visible getters return the original extension URL              | Blocked                         |
+| `Image.srcset` / `source.srcset`            | Loads a 1x1 transparent PNG candidate; page-visible getters return the original extension URL    | Blocked                         |
 | `input.src` for image inputs                | Loads a 1x1 transparent PNG; page-visible getters return the original extension URL              | Blocked                         |
 | `video.poster` / `video.setAttribute`       | Loads a 1x1 transparent PNG; page-visible getters return the original extension URL              | Blocked                         |
 | `script.src` / `script.setAttribute("src")` | Loads an empty inert JavaScript resource; page-visible getters return the original extension URL | Blocked                         |
@@ -22,6 +23,7 @@ persona with fake two-hit canaries.
 | `object.data`, `embed.src`, `source.src`    | Receives an inert data URL matched to the path kind where possible                               | Blocked                         |
 | `audio.src`, `video.src`, `track.src`       | Fail-closed                                                                                      | Fail-closed                     |
 | CSSOM `insertRule`, `replace`, `replaceSync` | Fail-closed without inserting extension-URL rules                                                 | Fail-closed                     |
+| CSS declaration and style-attribute URLs    | Fail-closed or scrubbed before resource load                                                     | Fail-closed                     |
 | `Worker`, `SharedWorker`                    | Fail-closed                                                                                      | Fail-closed                     |
 | `EventSource`                               | Fail-closed with EventSource-shaped error behavior                                               | Fail-closed                     |
 | `serviceWorker.register`                    | Fail-closed                                                                                      | Fail-closed                     |
@@ -32,6 +34,14 @@ Frames, workers, service workers, and event streams expose enough behavior that 
 easier to detect than a consistent failure. They need separate contracts before being decoyed:
 origin access, constructor errors, lifecycle events, message channels, script execution timing,
 scope semantics, stream state, and cleanup behavior all have to line up.
+
+Non-`GET` / non-`HEAD` fetch and XHR probes also stay blocked, even for persona IDs. Real extension
+web-accessible resources are static reads; answering POST-like canaries would give probing scripts a
+cheap way to distinguish Noise from a browser-managed resource load.
+
+Unsupported path kinds stay blocked too. Returning generic `200 OK` bodies for arbitrary paths would
+let a probing script seed random path canaries and then distinguish Static from a normal extension
+resource lookup.
 
 ## Test Requirements
 

@@ -7,9 +7,9 @@
       "enabled_by_default": true
     },
     "fingerprint_vendors": {
-      "version": "1.0.0",
+      "version": "1.0.1",
       "last_verified": "2026-04-18",
-      "description": "Commercial client-side fingerprinting and anti-bot vendors: FingerprintJS, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.",
+      "description": "Commercial client-side fingerprinting and anti-bot vendors: FingerprintJS, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5. Includes current Fingerprint CDN/API domains, HUMAN sensor/connect hosts, and Sift JS/CSP hosts.",
       "enabled_by_default": true
     },
     "captcha_vendors": {
@@ -25,9 +25,9 @@
       "enabled_by_default": true
     },
     "datadog_rum": {
-      "version": "1.0.0",
+      "version": "1.0.1",
       "last_verified": "2026-04-18",
-      "description": "Datadog Real User Monitoring intake endpoints (all regions) and browser agent CDN. DISABLED BY DEFAULT — Datadog RUM is also widely used for legitimate performance and error monitoring that site operators and users may want to keep.",
+      "description": "Datadog Real User Monitoring intake endpoints (US1, US3, US5, EU1, US1-FED, AP1, AP2) and browser agent CDN. DISABLED BY DEFAULT — Datadog RUM is also widely used for legitimate performance and error monitoring that site operators and users may want to keep.",
       "enabled_by_default": false
     }
   }
