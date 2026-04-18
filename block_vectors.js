@@ -1,6 +1,7 @@
 // Static - MAIN-world blocking for extension probe vectors beyond fetch/XHR.
 (() => {
   const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
+  const BAD_URL_RE = /\b(?:chrome|moz|ms-browser|safari-web|edge)-extension:[^\s"'()<>]+/i;
   const BRIDGE_EVENT = "__static_probe_bridge_init__";
   const MAX_QUEUED_PROBES = 1000;
   const queuedProbeEvents = [];
@@ -125,6 +126,16 @@
     }
   };
 
+  const firstBadUrlIn = (input) => {
+    try {
+      if (isBad(input)) return getUrl(input);
+      const match = String(input == null ? "" : input).match(BAD_URL_RE);
+      return match ? match[0] : "";
+    } catch {
+      return "";
+    }
+  };
+
   const bump = (where, url) => {
     try {
       postProbe(url, where);
@@ -161,6 +172,18 @@
     guardProp(HTMLScriptElement.prototype, "src", "script.src");
     guardProp(HTMLImageElement.prototype, "src", "img.src");
     guardProp(HTMLIFrameElement.prototype, "src", "iframe.src");
+    if (typeof HTMLInputElement !== "undefined") {
+      guardProp(HTMLInputElement.prototype, "src", "input.src");
+    }
+    if (typeof HTMLMediaElement !== "undefined") {
+      guardProp(HTMLMediaElement.prototype, "src", "media.src");
+    }
+    if (typeof HTMLTrackElement !== "undefined") {
+      guardProp(HTMLTrackElement.prototype, "src", "track.src");
+    }
+    if (typeof HTMLVideoElement !== "undefined") {
+      guardProp(HTMLVideoElement.prototype, "poster", "video.poster");
+    }
     if (typeof HTMLSourceElement !== "undefined") {
       guardProp(HTMLSourceElement.prototype, "src", "source.src");
     }
@@ -180,7 +203,10 @@
         if (typeof argName === "string") {
           const lowerName = argName.toLowerCase();
           if (
-            (lowerName === "src" || lowerName === "href" || lowerName === "data") &&
+            (lowerName === "src" ||
+              lowerName === "href" ||
+              lowerName === "data" ||
+              lowerName === "poster") &&
             isBad(argValue)
           ) {
             bump(label, argValue);
@@ -409,10 +435,46 @@
     } catch {}
   };
 
+  const patchCssMethod = (proto, name, label, onBlocked) => {
+    if (!proto) return;
+    const desc = Object.getOwnPropertyDescriptor(proto, name);
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      [name](...args) {
+        const url = firstBadUrlIn(args[0]);
+        if (url) {
+          bump(label, url);
+          return onBlocked.call(this, args);
+        }
+        return orig.apply(this, args);
+      },
+    }[name];
+    Object.defineProperty(proto, name, {
+      ...desc,
+      value: stealth(wrapped, name, {
+        length: orig.length,
+        source: nativeSourceFor(orig, name),
+      }),
+    });
+  };
+
+  const patchCssRules = () => {
+    if (typeof CSSStyleSheet === "undefined" || !CSSStyleSheet.prototype) return;
+    patchCssMethod(CSSStyleSheet.prototype, "insertRule", "css.insertRule", function (args) {
+      return typeof args[1] === "number" ? args[1] : 0;
+    });
+    patchCssMethod(CSSStyleSheet.prototype, "replace", "css.replace", function () {
+      return Promise.resolve(this);
+    });
+    patchCssMethod(CSSStyleSheet.prototype, "replaceSync", "css.replaceSync", function () {});
+  };
+
   patchElementProperties();
   patchAttributes();
   patchBeacon();
   patchWorkers();
   patchEventSource();
   patchServiceWorkerRegister();
+  patchCssRules();
 })();

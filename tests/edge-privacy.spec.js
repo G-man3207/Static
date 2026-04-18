@@ -429,6 +429,167 @@ test("blocked passive element probes keep native-like visible URLs and error eve
   });
 });
 
+test("additional URL-bearing element surfaces do not load extension URLs", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(
+    ({ audioUrl, imageUrl, posterUrl, trackUrl }) => {
+      const input = document.createElement("input");
+      input.type = "image";
+      input.src = imageUrl;
+
+      const video = document.createElement("video");
+      video.poster = posterUrl;
+
+      const attrVideo = document.createElement("video");
+      attrVideo.setAttribute("poster", posterUrl);
+
+      const audio = document.createElement("audio");
+      audio.src = audioUrl;
+
+      const track = document.createElement("track");
+      track.src = trackUrl;
+
+      return {
+        audio: {
+          attr: audio.getAttribute("src"),
+          src: audio.src,
+        },
+        attrVideo: {
+          attr: attrVideo.getAttribute("poster"),
+          poster: attrVideo.poster,
+        },
+        input: {
+          attr: input.getAttribute("src"),
+          src: input.src,
+        },
+        track: {
+          attr: track.getAttribute("src"),
+          src: track.src,
+        },
+        video: {
+          attr: video.getAttribute("poster"),
+          poster: video.poster,
+        },
+      };
+    },
+    {
+      audioUrl: probedUrl(PROBED_ID, "/sound.mp3"),
+      imageUrl: probedUrl(PROBED_ID, "/button.png"),
+      posterUrl: probedUrl(PROBED_ID, "/poster.png"),
+      trackUrl: probedUrl(PROBED_ID, "/captions.vtt"),
+    }
+  );
+
+  expect(result).toEqual({
+    audio: {
+      attr: null,
+      src: "",
+    },
+    attrVideo: {
+      attr: probedUrl(PROBED_ID, "/poster.png"),
+      poster: probedUrl(PROBED_ID, "/poster.png"),
+    },
+    input: {
+      attr: probedUrl(PROBED_ID, "/button.png"),
+      src: probedUrl(PROBED_ID, "/button.png"),
+    },
+    track: {
+      attr: null,
+      src: "",
+    },
+    video: {
+      attr: probedUrl(PROBED_ID, "/poster.png"),
+      poster: probedUrl(PROBED_ID, "/poster.png"),
+    },
+  });
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("probe_log").then(({ probe_log }) => {
+            const weeks =
+              probe_log &&
+              probe_log[origin] &&
+              probe_log[origin].playbook &&
+              probe_log[origin].playbook.weeks;
+            return weeks && Object.values(weeks)[0].vectorCounts;
+          }),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      "input.src": 1,
+      "media.src": 1,
+      "track.src": 1,
+      "video.poster": 1,
+      setAttribute: 1,
+    });
+});
+
+test("CSSOM rules containing extension URLs are blocked before insertion", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(async (styleUrl) => {
+    const insertedSheet = new CSSStyleSheet();
+    const insertResult = insertedSheet.insertRule(`@import url("${styleUrl}")`);
+
+    const replaceSheet = new CSSStyleSheet();
+    const replaceResult = await replaceSheet.replace(`@import url("${styleUrl}")`);
+
+    const replaceSyncSheet = new CSSStyleSheet();
+    const replaceSyncResult = replaceSyncSheet.replaceSync(`@import url("${styleUrl}")`);
+
+    return {
+      insertResult,
+      insertedRules: insertedSheet.cssRules.length,
+      replaceResultIsSheet: replaceResult === replaceSheet,
+      replaceRules: replaceSheet.cssRules.length,
+      replaceSyncResult,
+      replaceSyncRules: replaceSyncSheet.cssRules.length,
+    };
+  }, probedUrl(PROBED_ID, "/style.css"));
+
+  expect(result).toEqual({
+    insertResult: 0,
+    insertedRules: 0,
+    replaceResultIsSheet: true,
+    replaceRules: 0,
+    replaceSyncResult: undefined,
+    replaceSyncRules: 0,
+  });
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("probe_log").then(({ probe_log }) => {
+            const weeks =
+              probe_log &&
+              probe_log[origin] &&
+              probe_log[origin].playbook &&
+              probe_log[origin].playbook.weeks;
+            return weeks && Object.values(weeks)[0].vectorCounts;
+          }),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      "css.insertRule": 1,
+      "css.replace": 1,
+      "css.replaceSync": 1,
+    });
+});
+
 test("invalid Chrome extension IDs are blocked but not logged or decoyed", async ({
   extension,
   server,
