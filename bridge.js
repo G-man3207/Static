@@ -10,6 +10,8 @@
 //      origin at page load (and again whenever the user toggles Noise mode),
 //      then relay it into the MAIN world over the MessageChannel so block.js can
 //      decide fetch-by-fetch whether to reject the probe or return a decoy.
+//      The same channel also forwards local replay-SDK detections and the
+//      opt-in Replay poisoning mode.
 (() => {
   const EXT_ID_RE = /^(?:chrome|moz|ms-browser|safari-web|edge)-extension:\/\/([a-z0-9]+)/i;
 
@@ -99,6 +101,13 @@
         bumpMap(pendingIdCounts, id);
       }
       if (!flushTimer) flushTimer = setTimeout(flush, 150);
+    } else if (data && data.type === "replay_detected") {
+      try {
+        chrome.runtime.sendMessage({
+          type: "static_replay_detected",
+          signal: String(data.signal || "unknown").slice(0, 96),
+        });
+      } catch {}
     }
   };
   try {
@@ -117,6 +126,7 @@
         type: "config_update",
         persona: Array.isArray(resp.ids) ? resp.ids : [],
         noiseEnabled: !!resp.noiseEnabled,
+        replayMode: typeof resp.replayMode === "string" ? resp.replayMode : "off",
       });
     } catch {}
   };

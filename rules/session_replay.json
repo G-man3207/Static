@@ -160,5 +160,14 @@
       "urlFilter": "||browsee.io^",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
+  },
+  {
+    "id": 19,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "regexFilter": "^https?://browser\\.sentry-cdn\\.com/.*replay.*\\.js([?#].*)?$",
+      "resourceTypes": ["script"]
+    }
   }
 ]

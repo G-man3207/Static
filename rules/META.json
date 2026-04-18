@@ -21,7 +21,7 @@
     "session_replay": {
       "version": "1.0.0",
       "last_verified": "2026-04-18",
-      "description": "Session-replay, heatmap, and product-analytics vendors that record user interaction: FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee.",
+      "description": "Session-replay, heatmap, and product-analytics vendors that record user interaction: FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, and Sentry Replay CDN bundles.",
       "enabled_by_default": true
     },
     "datadog_rum": {

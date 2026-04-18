@@ -7,8 +7,10 @@
 //   4. Generate per-origin decoy personas on demand for Noise mode (stable
 //      deterministic subset of observed IDs, rotated on a weekly cadence, seeded
 //      from a per-user secret so different users claim different sets).
-//   5. Answer popup queries (`static_get_details`, `static_export_log`,
-//      `static_set_noise`) and bridge queries (`static_get_persona`).
+//   5. Record local session-replay detector sightings for Replay poisoning.
+//   6. Answer popup queries (`static_get_details`, `static_export_log`,
+//      `static_set_noise`, `static_set_replay`) and bridge queries
+//      (`static_get_persona`).
 
 importScripts("lists.js");
 const CFG = globalThis.__static_config__ || {};
@@ -175,6 +177,28 @@ const recordProbes = async (origin, batch) => {
   probe_log[origin] = entry;
   enforceCaps(probe_log);
   await chrome.storage.local.set({ probe_log });
+};
+
+const recordReplayDetection = async (origin, signal) => {
+  if (!origin) return;
+  const { replay_log = {} } = await chrome.storage.local.get({ replay_log: {} });
+  const entry = replay_log[origin] || { signals: {}, total: 0, lastUpdated: 0 };
+  const safeSignal = signal || "unknown";
+  entry.signals[safeSignal] = (entry.signals[safeSignal] || 0) + 1;
+  entry.total = (entry.total || 0) + 1;
+  entry.lastUpdated = Date.now();
+  const signals = Object.entries(entry.signals);
+  if (signals.length > 50) {
+    signals.sort((a, b) => b[1] - a[1]);
+    entry.signals = Object.fromEntries(signals.slice(0, 50));
+  }
+  replay_log[origin] = entry;
+  const origins = Object.keys(replay_log);
+  if (origins.length > 100) {
+    origins.sort((a, b) => (replay_log[b].lastUpdated || 0) - (replay_log[a].lastUpdated || 0));
+    for (const oldOrigin of origins.slice(100)) delete replay_log[oldOrigin];
+  }
+  await chrome.storage.local.set({ replay_log });
 };
 
 const latestPlaybookComparison = (entry) => {
@@ -441,12 +465,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  if (msg.type === "static_replay_detected" && sender.tab) {
+    const origin = originFromUrl(sender.url);
+    const signal = typeof msg.signal === "string" ? msg.signal : "unknown";
+    if (origin) serialize(() => recordReplayDetection(origin, signal));
+    return;
+  }
+
   if (msg.type === "static_get_details" && typeof msg.tabId === "number") {
     (async () => {
       const stored = await chrome.storage.local.get({
         cumulative: 0,
         noise_enabled: false,
         probe_log: {},
+        replay_log: {},
+        replay_mode: "off",
       });
       const state = perTabState.get(msg.tabId);
       const origin = state ? state.origin : null;
@@ -455,6 +488,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         topIds: topIdsForTab(msg.tabId, 5),
         cumulative: stored.cumulative,
         noiseEnabled: stored.noise_enabled,
+        replayMode: stored.replay_mode,
+        replayDetected: !!(origin && stored.replay_log[origin]),
         origin,
         drift:
           origin && stored.probe_log[origin]
@@ -468,14 +503,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "static_get_persona") {
     (async () => {
-      const { noise_enabled = false } = await chrome.storage.local.get({ noise_enabled: false });
+      const { noise_enabled = false, replay_mode = "off" } = await chrome.storage.local.get({
+        noise_enabled: false,
+        replay_mode: "off",
+      });
       const origin = originFromUrl(sender.url);
       if (!noise_enabled || !origin) {
-        sendResponse({ ids: [], noiseEnabled: noise_enabled, origin });
+        sendResponse({
+          ids: [],
+          noiseEnabled: noise_enabled,
+          replayMode: replay_mode,
+          origin,
+        });
         return;
       }
       const ids = await personaFor(origin);
-      sendResponse({ ids, noiseEnabled: true, origin });
+      sendResponse({ ids, noiseEnabled: true, replayMode: replay_mode, origin });
     })();
     return true;
   }
@@ -491,10 +534,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "static_set_replay") {
+    (async () => {
+      const allowed = new Set(["off", "mask", "noise", "chaos"]);
+      const mode = allowed.has(msg.mode) ? msg.mode : "off";
+      await chrome.storage.local.set({ replay_mode: mode });
+      sendResponse({ ok: true, mode });
+    })();
+    return true;
+  }
+
   if (msg.type === "static_export_log") {
     (async () => {
-      const { probe_log = {}, cumulative = 0 } = await chrome.storage.local.get({
+      const {
+        probe_log = {},
+        replay_log = {},
+        cumulative = 0,
+      } = await chrome.storage.local.get({
         probe_log: {},
+        replay_log: {},
         cumulative: 0,
       });
       sendResponse({
@@ -502,6 +560,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         exportedAt: new Date().toISOString(),
         cumulative,
         origins: probe_log,
+        replayDetections: replay_log,
       });
     })();
     return true;
@@ -510,7 +569,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "static_clear_log") {
     (async () => {
       cachedSecret = null;
-      await chrome.storage.local.remove(["probe_log", "cumulative", "user_secret"]);
+      await chrome.storage.local.remove(["probe_log", "replay_log", "cumulative", "user_secret"]);
       sendResponse({ ok: true });
     })();
     return true;

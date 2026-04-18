@@ -11,6 +11,7 @@ This policy describes exactly what information Static processes on your machine,
 - Static has **no remote server**. There is no account to create; there is nothing to log into.
 - Static **never transmits any data anywhere.** No telemetry, no analytics, no crash reporting, no usage stats.
 - Static stores a small local record of which extension IDs each website has probed you for. This record lives only in `chrome.storage.local` on your own machine and can be cleared at any time.
+- If Replay poisoning is enabled, Static can redact or perturb event data only for detected session-replay listeners. It does not store form contents and does not send fake traffic.
 - If you manually export the log through the log viewer, the file is saved to your computer. Static does not send the export anywhere.
 
 ## What Static stores locally
@@ -20,10 +21,11 @@ Static stores this local state in your browser profile and never writes to `chro
 1. **Probe log** — a per-origin map of extension IDs that each site has probed you for, with counts. Capped at 100 origins × 2,000 IDs per origin; older entries are evicted beyond that cap.
 2. **Since-install probe counter** — the total number of extension-enumeration probes blocked since you installed Static.
 3. **User secret** — a random 256-bit value generated once, at install time, via `crypto.getRandomValues`. Used only to seed the per-origin decoy personas for Noise mode so that different Static users produce different decoys on the same site. Never displayed anywhere in the UI, never transmitted.
-4. **Preferences** — whether Noise mode is enabled, and which DNR rulesets (LinkedIn telemetry, fingerprinting vendors, CAPTCHA vendors, session replay, Datadog RUM) you have turned on. Noise mode is stored in `chrome.storage.local`; DNR ruleset choices are persisted locally by Chrome's extension ruleset API.
+4. **Preferences** — whether Noise mode is enabled, which Replay poisoning mode is selected (`off`, `mask`, `noise`, or `chaos`), and which DNR rulesets (LinkedIn telemetry, fingerprinting vendors, CAPTCHA vendors, session replay, Datadog RUM) you have turned on. Noise and Replay poisoning preferences are stored in `chrome.storage.local`; DNR ruleset choices are persisted locally by Chrome's extension ruleset API.
 5. **Playbook summaries** — weekly, per-origin aggregates describing how a site probed for extensions: probe vectors (for example `fetch`, XHR, Worker, EventSource), coarse extension-resource path kinds (for example manifest, image, script, HTML, CSS, other), per-week ID counts, and first/last-seen times for the weekly bucket. These summaries power local "probe behavior changed" indicators and are capped to the latest 10 weekly buckets per origin.
+6. **Replay detection log** — a per-origin summary of likely session-replay SDK signals, such as matching script URLs, known replay globals, Sentry Replay-specific markers, or replay-looking listener sources. Capped at 100 origins × 50 signals per origin. It records signal names/counts and last-seen timestamps, not form values or page content.
 
-You can erase the probe log, playbook summaries, since-install counter, and Noise-mode user secret at any time via the **Clear log** button in Static's log viewer. Ruleset and Noise-mode preferences can be changed in the popup; uninstalling Static removes all extension-managed data.
+You can erase the probe log, playbook summaries, replay detection log, since-install counter, and Noise-mode user secret at any time via the **Clear log** button in Static's log viewer. Ruleset, Noise-mode, and Replay-poisoning preferences can be changed in the popup; uninstalling Static removes all extension-managed data.
 
 ## What Static does NOT store or access
 
@@ -34,11 +36,13 @@ You can erase the probe log, playbook summaries, since-install counter, and Nois
 
 Although Static's content scripts are registered on all URLs (required to intercept extension-fingerprinting probes wherever they occur), the scripts act only on `chrome-extension://` URLs (and equivalents on other browsers) and on a hardcoded list of DOM markers and `window` globals used by fingerprinting code. They do not read, transmit, or otherwise process any other page content.
 
+When Replay poisoning is enabled, Static also proxies event objects delivered to detected replay listeners. That proxy can replace values and keystroke data with redacted placeholders, add small coordinate/geometry jitter, and in Chaos mode deliver local decoy events directly to replay listeners. These event views are not persisted, are not sent by Static, and are not delivered to ordinary page listeners.
+
 ## What Static does NOT transmit
 
 Static has no backend. It makes no outbound network requests of its own. It contains no third-party SDKs, analytics frameworks, advertising integrations, crash-reporting services, or telemetry of any kind.
 
-Static's only network-related action is **blocking** certain outbound requests initiated by the websites you visit, via Chrome's [`declarativeNetRequest`](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest) API and via interception of `fetch` / `XMLHttpRequest` calls to extension-scheme URLs. It never **originates** network requests itself.
+Static's only network-related action is **blocking** certain outbound requests initiated by the websites you visit, via Chrome's [`declarativeNetRequest`](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest) API and via interception of `fetch` / `XMLHttpRequest` calls to extension-scheme URLs. Replay poisoning is page-local and does not send fake replay data over the network. Static never **originates** network requests itself.
 
 ## Permissions Static requests, and why
 
@@ -51,7 +55,7 @@ Static's only network-related action is **blocking** certain outbound requests i
 
 The log viewer offers two export options. Both save a JSON file to your computer via the browser's native download mechanism; nothing is transmitted.
 
-- **Export raw log** — full fidelity, including per-origin `lastUpdated` timestamps, exact per-ID probe counts, weekly playbook summaries, and the since-install cumulative counter. Intended for private archival. If you choose to share this file, be aware that timestamps plus exact counts can be correlated with similar dumps from other users to partially re-identify individual browsing patterns.
+- **Export raw log** — full fidelity, including per-origin `lastUpdated` timestamps, exact per-ID probe counts, weekly playbook summaries, replay detection summaries, and the since-install cumulative counter. Intended for private archival. If you choose to share this file, be aware that timestamps plus exact counts can be correlated with similar dumps from other users to partially re-identify individual browsing patterns.
 - **Export for research** — anonymized. Replaces the precise `exportedAt` timestamp with a coarse `exportMonth` (`"YYYY-MM"`), drops per-origin `lastUpdated` timestamps, drops the since-install cumulative counter, coarsens per-ID counts into log-scale buckets (`2-5`, `6-20`, `21-100`, `101-1000`, `1000+`), drops IDs probed fewer than 2 times (canary filter), and drops origins with fewer than 3 surviving IDs (low-signal noise filter). Safe to publish or contribute to aggregate datasets that document how the web fingerprints browser extensions.
 
 Static does not retain a copy of any export. Once the file is downloaded, only you have it.
@@ -66,7 +70,7 @@ Because Static stores data only on your own machine, your rights of access, port
 
 - **Access**: everything Static has ever recorded about probes against you is visible in the log viewer.
 - **Portability**: downloadable as JSON at any time via the **Export** buttons in the log viewer.
-- **Erasure**: the **Clear log** button wipes the probe log, resets the since-install counter, and resets the Noise-mode user secret. Uninstalling Static removes all stored data, including preferences.
+- **Erasure**: the **Clear log** button wipes the probe log and replay detection log, resets the since-install counter, and resets the Noise-mode user secret. Uninstalling Static removes all stored data, including preferences.
 
 No request to the author is required to exercise any of these rights.
 
