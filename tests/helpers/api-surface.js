@@ -7,6 +7,7 @@ async function getApiSurface(page) {
     });
     const setterSurface = (proto, prop) => {
       const desc = Object.getOwnPropertyDescriptor(proto, prop);
+      if (!desc || !desc.set) return null;
       return {
         length: desc.set.length,
         ownPrototype: Object.prototype.hasOwnProperty.call(desc.set, "prototype"),
@@ -15,6 +16,16 @@ async function getApiSurface(page) {
     };
 
     return {
+      anchorHrefSetter: setterSurface(HTMLAnchorElement.prototype, "href"),
+      anchorPingSetter: setterSurface(HTMLAnchorElement.prototype, "ping"),
+      areaHrefSetter: setterSurface(HTMLAreaElement.prototype, "href"),
+      audio: {
+        ...fnSurface(Audio),
+        prototypeConstructorMatches: Audio.prototype.constructor === Audio,
+      },
+      baseHrefSetter: setterSurface(HTMLBaseElement.prototype, "href"),
+      elementInnerHTMLSetter: setterSurface(Element.prototype, "innerHTML"),
+      elementInsertAdjacentHTML: fnSurface(Element.prototype.insertAdjacentHTML),
       eventSource: {
         ...fnSurface(EventSource),
         prototypeConstructorMatches: EventSource.prototype.constructor === EventSource,
@@ -32,11 +43,14 @@ async function getApiSurface(page) {
         })(),
       },
       imageSrcSetter: setterSurface(HTMLImageElement.prototype, "src"),
+      inputFormActionSetter: setterSurface(HTMLInputElement.prototype, "formAction"),
       linkHrefSetter: setterSurface(HTMLLinkElement.prototype, "href"),
       mutationObserver: {
         ...fnSurface(MutationObserver),
         prototypeConstructorMatches: MutationObserver.prototype.constructor === MutationObserver,
       },
+      nodeAppendChild: fnSurface(Node.prototype.appendChild),
+      nodeTextContentSetter: setterSurface(Node.prototype, "textContent"),
       scriptSrcSetter: setterSurface(HTMLScriptElement.prototype, "src"),
       sendBeacon: {
         ...fnSurface(navigator.sendBeacon),
@@ -76,7 +90,7 @@ async function getApiSurface(page) {
   });
 }
 
-function expectApiSurface(expect, surface) {
+function expectCoreSurface(expect, surface) {
   expect(surface.fetch).toEqual({
     length: 1,
     ownPrototype: false,
@@ -144,6 +158,15 @@ function expectApiSurface(expect, surface) {
     ownPrototype: false,
     toString: "function sendBeacon() { [native code] }",
   });
+}
+
+function expectConstructorSurface(expect, surface) {
+  expect(surface.audio).toEqual({
+    length: 0,
+    ownPrototype: true,
+    prototypeConstructorMatches: true,
+    toString: "function Audio() { [native code] }",
+  });
   expect(surface.worker).toEqual({
     length: 1,
     ownPrototype: true,
@@ -170,16 +193,37 @@ function expectApiSurface(expect, surface) {
     prototypeConstructorMatches: true,
     toString: "function MutationObserver() { [native code] }",
   });
+}
+
+function expectAccessorSurface(expect, surface) {
   for (const accessor of [
+    surface.anchorHrefSetter,
+    surface.anchorPingSetter,
+    surface.areaHrefSetter,
+    surface.baseHrefSetter,
+    surface.elementInnerHTMLSetter,
     surface.imageSrcSetter,
+    surface.inputFormActionSetter,
     surface.scriptSrcSetter,
     surface.linkHrefSetter,
-  ]) {
+    surface.nodeTextContentSetter,
+  ].filter(Boolean)) {
     expect(accessor.length).toBe(1);
     expect(accessor.ownPrototype).toBe(false);
     expect(accessor.toString).toContain("[native code]");
     expect(accessor.toString).not.toContain("isBad");
   }
+}
+
+function expectDomMutatorSurface(expect, surface) {
+  for (const fn of [surface.elementInsertAdjacentHTML, surface.nodeAppendChild]) {
+    expect(fn.ownPrototype).toBe(false);
+    expect(fn.toString).toContain("[native code]");
+    expect(fn.toString).not.toContain("scrub");
+  }
+}
+
+function expectServiceWorkerSurface(expect, surface) {
   if (surface.serviceWorkerRegister) {
     expect(surface.serviceWorkerRegister).toEqual({
       length: 1,
@@ -188,6 +232,14 @@ function expectApiSurface(expect, surface) {
       toString: "function register() { [native code] }",
     });
   }
+}
+
+function expectApiSurface(expect, surface) {
+  expectCoreSurface(expect, surface);
+  expectConstructorSurface(expect, surface);
+  expectAccessorSurface(expect, surface);
+  expectDomMutatorSurface(expect, surface);
+  expectServiceWorkerSurface(expect, surface);
 }
 
 module.exports = {

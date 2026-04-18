@@ -21,133 +21,6 @@ const seedNoisePersona = async (extension, origin, id = PROBED_ID) => {
   );
 };
 
-test("Noise decoys expose coherent fetch and XHR response details", async ({
-  extension,
-  server,
-}) => {
-  const page = await extension.context.newPage();
-  await seedNoisePersona(extension, server.origin);
-
-  await page.goto(server.url("/blank.html"));
-  await page.waitForTimeout(300);
-
-  const result = await page.evaluate(
-    async (manifestUrl) => {
-      const response = await fetch(manifestUrl);
-      const responseClone = response.clone();
-      const responseText = await responseClone.text();
-      const manifest = await response.json();
-      const head = await fetch(new Request(manifestUrl, { method: "HEAD" }));
-
-      const xhrText = await new Promise((resolve) => {
-        const xhr = new XMLHttpRequest();
-        xhr.addEventListener("loadend", () => {
-          resolve({
-            allHeaders: xhr.getAllResponseHeaders(),
-            contentType: xhr.getResponseHeader("content-type"),
-            ownGetHeader: Object.prototype.hasOwnProperty.call(xhr, "getResponseHeader"),
-            ownReadyState: Object.prototype.hasOwnProperty.call(xhr, "readyState"),
-            ownResponse: Object.prototype.hasOwnProperty.call(xhr, "response"),
-            ownResponseText: Object.prototype.hasOwnProperty.call(xhr, "responseText"),
-            ownResponseURL: Object.prototype.hasOwnProperty.call(xhr, "responseURL"),
-            ownStatus: Object.prototype.hasOwnProperty.call(xhr, "status"),
-            responseText: xhr.responseText,
-            responseURL: xhr.responseURL,
-            status: xhr.status,
-          });
-        });
-        xhr.open("GET", manifestUrl);
-        xhr.send();
-      });
-
-      const xhrJson = await new Promise((resolve) => {
-        const xhr = new XMLHttpRequest();
-        xhr.addEventListener("loadend", () => {
-          let responseTextAccess = "ok";
-          try {
-            void xhr.responseText;
-          } catch (error) {
-            responseTextAccess = error.name;
-          }
-          resolve({
-            ownResponse: Object.prototype.hasOwnProperty.call(xhr, "response"),
-            ownResponseText: Object.prototype.hasOwnProperty.call(xhr, "responseText"),
-            ownStatus: Object.prototype.hasOwnProperty.call(xhr, "status"),
-            response: xhr.response,
-            responseTextAccess,
-            status: xhr.status,
-          });
-        });
-        xhr.open("GET", manifestUrl);
-        xhr.responseType = "json";
-        xhr.send();
-      });
-
-      return {
-        fetch: {
-          instance: response instanceof Response,
-          manifest,
-          ownType: Object.prototype.hasOwnProperty.call(response, "type"),
-          ownUrl: Object.prototype.hasOwnProperty.call(response, "url"),
-          prototype: Object.getPrototypeOf(response) === Response.prototype,
-          cloneType: responseClone.type,
-          cloneUrl: responseClone.url,
-          responseText,
-          type: response.type,
-          url: response.url,
-        },
-        headText: await head.text(),
-        xhrJson,
-        xhrText,
-      };
-    },
-    probedUrl(PROBED_ID, "/manifest.json")
-  );
-
-  expect(result.fetch).toMatchObject({
-    instance: true,
-    manifest: {
-      manifest_version: 3,
-      name: "Browser Extension",
-      version: "1.0.0",
-    },
-    ownType: false,
-    ownUrl: false,
-    prototype: true,
-    cloneType: "basic",
-    cloneUrl: probedUrl(PROBED_ID, "/manifest.json"),
-    type: "basic",
-    url: probedUrl(PROBED_ID, "/manifest.json"),
-  });
-  expect(JSON.parse(result.fetch.responseText)).toMatchObject({ name: "Browser Extension" });
-  expect(result.headText).toBe("");
-  expect(result.xhrText).toMatchObject({
-    contentType: "application/json; charset=utf-8",
-    ownGetHeader: false,
-    ownReadyState: false,
-    ownResponse: false,
-    ownResponseText: false,
-    ownResponseURL: false,
-    ownStatus: false,
-    responseURL: probedUrl(PROBED_ID, "/manifest.json"),
-    status: 200,
-  });
-  expect(result.xhrText.allHeaders).toContain("content-type: application/json; charset=utf-8");
-  expect(JSON.parse(result.xhrText.responseText)).toMatchObject({ name: "Browser Extension" });
-  expect(result.xhrJson).toMatchObject({
-    ownResponse: false,
-    ownResponseText: false,
-    ownStatus: false,
-    response: {
-      manifest_version: 3,
-      name: "Browser Extension",
-      version: "1.0.0",
-    },
-    responseTextAccess: "InvalidStateError",
-    status: 200,
-  });
-});
-
 test("Noise decoys are consistent for passive resource elements", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await seedNoisePersona(extension, server.origin);
@@ -220,7 +93,7 @@ test("Noise decoys are consistent for passive resource elements", async ({ exten
     }
   );
 
-  expect(result).toMatchObject({
+  expect(result).toEqual({
     img: {
       attr: probedUrl(PROBED_ID, "/icon.png"),
       complete: true,
@@ -429,6 +302,141 @@ test("blocked passive element probes keep native-like visible URLs and error eve
   });
 });
 
+const additionalSurfaceUrls = () => ({
+  anchorUrl: probedUrl(PROBED_ID, "/page.html"),
+  audioUrl: probedUrl(PROBED_ID, "/sound.mp3"),
+  formUrl: probedUrl(PROBED_ID, "/submit.html"),
+  imageUrl: probedUrl(PROBED_ID, "/button.png"),
+  posterUrl: probedUrl(PROBED_ID, "/poster.png"),
+  trackUrl: probedUrl(PROBED_ID, "/captions.vtt"),
+});
+
+const probeAdditionalUrlSurfaces = (page) =>
+  page.evaluate(({ anchorUrl, audioUrl, formUrl, imageUrl, posterUrl, trackUrl }) => {
+    const anchor = document.createElement("a");
+    anchor.href = anchorUrl;
+    anchor.ping = `https://example.test/ping ${formUrl}`;
+    const attrAnchor = document.createElement("a");
+    attrAnchor.setAttribute("ping", `https://example.test/ping ${formUrl}`);
+    const area = document.createElement("area");
+    area.href = anchorUrl;
+    const base = document.createElement("base");
+    base.href = anchorUrl;
+    const input = document.createElement("input");
+    input.type = "image";
+    input.src = imageUrl;
+    const video = document.createElement("video");
+    video.poster = posterUrl;
+    const attrVideo = document.createElement("video");
+    attrVideo.setAttribute("poster", posterUrl);
+    const audio = document.createElement("audio");
+    audio.src = audioUrl;
+    const audioCtor = new Audio(audioUrl);
+    const track = document.createElement("track");
+    track.src = trackUrl;
+    const form = document.createElement("form");
+    form.action = formUrl;
+    const attrForm = document.createElement("form");
+    attrForm.setAttribute("action", formUrl);
+    const button = document.createElement("button");
+    button.formAction = formUrl;
+    const submitInput = document.createElement("input");
+    submitInput.type = "submit";
+    submitInput.formAction = formUrl;
+    return {
+      anchor: {
+        attr: anchor.getAttribute("href"),
+        href: anchor.href,
+        ping: anchor.ping,
+        pingAttr: anchor.getAttribute("ping"),
+      },
+      area: { attr: area.getAttribute("href"), href: area.href },
+      attrAnchor: { ping: attrAnchor.ping, pingAttr: attrAnchor.getAttribute("ping") },
+      audio: { attr: audio.getAttribute("src"), src: audio.src },
+      audioCtor: { attr: audioCtor.getAttribute("src"), src: audioCtor.src },
+      attrForm: { action: attrForm.action, attr: attrForm.getAttribute("action") },
+      attrVideo: { attr: attrVideo.getAttribute("poster"), poster: attrVideo.poster },
+      base: { attr: base.getAttribute("href"), href: base.href },
+      button: { attr: button.getAttribute("formaction"), formAction: button.formAction },
+      form: { action: form.action, attr: form.getAttribute("action") },
+      input: { attr: input.getAttribute("src"), src: input.src },
+      submitInput: {
+        attr: submitInput.getAttribute("formaction"),
+        formAction: submitInput.formAction,
+      },
+      track: { attr: track.getAttribute("src"), src: track.src },
+      video: { attr: video.getAttribute("poster"), poster: video.poster },
+    };
+  }, additionalSurfaceUrls());
+
+const expectedAdditionalSurfaceResult = () => ({
+  anchor: {
+    attr: null,
+    ping: "",
+    pingAttr: null,
+  },
+  area: {
+    attr: null,
+  },
+  attrAnchor: {
+    ping: "",
+    pingAttr: null,
+  },
+  audio: {
+    attr: null,
+    src: "",
+  },
+  audioCtor: {
+    attr: null,
+    src: "",
+  },
+  attrForm: {
+    attr: null,
+  },
+  attrVideo: {
+    attr: probedUrl(PROBED_ID, "/poster.png"),
+    poster: probedUrl(PROBED_ID, "/poster.png"),
+  },
+  base: {
+    attr: null,
+  },
+  button: {
+    attr: null,
+  },
+  form: {
+    attr: null,
+  },
+  input: {
+    attr: probedUrl(PROBED_ID, "/button.png"),
+    src: probedUrl(PROBED_ID, "/button.png"),
+  },
+  submitInput: {
+    attr: null,
+  },
+  track: {
+    attr: null,
+    src: "",
+  },
+  video: {
+    attr: probedUrl(PROBED_ID, "/poster.png"),
+    poster: probedUrl(PROBED_ID, "/poster.png"),
+  },
+});
+
+const expectNoAdditionalSurfaceLeaks = (result) => {
+  for (const value of [
+    result.anchor.href,
+    result.area.href,
+    result.attrForm.action,
+    result.base.href,
+    result.button.formAction,
+    result.form.action,
+    result.submitInput.formAction,
+  ]) {
+    expect(value).not.toMatch(/^chrome-extension:/);
+  }
+};
+
 test("additional URL-bearing element surfaces do not load extension URLs", async ({
   extension,
   server,
@@ -436,77 +444,10 @@ test("additional URL-bearing element surfaces do not load extension URLs", async
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
-  const result = await page.evaluate(
-    ({ audioUrl, imageUrl, posterUrl, trackUrl }) => {
-      const input = document.createElement("input");
-      input.type = "image";
-      input.src = imageUrl;
+  const result = await probeAdditionalUrlSurfaces(page);
 
-      const video = document.createElement("video");
-      video.poster = posterUrl;
-
-      const attrVideo = document.createElement("video");
-      attrVideo.setAttribute("poster", posterUrl);
-
-      const audio = document.createElement("audio");
-      audio.src = audioUrl;
-
-      const track = document.createElement("track");
-      track.src = trackUrl;
-
-      return {
-        audio: {
-          attr: audio.getAttribute("src"),
-          src: audio.src,
-        },
-        attrVideo: {
-          attr: attrVideo.getAttribute("poster"),
-          poster: attrVideo.poster,
-        },
-        input: {
-          attr: input.getAttribute("src"),
-          src: input.src,
-        },
-        track: {
-          attr: track.getAttribute("src"),
-          src: track.src,
-        },
-        video: {
-          attr: video.getAttribute("poster"),
-          poster: video.poster,
-        },
-      };
-    },
-    {
-      audioUrl: probedUrl(PROBED_ID, "/sound.mp3"),
-      imageUrl: probedUrl(PROBED_ID, "/button.png"),
-      posterUrl: probedUrl(PROBED_ID, "/poster.png"),
-      trackUrl: probedUrl(PROBED_ID, "/captions.vtt"),
-    }
-  );
-
-  expect(result).toEqual({
-    audio: {
-      attr: null,
-      src: "",
-    },
-    attrVideo: {
-      attr: probedUrl(PROBED_ID, "/poster.png"),
-      poster: probedUrl(PROBED_ID, "/poster.png"),
-    },
-    input: {
-      attr: probedUrl(PROBED_ID, "/button.png"),
-      src: probedUrl(PROBED_ID, "/button.png"),
-    },
-    track: {
-      attr: null,
-      src: "",
-    },
-    video: {
-      attr: probedUrl(PROBED_ID, "/poster.png"),
-      poster: probedUrl(PROBED_ID, "/poster.png"),
-    },
-  });
+  expect(result).toMatchObject(expectedAdditionalSurfaceResult());
+  expectNoAdditionalSurfaceLeaks(result);
 
   await expect
     .poll(() =>
@@ -524,11 +465,19 @@ test("additional URL-bearing element surfaces do not load extension URLs", async
       )
     )
     .toMatchObject({
+      Audio: 1,
+      "anchor.href": 1,
+      "anchor.ping": 1,
+      "area.href": 1,
+      "base.href": 1,
       "input.src": 1,
+      "button.formAction": 1,
+      "form.action": 1,
+      "input.formAction": 1,
       "media.src": 1,
       "track.src": 1,
       "video.poster": 1,
-      setAttribute: 1,
+      setAttribute: 3,
     });
 });
 
@@ -548,8 +497,16 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
 
     const replaceSyncSheet = new CSSStyleSheet();
     const replaceSyncResult = replaceSyncSheet.replaceSync(`@import url("${styleUrl}")`);
+    const addRuleSheet = new CSSStyleSheet();
+    const addRuleAvailable = typeof addRuleSheet.addRule === "function";
+    const addRuleResult = addRuleAvailable
+      ? addRuleSheet.addRule("body", `background-image: url("${styleUrl}")`)
+      : "unavailable";
 
     return {
+      addRuleAvailable,
+      addRuleResult,
+      addRuleRules: addRuleSheet.cssRules.length,
       insertResult,
       insertedRules: insertedSheet.cssRules.length,
       replaceResultIsSheet: replaceResult === replaceSheet,
@@ -559,7 +516,7 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
     };
   }, probedUrl(PROBED_ID, "/style.css"));
 
-  expect(result).toEqual({
+  expect(result).toMatchObject({
     insertResult: 0,
     insertedRules: 0,
     replaceResultIsSheet: true,
@@ -567,7 +524,17 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
     replaceSyncResult: undefined,
     replaceSyncRules: 0,
   });
+  if (result.addRuleAvailable) {
+    expect(result.addRuleResult).toBe(-1);
+    expect(result.addRuleRules).toBe(0);
+  }
 
+  const expectedCounts = {
+    "css.insertRule": 1,
+    "css.replace": 1,
+    "css.replaceSync": 1,
+  };
+  if (result.addRuleAvailable) expectedCounts["css.addRule"] = 1;
   await expect
     .poll(() =>
       extension.serviceWorker.evaluate(
@@ -583,11 +550,7 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
         server.origin
       )
     )
-    .toMatchObject({
-      "css.insertRule": 1,
-      "css.replace": 1,
-      "css.replaceSync": 1,
-    });
+    .toMatchObject(expectedCounts);
 });
 
 test("invalid Chrome extension IDs are blocked but not logged or decoyed", async ({

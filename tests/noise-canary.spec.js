@@ -267,31 +267,77 @@ test("style setProperty and cssText URL probes are fail-closed", async ({ extens
     document.body.appendChild(direct);
     direct.style.backgroundImage = `url("${styleUrl}")`;
 
+    const textStyle = document.createElement("style");
+    textStyle.textContent = `@import url("${styleUrl}")`;
+    document.head.appendChild(textStyle);
+
+    const htmlStyle = document.createElement("style");
+    htmlStyle.innerHTML = `@import url("${styleUrl}")`;
+    document.head.appendChild(htmlStyle);
+
+    const appendStyle = document.createElement("style");
+    appendStyle.append(`@import url("${styleUrl}")`);
+    document.head.appendChild(appendStyle);
+
+    const parsedStyle = new DOMParser()
+      .parseFromString(`<style>@import url("${styleUrl}")</style>`, "text/html")
+      .querySelector("style");
+    document.head.appendChild(parsedStyle);
+
+    document.head.insertAdjacentHTML(
+      "beforeend",
+      `<style id="inserted-style-probe">@import url("${styleUrl}")</style><div id="preserved-style-sibling">ok</div>`
+    );
+    const insertedStyle = document.getElementById("inserted-style-probe");
+    const preservedSibling = document.getElementById("preserved-style-sibling");
+
     await new Promise((resolve) => {
       setTimeout(resolve, 50);
     });
 
     return {
+      appendStyleText: appendStyle.textContent,
       cssText,
       cursor,
       directBackgroundImage: direct.style.backgroundImage,
+      htmlStyleText: htmlStyle.textContent,
       hasStyleUrl:
         cursor.includes(styleUrl) ||
         cssText.includes(styleUrl) ||
-        direct.style.backgroundImage.includes(styleUrl),
+        direct.style.backgroundImage.includes(styleUrl) ||
+        textStyle.textContent.includes(styleUrl) ||
+        htmlStyle.textContent.includes(styleUrl) ||
+        appendStyle.textContent.includes(styleUrl) ||
+        parsedStyle.textContent.includes(styleUrl) ||
+        insertedStyle.textContent.includes(styleUrl),
+      insertedStyleText: insertedStyle.textContent,
+      parsedStyleText: parsedStyle.textContent,
+      preservedSiblingText: preservedSibling.textContent,
+      textStyleText: textStyle.textContent,
     };
   }, imageUrl);
 
   expect(result).toEqual({
+    appendStyleText: "",
     cssText: "",
     cursor: "",
     directBackgroundImage: "",
+    htmlStyleText: "",
     hasStyleUrl: false,
+    insertedStyleText: "",
+    parsedStyleText: "",
+    preservedSiblingText: "ok",
+    textStyleText: "",
   });
 
   await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
     "style.attribute": 1,
+    "style.append": 1,
     "style.cssText": 1,
+    "style.domInsertion": 1,
+    "style.innerHTML": 1,
+    "style.insertAdjacentHTML": 1,
     "style.setProperty": 1,
+    "style.textContent": 1,
   });
 });

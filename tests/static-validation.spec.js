@@ -243,6 +243,7 @@ test("DNR rulesets are well-formed and synchronized with metadata and popup IDs"
 test("vendor DNR lists cover current official client-side collection hosts", () => {
   const fingerprintFilters = new Set(urlFiltersFor("rules/fingerprint_vendors.json"));
   const datadogFilters = new Set(urlFiltersFor("rules/datadog_rum.json"));
+  const replayFilters = new Set(urlFiltersFor("rules/session_replay.json"));
 
   for (const filter of [
     "||fpjscdn.net^",
@@ -265,5 +266,22 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     "||datadoghq-browser-agent.com^",
   ]) {
     expect(datadogFilters.has(filter), `datadog_rum missing ${filter}`).toBe(true);
+  }
+
+  for (const filter of [
+    "||lr-ingest.io^",
+    "||lr-in-prod.com^",
+    "||lr-ingest.com^",
+    "||ingest-lr.com^",
+    "||lr-intake.com^",
+    "||intake-lr.com^",
+    "||logr-ingest.com^",
+    "||lrkt-in.com^",
+    "||lgrckt-in.com^",
+    "||logr-in.com^",
+    "||c.bing.com^",
+    "||heap-api.com^",
+  ]) {
+    expect(replayFilters.has(filter), `session_replay missing ${filter}`).toBe(true);
   }
 });

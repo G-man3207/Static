@@ -4,6 +4,7 @@
   const BAD_URL_RE = /\b(?:chrome|moz|ms-browser|safari-web|edge)-extension:[^\s"'()<>]+/i;
   const BRIDGE_EVENT = "__static_style_probe_bridge_init__";
   const MAX_QUEUED_PROBES = 1000;
+  const STYLE_MARKUP_RE = /<\s*style(?:\s|>|\/)/i;
   const queuedProbeEvents = [];
   let bridgePort = null;
 
@@ -124,6 +125,67 @@
     } catch {}
   };
 
+  const isStyleElement = (node) => {
+    return (
+      node &&
+      node.nodeType === Node.ELEMENT_NODE &&
+      String(node.localName || "").toLowerCase() === "style"
+    );
+  };
+
+  const clearStyleText = (style) => {
+    while (style.firstChild) {
+      try {
+        style.removeChild(style.firstChild);
+      } catch {
+        return;
+      }
+    }
+  };
+
+  const blockStyleText = (label, value) => {
+    const url = firstBadUrlIn(value);
+    if (!url) return false;
+    bump(label, url);
+    return true;
+  };
+
+  const scrubStyleTextNode = (style, label) => {
+    if (!isStyleElement(style)) return false;
+    const text = style.textContent || "";
+    if (!blockStyleText(label, text)) return false;
+    clearStyleText(style);
+    return true;
+  };
+
+  const scrubStyleTextTree = (node, label) => {
+    if (!node || typeof node.querySelectorAll !== "function") return false;
+    let changed = isStyleElement(node) && scrubStyleTextNode(node, label);
+    try {
+      for (const style of node.querySelectorAll("style")) {
+        changed = scrubStyleTextNode(style, label) || changed;
+      }
+    } catch {}
+    return changed;
+  };
+
+  const sanitizeStyleMarkup = (value, label, innerHTMLDesc) => {
+    if (typeof value !== "string" || !STYLE_MARKUP_RE.test(value)) return value;
+    const template = document.createElement("template");
+    try {
+      innerHTMLDesc.set.call(template, value);
+    } catch {
+      return value;
+    }
+    const root = template.content || template;
+    if (!scrubStyleTextTree(root, label)) return value;
+    try {
+      return innerHTMLDesc.get.call(template);
+    } catch {
+      return "";
+    }
+  };
+
   const patchSetProperty = (proto) => {
     const desc = Object.getOwnPropertyDescriptor(proto, "setProperty");
     const orig = desc && desc.value;
@@ -171,6 +233,129 @@
     });
   };
 
+  const patchTextContent = (proto) => {
+    const desc = Object.getOwnPropertyDescriptor(proto, "textContent");
+    if (!desc || !desc.set) return;
+    const wrapped = {
+      set textContent(value) {
+        if (isStyleElement(this) && blockStyleText("style.textContent", value)) {
+          desc.set.call(this, "");
+          return;
+        }
+        desc.set.call(this, value);
+      },
+    };
+    Object.defineProperty(proto, "textContent", {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get: desc.get,
+      set: stealth(Object.getOwnPropertyDescriptor(wrapped, "textContent").set, "set textContent", {
+        length: desc.set.length,
+        source: nativeSourceFor(desc.set, "set textContent"),
+      }),
+    });
+  };
+
+  const patchInnerHTML = (proto, innerHTMLDesc) => {
+    if (!innerHTMLDesc || !innerHTMLDesc.set) return;
+    const wrapped = {
+      set innerHTML(value) {
+        const nextValue =
+          isStyleElement(this) && blockStyleText("style.innerHTML", value)
+            ? ""
+            : sanitizeStyleMarkup(value, "style.innerHTML", innerHTMLDesc);
+        innerHTMLDesc.set.call(this, nextValue);
+      },
+    };
+    Object.defineProperty(proto, "innerHTML", {
+      configurable: true,
+      enumerable: innerHTMLDesc.enumerable,
+      get: innerHTMLDesc.get,
+      set: stealth(Object.getOwnPropertyDescriptor(wrapped, "innerHTML").set, "set innerHTML", {
+        length: innerHTMLDesc.set.length,
+        source: nativeSourceFor(innerHTMLDesc.set, "set innerHTML"),
+      }),
+    });
+  };
+
+  const patchInsertAdjacentHTML = (proto, innerHTMLDesc) => {
+    const desc = Object.getOwnPropertyDescriptor(proto, "insertAdjacentHTML");
+    const orig = desc && desc.value;
+    if (typeof orig !== "function" || !innerHTMLDesc) return;
+    const wrapped = {
+      insertAdjacentHTML(position, html) {
+        const nextHtml =
+          isStyleElement(this) && blockStyleText("style.insertAdjacentHTML", html)
+            ? ""
+            : sanitizeStyleMarkup(html, "style.insertAdjacentHTML", innerHTMLDesc);
+        return orig.call(this, position, nextHtml);
+      },
+    }.insertAdjacentHTML;
+    Object.defineProperty(proto, "insertAdjacentHTML", {
+      ...desc,
+      value: stealth(wrapped, "insertAdjacentHTML", {
+        length: orig.length,
+        source: nativeSourceFor(orig, "insertAdjacentHTML"),
+      }),
+    });
+  };
+
+  const scrubInsertionArgs = (target, args, label) => {
+    const nextArgs = [];
+    for (const arg of args) {
+      if (isStyleElement(target) && typeof arg === "string" && blockStyleText(label, arg)) {
+        continue;
+      }
+      if (arg && typeof arg === "object") scrubStyleTextTree(arg, label);
+      nextArgs.push(arg);
+    }
+    return nextArgs;
+  };
+
+  const patchNodeInsertionMethod = (proto, name, label) => {
+    const desc = Object.getOwnPropertyDescriptor(proto, name);
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      [name](node, ...rest) {
+        if (node && typeof node === "object") scrubStyleTextTree(node, label);
+        return orig.call(this, node, ...rest);
+      },
+    }[name];
+    Object.defineProperty(proto, name, {
+      ...desc,
+      value: stealth(wrapped, name, { length: orig.length, source: nativeSourceFor(orig, name) }),
+    });
+  };
+
+  const patchElementInsertionMethod = (proto, name, label) => {
+    const desc = Object.getOwnPropertyDescriptor(proto, name);
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      [name](...args) {
+        return orig.apply(this, scrubInsertionArgs(this, args, label));
+      },
+    }[name];
+    Object.defineProperty(proto, name, {
+      ...desc,
+      value: stealth(wrapped, name, { length: orig.length, source: nativeSourceFor(orig, name) }),
+    });
+  };
+
+  const patchStyleTextInsertion = () => {
+    const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    patchTextContent(Node.prototype);
+    patchInnerHTML(Element.prototype, innerHTMLDesc);
+    patchInsertAdjacentHTML(Element.prototype, innerHTMLDesc);
+    for (const name of ["appendChild", "insertBefore", "replaceChild"]) {
+      patchNodeInsertionMethod(Node.prototype, name, "style.domInsertion");
+    }
+    for (const name of ["append", "prepend", "replaceChildren"]) {
+      patchElementInsertionMethod(Element.prototype, name, `style.${name}`);
+    }
+  };
+
   const scrubElementStyle = (el, label) => {
     if (!el || !el.style) return;
     const style = el.style;
@@ -200,20 +385,29 @@
     if (typeof MutationObserver === "undefined" || !document.documentElement) return false;
     const observer = new MutationObserver((records) => {
       for (const record of records) {
+        if (record.type === "characterData") {
+          scrubStyleTextNode(record.target && record.target.parentNode, "style.text");
+          continue;
+        }
         if (record.type === "attributes") {
           scrubElementStyle(record.target, "style.attribute");
           continue;
         }
-        for (const node of record.addedNodes) scrubTree(node, "style.attribute");
+        for (const node of record.addedNodes) {
+          scrubTree(node, "style.attribute");
+          scrubStyleTextTree(node, "style.text");
+        }
       }
     });
     observer.observe(document.documentElement, {
       attributeFilter: ["style"],
       attributes: true,
       childList: true,
+      characterData: true,
       subtree: true,
     });
     scrubTree(document.documentElement, "style.attribute");
+    scrubStyleTextTree(document.documentElement, "style.text");
     return true;
   };
 
@@ -221,6 +415,7 @@
     patchSetProperty(CSSStyleDeclaration.prototype);
     patchCssText(CSSStyleDeclaration.prototype);
   }
+  patchStyleTextInsertion();
   if (!observeStyleAttributes()) {
     document.addEventListener("DOMContentLoaded", observeStyleAttributes, { once: true });
   }
