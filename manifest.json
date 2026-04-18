@@ -55,7 +55,13 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["block.js"],
+      "js": [
+        "block_adaptive.js",
+        "block.js",
+        "block_vectors.js",
+        "block_replay.js",
+        "block_globals.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true,

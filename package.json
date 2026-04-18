@@ -4,7 +4,11 @@
   "description": "Chrome MV3 extension that blocks extension-enumeration probes and known fingerprinting telemetry.",
   "private": true,
   "scripts": {
+    "check": "npm run lint:strict && npm run test:ci",
+    "lint": "eslint .",
+    "lint:strict": "eslint . --max-warnings=0",
     "test": "npm run test:static && npm run test:e2e",
+    "test:ci": "npm run test:static && npm run test:e2e:xvfb",
     "test:static": "playwright test tests/static-validation.spec.js",
     "test:e2e": "playwright test tests/extension-behavior.spec.js",
     "test:e2e:xvfb": "xvfb-run -a npm run test:e2e"
@@ -26,6 +30,11 @@
   },
   "homepage": "https://github.com/G-man3207/Static#readme",
   "devDependencies": {
-    "@playwright/test": "^1.59.1"
+    "@eslint/compat": "^2.0.5",
+    "@eslint/js": "^10.0.1",
+    "@eslint/json": "^1.2.0",
+    "@playwright/test": "^1.59.1",
+    "eslint": "^10.2.1",
+    "globals": "^17.5.0"
   }
 }

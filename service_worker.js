@@ -13,8 +13,16 @@
 //      `static_set_noise`, `static_set_replay`) and bridge queries
 //      (`static_get_persona`).
 
-importScripts("lists.js");
+importScripts("lists.js", "service_worker_utils.js");
 const CFG = globalThis.__static_config__ || {};
+const {
+  enforceCaps,
+  ensurePlaybookWeek,
+  mergeCounts,
+  playbookDriftForEntry,
+  sumCounts,
+  trimCountMap,
+} = globalThis.__static_sw_utils__;
 
 // ─── In-memory per-tab state ──────────────────────────────────────────────
 const perTabState = new Map(); // tabId -> { origin, frames: Map<frameId, {total, idCounts}> }
@@ -64,91 +72,40 @@ const addToCumulative = async (delta) => {
   await chrome.storage.local.set({ cumulative: cumulative + delta });
 };
 
-const sumCounts = (counts) => {
-  let total = 0;
-  for (const value of Object.values(counts || {})) {
-    if (typeof value === "number" && value > 0) total += value;
-  }
-  return total;
+const trimLogOrigins = (log, maxOrigins) => {
+  const origins = Object.keys(log);
+  if (origins.length <= maxOrigins) return;
+  origins.sort((a, b) => (log[b].lastUpdated || 0) - (log[a].lastUpdated || 0));
+  for (const oldOrigin of origins.slice(maxOrigins)) delete log[oldOrigin];
 };
 
-const mergeCounts = (target, source) => {
-  let changed = false;
-  for (const [key, value] of Object.entries(source || {})) {
-    if (typeof value === "number" && value > 0) {
-      target[key] = (target[key] || 0) + value;
-      changed = true;
-    }
-  }
-  return changed;
+const normalizedProbeBatch = (batch) => {
+  const deltaVectorCounts = batch && batch.deltaVectorCounts ? batch.deltaVectorCounts : {};
+  return {
+    deltaIdCounts: batch && batch.deltaIdCounts ? batch.deltaIdCounts : {},
+    deltaPathKindCounts: batch && batch.deltaPathKindCounts ? batch.deltaPathKindCounts : {},
+    deltaTotal:
+      batch && typeof batch.delta === "number" && batch.delta > 0
+        ? batch.delta
+        : sumCounts(deltaVectorCounts),
+    deltaVectorCounts,
+  };
 };
 
-const trimCountMap = (counts, maxEntries) => {
-  const entries = Object.entries(counts || {});
-  if (entries.length <= maxEntries) return counts || {};
-  entries.sort((a, b) => b[1] - a[1]);
-  return Object.fromEntries(entries.slice(0, maxEntries));
-};
-
-const weekKeyFor = (time) => {
-  const d = new Date(time);
-  const year = d.getUTCFullYear();
-  const yearStart = Date.UTC(year, 0, 1);
-  const day = Math.floor((Date.UTC(year, d.getUTCMonth(), d.getUTCDate()) - yearStart) / 86400000);
-  const week = Math.floor(day / 7) + 1;
-  return `${year}-W${String(week).padStart(2, "0")}`;
-};
-
-const ensurePlaybookWeek = (entry, now) => {
-  entry.playbook ||= { weeks: {} };
-  entry.playbook.weeks ||= {};
-  const weekKey = weekKeyFor(now);
-  const week =
-    entry.playbook.weeks[weekKey] ||
-    (entry.playbook.weeks[weekKey] = {
-      total: 0,
-      vectorCounts: {},
-      pathKindCounts: {},
-      idCounts: {},
-      firstSeen: now,
-      lastSeen: now,
-    });
-  week.firstSeen ||= now;
-  week.lastSeen = now;
-  return week;
-};
-
-const enforcePlaybookCaps = (entry) => {
-  if (!entry.playbook || !entry.playbook.weeks) return;
-  for (const week of Object.values(entry.playbook.weeks)) {
-    week.vectorCounts = trimCountMap(week.vectorCounts, 50);
-    week.pathKindCounts = trimCountMap(week.pathKindCounts, 50);
-    week.idCounts = trimCountMap(week.idCounts, 1000);
+const mergeProbeWeek = (entry, batch, now) => {
+  if (
+    batch.deltaTotal <= 0 &&
+    sumCounts(batch.deltaVectorCounts) === 0 &&
+    sumCounts(batch.deltaPathKindCounts) === 0
+  ) {
+    return false;
   }
-  const weekKeys = Object.keys(entry.playbook.weeks).sort();
-  if (weekKeys.length > 10) {
-    for (const key of weekKeys.slice(0, weekKeys.length - 10)) {
-      delete entry.playbook.weeks[key];
-    }
-  }
-};
-
-const enforceCaps = (probeLog) => {
-  for (const origin in probeLog) {
-    const entry = probeLog[origin];
-    entry.idCounts ||= {};
-    const ids = Object.entries(entry.idCounts);
-    if (ids.length > 2000) {
-      ids.sort((a, b) => b[1] - a[1]);
-      entry.idCounts = Object.fromEntries(ids.slice(0, 2000));
-    }
-    enforcePlaybookCaps(entry);
-  }
-  const origins = Object.keys(probeLog);
-  if (origins.length > 100) {
-    origins.sort((a, b) => (probeLog[b].lastUpdated || 0) - (probeLog[a].lastUpdated || 0));
-    for (const o of origins.slice(100)) delete probeLog[o];
-  }
+  const week = ensurePlaybookWeek(entry, now);
+  week.total += batch.deltaTotal;
+  const vectorChanged = mergeCounts(week.vectorCounts, batch.deltaVectorCounts);
+  const pathChanged = mergeCounts(week.pathKindCounts, batch.deltaPathKindCounts);
+  const idChanged = mergeCounts(week.idCounts, batch.deltaIdCounts);
+  return batch.deltaTotal > 0 || vectorChanged || pathChanged || idChanged;
 };
 
 const recordProbes = async (origin, batch) => {
@@ -156,23 +113,10 @@ const recordProbes = async (origin, batch) => {
   const entry = probe_log[origin] || { idCounts: {}, lastUpdated: 0 };
   entry.idCounts ||= {};
   const now = Date.now();
-  const deltaIdCounts = batch && batch.deltaIdCounts ? batch.deltaIdCounts : {};
-  const deltaVectorCounts = batch && batch.deltaVectorCounts ? batch.deltaVectorCounts : {};
-  const deltaPathKindCounts = batch && batch.deltaPathKindCounts ? batch.deltaPathKindCounts : {};
-  const deltaTotal =
-    batch && typeof batch.delta === "number" && batch.delta > 0
-      ? batch.delta
-      : sumCounts(deltaVectorCounts);
-
-  let changed = mergeCounts(entry.idCounts, deltaIdCounts);
-  if (deltaTotal > 0 || sumCounts(deltaVectorCounts) > 0 || sumCounts(deltaPathKindCounts) > 0) {
-    const week = ensurePlaybookWeek(entry, now);
-    week.total += deltaTotal;
-    changed = deltaTotal > 0 || changed;
-    changed = mergeCounts(week.vectorCounts, deltaVectorCounts) || changed;
-    changed = mergeCounts(week.pathKindCounts, deltaPathKindCounts) || changed;
-    changed = mergeCounts(week.idCounts, deltaIdCounts) || changed;
-  }
+  const normalized = normalizedProbeBatch(batch);
+  const countChanged = mergeCounts(entry.idCounts, normalized.deltaIdCounts);
+  const weekChanged = mergeProbeWeek(entry, normalized, now);
+  const changed = countChanged || weekChanged;
   if (!changed) return;
   entry.lastUpdated = now;
   probe_log[origin] = entry;
@@ -194,12 +138,22 @@ const recordReplayDetection = async (origin, signal) => {
     entry.signals = Object.fromEntries(signals.slice(0, 50));
   }
   replay_log[origin] = entry;
-  const origins = Object.keys(replay_log);
-  if (origins.length > 100) {
-    origins.sort((a, b) => (replay_log[b].lastUpdated || 0) - (replay_log[a].lastUpdated || 0));
-    for (const oldOrigin of origins.slice(100)) delete replay_log[oldOrigin];
-  }
+  trimLogOrigins(replay_log, 100);
   await chrome.storage.local.set({ replay_log });
+};
+
+const normalizeAdaptiveSignal = (signal) => ({
+  category: String(signal.category || "unknown").slice(0, 48),
+  endpoint: String(signal.endpoint || "").slice(0, 160),
+  reasons: Array.isArray(signal.reasons)
+    ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
+    : [],
+  score: Math.max(0, Math.min(100, Math.round(signal.score || 0))),
+  source: String(signal.source || "unknown").slice(0, 160),
+});
+
+const bumpCount = (counts, key) => {
+  if (key) counts[key] = (counts[key] || 0) + 1;
 };
 
 const recordAdaptiveSignal = async (origin, signal) => {
@@ -215,184 +169,45 @@ const recordAdaptiveSignal = async (origin, signal) => {
     sources: {},
     lastUpdated: 0,
   };
-  const category = String(signal.category || "unknown").slice(0, 48);
-  const score = Math.max(0, Math.min(100, Math.round(signal.score || 0)));
-  const endpoint = String(signal.endpoint || "").slice(0, 160);
-  const source = String(signal.source || "unknown").slice(0, 160);
-  const reasons = Array.isArray(signal.reasons)
-    ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
-    : [];
+  const normalized = normalizeAdaptiveSignal(signal);
 
   entry.total = (entry.total || 0) + 1;
-  entry.scoreMax = Math.max(entry.scoreMax || 0, score);
+  entry.scoreMax = Math.max(entry.scoreMax || 0, normalized.score);
   entry.lastUpdated = now;
   entry.categories ||= {};
   entry.reasons ||= {};
   entry.endpoints ||= {};
   entry.sources ||= {};
-  entry.categories[category] = (entry.categories[category] || 0) + 1;
-  if (endpoint) entry.endpoints[endpoint] = (entry.endpoints[endpoint] || 0) + 1;
-  if (source) entry.sources[source] = (entry.sources[source] || 0) + 1;
-  for (const reason of reasons) entry.reasons[reason] = (entry.reasons[reason] || 0) + 1;
+  bumpCount(entry.categories, normalized.category);
+  bumpCount(entry.endpoints, normalized.endpoint);
+  bumpCount(entry.sources, normalized.source);
+  for (const reason of normalized.reasons) bumpCount(entry.reasons, reason);
 
   entry.reasons = trimCountMap(entry.reasons, 50);
   entry.endpoints = trimCountMap(entry.endpoints, 50);
   entry.sources = trimCountMap(entry.sources, 50);
   adaptive_log[origin] = entry;
-  const origins = Object.keys(adaptive_log);
-  if (origins.length > 100) {
-    origins.sort((a, b) => (adaptive_log[b].lastUpdated || 0) - (adaptive_log[a].lastUpdated || 0));
-    for (const oldOrigin of origins.slice(100)) delete adaptive_log[oldOrigin];
-  }
+  trimLogOrigins(adaptive_log, 100);
   await chrome.storage.local.set({ adaptive_log });
 };
 
-const latestPlaybookComparison = (entry) => {
-  const weeks = entry && entry.playbook && entry.playbook.weeks;
-  if (!weeks) return null;
-  const keys = Object.keys(weeks).sort();
-  if (keys.length === 0) return null;
-  const latestKey = keys[keys.length - 1];
-  const current = weeks[latestKey];
-  const baseline = { total: 0, vectorCounts: {}, pathKindCounts: {}, idCounts: {} };
-  for (const key of keys.slice(0, -1)) {
-    const week = weeks[key] || {};
-    baseline.total += week.total || 0;
-    mergeCounts(baseline.vectorCounts, week.vectorCounts);
-    mergeCounts(baseline.pathKindCounts, week.pathKindCounts);
-    mergeCounts(baseline.idCounts, week.idCounts);
-  }
-  return { latestKey, current, baseline };
-};
-
-const distributionShift = (a, b) => {
-  const totalA = sumCounts(a);
-  const totalB = sumCounts(b);
-  if (totalA === 0 || totalB === 0) return 0;
-  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
-  let sum = 0;
-  for (const key of keys) {
-    sum += Math.abs(((a && a[key]) || 0) / totalA - ((b && b[key]) || 0) / totalB);
-  }
-  return sum / 2;
-};
-
-const repeatedIdSet = (counts) =>
-  new Set(
-    Object.entries(counts || {})
-      .filter(([, count]) => count >= 2)
-      .map(([id]) => id)
-  );
-
-const jaccardDistance = (a, b) => {
-  if (a.size === 0 && b.size === 0) return 0;
-  let intersection = 0;
-  for (const value of a) {
-    if (b.has(value)) intersection++;
-  }
-  return 1 - intersection / new Set([...a, ...b]).size;
-};
-
-const percent = (n) => Math.round(n * 100);
-
-const newKeys = (current, baseline, minCount) =>
-  Object.entries(current || {})
-    .filter(([key, count]) => count >= minCount && !baseline[key])
-    .map(([key]) => key);
-
-const playbookDriftForEntry = (entry) => {
-  const comparison = latestPlaybookComparison(entry);
-  if (!comparison) {
-    return { level: "learning", label: "Learning", reasons: ["No playbook summary yet."] };
-  }
-  const { latestKey, current, baseline } = comparison;
-  const currentTotal = current.total || 0;
-  const baselineTotal = baseline.total || 0;
-  if (currentTotal < 20 || baselineTotal < 20) {
-    return {
-      level: "learning",
-      label: "Learning",
-      week: latestKey,
-      reasons: ["Needs at least 20 probes in the latest week and baseline before scoring drift."],
-    };
-  }
-
-  const reasons = [];
-  let score = 0;
-  const vectorShift = distributionShift(current.vectorCounts, baseline.vectorCounts);
-  const pathShift = distributionShift(current.pathKindCounts, baseline.pathKindCounts);
-  const currentIds = repeatedIdSet(current.idCounts);
-  const baselineIds = repeatedIdSet(baseline.idCounts);
-  const idShift = jaccardDistance(currentIds, baselineIds);
-  const uniqueIds = Object.keys(current.idCounts || {}).length;
-  const singletonIds = Object.values(current.idCounts || {}).filter((count) => count === 1).length;
-  const canaryPressure = uniqueIds ? singletonIds / uniqueIds : 0;
-  const addedVectors = newKeys(current.vectorCounts, baseline.vectorCounts, 3);
-  const addedPathKinds = newKeys(current.pathKindCounts, baseline.pathKindCounts, 3);
-
-  if (vectorShift >= 0.35) {
-    score += 3;
-    reasons.push(`Probe vector mix changed by ${percent(vectorShift)}%.`);
-  } else if (vectorShift >= 0.2) {
-    score += 2;
-    reasons.push(`Probe vector mix changed by ${percent(vectorShift)}%.`);
-  }
-  if (addedVectors.length > 0) {
-    score += 2;
-    reasons.push(`New probe vectors appeared: ${addedVectors.slice(0, 4).join(", ")}.`);
-  }
-  if (pathShift >= 0.35) {
-    score += 2;
-    reasons.push(`Extension-resource path strategy changed by ${percent(pathShift)}%.`);
-  } else if (pathShift >= 0.2) {
-    score += 1;
-    reasons.push(`Extension-resource path strategy changed by ${percent(pathShift)}%.`);
-  }
-  if (addedPathKinds.length > 0) {
-    score += 1;
-    reasons.push(`New path kinds appeared: ${addedPathKinds.slice(0, 4).join(", ")}.`);
-  }
-  if (currentIds.size >= 5 && idShift >= 0.6) {
-    score += 2;
-    reasons.push(`Repeated extension-ID dictionary changed by ${percent(idShift)}%.`);
-  } else if (currentIds.size >= 5 && idShift >= 0.35) {
-    score += 1;
-    reasons.push(`Repeated extension-ID dictionary changed by ${percent(idShift)}%.`);
-  }
-  if (uniqueIds >= 10 && canaryPressure >= 0.35) {
-    score += 2;
-    reasons.push(
-      `One-shot ID pressure is high: ${percent(canaryPressure)}% of IDs were single-hit.`
-    );
-  }
-
-  if (score >= 5) return { level: "high", label: "High drift", week: latestKey, reasons };
-  if (score >= 3) return { level: "changed", label: "Changed", week: latestKey, reasons };
-  return {
-    level: "stable",
-    label: "Stable",
-    week: latestKey,
-    reasons: ["No meaningful change from this origin's previous probe behavior."],
-  };
-};
-
 // ─── Persona generation ───────────────────────────────────────────────────
-let cachedSecret = null;
-const getUserSecret = async () => {
-  if (cachedSecret) return cachedSecret;
+let cachedSecretPromise = null;
+const loadUserSecret = async () => {
   const { user_secret } = await chrome.storage.local.get("user_secret");
-  if (user_secret) {
-    cachedSecret = user_secret;
-    return cachedSecret;
-  }
+  if (user_secret) return user_secret;
   const arr = new Uint8Array(32);
   crypto.getRandomValues(arr);
   const hex = Array.from(arr)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
   await chrome.storage.local.set({ user_secret: hex });
-  cachedSecret = hex;
   return hex;
+};
+
+const getUserSecret = () => {
+  cachedSecretPromise ||= loadUserSecret();
+  return cachedSecretPromise;
 };
 
 const mulberry32 = (seed) => {
@@ -400,7 +215,7 @@ const mulberry32 = (seed) => {
     seed |= 0;
     seed = (seed + 0x6d2b79f5) | 0;
     let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 };
@@ -408,7 +223,7 @@ const mulberry32 = (seed) => {
 const seedFor = async (secret, origin, week) => {
   const buf = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(secret + "|" + origin + "|" + week)
+    new TextEncoder().encode(`${secret}|${origin}|${week}`)
   );
   return new DataView(buf).getUint32(0, true);
 };
@@ -420,39 +235,38 @@ const shuffleInPlace = (arr, rng) => {
   }
 };
 
-const personaFor = async (origin) => {
-  const { probe_log = {} } = await chrome.storage.local.get({ probe_log: {} });
-  const entry = probe_log[origin];
-  if (!entry || !entry.idCounts) return [];
-
+const eligiblePersonaIds = (entry) => {
   const minCount = CFG.personaMinCount || 2;
-  const eligible = Object.entries(entry.idCounts)
+  return Object.entries(entry.idCounts)
     .filter(([, c]) => c >= minCount)
     .map(([id]) => id);
-  if (eligible.length === 0) return [];
+};
 
-  const secret = await getUserSecret();
-  const rotWeeks = CFG.personaRotationWeeks || 1;
-  const week = Math.floor(Date.now() / (rotWeeks * 7 * 24 * 60 * 60 * 1000));
-  const seed = await seedFor(secret, origin, week);
-  const rng = mulberry32(seed);
-
+const buildConflictSlotMap = () => {
   const idToSlot = new Map();
   for (const [slotName, ids] of Object.entries(CFG.conflictSlots || {})) {
     for (const id of ids) idToSlot.set(id, slotName);
   }
+  return idToSlot;
+};
 
+const splitIdsBySlot = (ids, idToSlot) => {
   const bySlot = {};
   const unslotted = [];
-  for (const id of eligible) {
+  for (const id of ids) {
     const slot = idToSlot.get(id);
     if (slot) (bySlot[slot] ||= []).push(id);
     else unslotted.push(id);
   }
+  return { bySlot, unslotted };
+};
 
+const personaTargetSize = (rng) => {
   const sizeRange = CFG.personaSize || { min: 3, max: 8 };
-  const target = sizeRange.min + Math.floor(rng() * (sizeRange.max - sizeRange.min + 1));
+  return sizeRange.min + Math.floor(rng() * (sizeRange.max - sizeRange.min + 1));
+};
 
+const selectPersonaIds = ({ bySlot, rng, target, unslotted }) => {
   const selected = [];
   const slotNames = Object.keys(bySlot).sort();
   shuffleInPlace(slotNames, rng);
@@ -470,6 +284,23 @@ const personaFor = async (origin) => {
   return selected;
 };
 
+const personaFor = async (origin) => {
+  const { probe_log = {} } = await chrome.storage.local.get({ probe_log: {} });
+  const entry = probe_log[origin];
+  if (!entry || !entry.idCounts) return [];
+
+  const eligible = eligiblePersonaIds(entry);
+  if (eligible.length === 0) return [];
+
+  const secret = await getUserSecret();
+  const rotWeeks = CFG.personaRotationWeeks || 1;
+  const week = Math.floor(Date.now() / (rotWeeks * 7 * 24 * 60 * 60 * 1000));
+  const seed = await seedFor(secret, origin, week);
+  const rng = mulberry32(seed);
+  const { bySlot, unslotted } = splitIdsBySlot(eligible, buildConflictSlotMap());
+  return selectPersonaIds({ bySlot, rng, target: personaTargetSize(rng), unslotted });
+};
+
 const originFromUrl = (url) => {
   try {
     return new URL(url).origin;
@@ -485,179 +316,191 @@ const originFromSender = (sender) => {
   return senderUrlOrigin && senderUrlOrigin !== "null" ? senderUrlOrigin : null;
 };
 
+const mapIdCounts = (idCounts) => {
+  const idMap = new Map();
+  if (!idCounts || typeof idCounts !== "object") return idMap;
+  for (const [id, count] of Object.entries(idCounts)) {
+    if (typeof count === "number" && count > 0) idMap.set(id, count);
+  }
+  return idMap;
+};
+
+const rememberSenderOrigin = (sender) => {
+  const origin = originFromSender(sender);
+  if (origin && sender.tab) getOrInitTab(sender.tab.id).origin = origin;
+  return origin;
+};
+
+const handleProbeBlocked = (msg, sender) => {
+  if (!sender.tab) return;
+  const tabId = sender.tab.id;
+  const origin = rememberSenderOrigin(sender);
+  getOrInitTab(tabId).frames.set(sender.frameId || 0, {
+    total: msg.frameTotal || 0,
+    idCounts: mapIdCounts(msg.idCounts),
+  });
+  updateBadge(tabId, sumTabTotal(tabId));
+
+  const delta = typeof msg.delta === "number" ? msg.delta : 0;
+  if (delta > 0) serialize(() => addToCumulative(delta));
+  if (origin && delta > 0) {
+    serialize(() =>
+      recordProbes(origin, {
+        delta,
+        deltaIdCounts: msg.deltaIdCounts || {},
+        deltaPathKindCounts: msg.deltaPathKindCounts || {},
+        deltaVectorCounts: msg.deltaVectorCounts || {},
+      })
+    );
+  }
+};
+
+const handleReplayDetected = (msg, sender) => {
+  if (!sender.tab) return;
+  const origin = rememberSenderOrigin(sender);
+  const signal = typeof msg.signal === "string" ? msg.signal : "unknown";
+  if (origin) serialize(() => recordReplayDetection(origin, signal));
+};
+
+const handleAdaptiveSignal = (msg, sender) => {
+  if (!sender.tab) return;
+  const origin = rememberSenderOrigin(sender);
+  if (origin) serialize(() => recordAdaptiveSignal(origin, msg.signal));
+};
+
+const detailsResponseFor = (tabId, stored) => {
+  const state = perTabState.get(tabId);
+  const origin = state ? state.origin : null;
+  const adaptiveEntry = origin ? stored.adaptive_log[origin] : null;
+  const loggedOrigins = new Set([
+    ...Object.keys(stored.probe_log),
+    ...Object.keys(stored.replay_log),
+    ...Object.keys(stored.adaptive_log),
+  ]);
+  return {
+    total: sumTabTotal(tabId),
+    topIds: topIdsForTab(tabId, 5),
+    cumulative: stored.cumulative,
+    noiseEnabled: stored.noise_enabled,
+    replayMode: stored.replay_mode,
+    replayDetected: !!(origin && stored.replay_log[origin]),
+    adaptiveDetected: !!adaptiveEntry,
+    adaptiveScore: adaptiveEntry ? adaptiveEntry.scoreMax || 0 : 0,
+    adaptiveCategories: adaptiveEntry ? adaptiveEntry.categories || {} : {},
+    origin,
+    drift:
+      origin && stored.probe_log[origin] ? playbookDriftForEntry(stored.probe_log[origin]) : null,
+    originsLogged: loggedOrigins.size,
+  };
+};
+
+const handleGetDetails = (msg, _sender, sendResponse) => {
+  if (typeof msg.tabId !== "number") return false;
+  (async () => {
+    const stored = await chrome.storage.local.get({
+      cumulative: 0,
+      noise_enabled: false,
+      probe_log: {},
+      replay_log: {},
+      adaptive_log: {},
+      replay_mode: "off",
+    });
+    sendResponse(detailsResponseFor(msg.tabId, stored));
+  })();
+  return true;
+};
+
+const handleGetPersona = (_msg, sender, sendResponse) => {
+  (async () => {
+    const { noise_enabled = false, replay_mode = "off" } = await chrome.storage.local.get({
+      noise_enabled: false,
+      replay_mode: "off",
+    });
+    const origin = originFromSender(sender);
+    if (!noise_enabled || !origin) {
+      sendResponse({ ids: [], noiseEnabled: noise_enabled, replayMode: replay_mode, origin });
+      return;
+    }
+    const ids = await personaFor(origin);
+    sendResponse({ ids, noiseEnabled: true, replayMode: replay_mode, origin });
+  })();
+  return true;
+};
+
+const handleSetNoise = (msg, _sender, sendResponse) => {
+  (async () => {
+    await chrome.storage.local.set({ noise_enabled: !!msg.enabled });
+    sendResponse({ ok: true });
+  })();
+  return true;
+};
+
+const handleSetReplay = (msg, _sender, sendResponse) => {
+  (async () => {
+    const allowed = new Set(["off", "mask", "noise", "chaos"]);
+    const mode = allowed.has(msg.mode) ? msg.mode : "off";
+    await chrome.storage.local.set({ replay_mode: mode });
+    sendResponse({ ok: true, mode });
+  })();
+  return true;
+};
+
+const handleExportLog = (_msg, _sender, sendResponse) => {
+  (async () => {
+    const {
+      probe_log = {},
+      replay_log = {},
+      adaptive_log = {},
+      cumulative = 0,
+    } = await chrome.storage.local.get({
+      probe_log: {},
+      replay_log: {},
+      adaptive_log: {},
+      cumulative: 0,
+    });
+    sendResponse({
+      schema: "static.probe-log.v1",
+      exportedAt: new Date().toISOString(),
+      cumulative,
+      origins: probe_log,
+      replayDetections: replay_log,
+      adaptiveSignals: adaptive_log,
+    });
+  })();
+  return true;
+};
+
+const handleClearLog = (_msg, _sender, sendResponse) => {
+  (async () => {
+    cachedSecretPromise = null;
+    await chrome.storage.local.remove([
+      "probe_log",
+      "replay_log",
+      "adaptive_log",
+      "cumulative",
+      "user_secret",
+    ]);
+    sendResponse({ ok: true });
+  })();
+  return true;
+};
+
+const messageHandlers = {
+  static_adaptive_signal: handleAdaptiveSignal,
+  static_clear_log: handleClearLog,
+  static_export_log: handleExportLog,
+  static_get_details: handleGetDetails,
+  static_get_persona: handleGetPersona,
+  static_probe_blocked: handleProbeBlocked,
+  static_replay_detected: handleReplayDetected,
+  static_set_noise: handleSetNoise,
+  static_set_replay: handleSetReplay,
+};
+
 // ─── Message router ───────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg) return;
-
-  if (msg.type === "static_probe_blocked" && sender.tab) {
-    const tabId = sender.tab.id;
-    const frameId = sender.frameId || 0;
-    const origin = originFromSender(sender);
-    const s = getOrInitTab(tabId);
-    if (origin) s.origin = origin;
-
-    const idMap = new Map();
-    if (msg.idCounts && typeof msg.idCounts === "object") {
-      for (const [id, c] of Object.entries(msg.idCounts)) {
-        if (typeof c === "number" && c > 0) idMap.set(id, c);
-      }
-    }
-    s.frames.set(frameId, { total: msg.frameTotal || 0, idCounts: idMap });
-    updateBadge(tabId, sumTabTotal(tabId));
-
-    const delta = typeof msg.delta === "number" ? msg.delta : 0;
-    if (delta > 0) serialize(() => addToCumulative(delta));
-    if (origin && delta > 0) {
-      serialize(() =>
-        recordProbes(origin, {
-          delta,
-          deltaIdCounts: msg.deltaIdCounts || {},
-          deltaVectorCounts: msg.deltaVectorCounts || {},
-          deltaPathKindCounts: msg.deltaPathKindCounts || {},
-        })
-      );
-    }
-    return;
-  }
-
-  if (msg.type === "static_replay_detected" && sender.tab) {
-    const tabId = sender.tab.id;
-    const origin = originFromSender(sender);
-    if (origin) getOrInitTab(tabId).origin = origin;
-    const signal = typeof msg.signal === "string" ? msg.signal : "unknown";
-    if (origin) serialize(() => recordReplayDetection(origin, signal));
-    return;
-  }
-
-  if (msg.type === "static_adaptive_signal" && sender.tab) {
-    const tabId = sender.tab.id;
-    const origin = originFromSender(sender);
-    if (origin) getOrInitTab(tabId).origin = origin;
-    if (origin) serialize(() => recordAdaptiveSignal(origin, msg.signal));
-    return;
-  }
-
-  if (msg.type === "static_get_details" && typeof msg.tabId === "number") {
-    (async () => {
-      const stored = await chrome.storage.local.get({
-        cumulative: 0,
-        noise_enabled: false,
-        probe_log: {},
-        replay_log: {},
-        adaptive_log: {},
-        replay_mode: "off",
-      });
-      const state = perTabState.get(msg.tabId);
-      const origin = state ? state.origin : null;
-      const adaptiveEntry = origin ? stored.adaptive_log[origin] : null;
-      const loggedOrigins = new Set([
-        ...Object.keys(stored.probe_log),
-        ...Object.keys(stored.replay_log),
-        ...Object.keys(stored.adaptive_log),
-      ]);
-      sendResponse({
-        total: sumTabTotal(msg.tabId),
-        topIds: topIdsForTab(msg.tabId, 5),
-        cumulative: stored.cumulative,
-        noiseEnabled: stored.noise_enabled,
-        replayMode: stored.replay_mode,
-        replayDetected: !!(origin && stored.replay_log[origin]),
-        adaptiveDetected: !!adaptiveEntry,
-        adaptiveScore: adaptiveEntry ? adaptiveEntry.scoreMax || 0 : 0,
-        adaptiveCategories: adaptiveEntry ? adaptiveEntry.categories || {} : {},
-        origin,
-        drift:
-          origin && stored.probe_log[origin]
-            ? playbookDriftForEntry(stored.probe_log[origin])
-            : null,
-        originsLogged: loggedOrigins.size,
-      });
-    })();
-    return true;
-  }
-
-  if (msg.type === "static_get_persona") {
-    (async () => {
-      const { noise_enabled = false, replay_mode = "off" } = await chrome.storage.local.get({
-        noise_enabled: false,
-        replay_mode: "off",
-      });
-      const origin = originFromSender(sender);
-      if (!noise_enabled || !origin) {
-        sendResponse({
-          ids: [],
-          noiseEnabled: noise_enabled,
-          replayMode: replay_mode,
-          origin,
-        });
-        return;
-      }
-      const ids = await personaFor(origin);
-      sendResponse({ ids, noiseEnabled: true, replayMode: replay_mode, origin });
-    })();
-    return true;
-  }
-
-  if (msg.type === "static_set_noise") {
-    (async () => {
-      await chrome.storage.local.set({ noise_enabled: !!msg.enabled });
-      // Popup pushes `static_persona_update` to the active tab itself via its
-      // activeTab grant; no global broadcast here (would require `tabs`
-      // permission). Other tabs pick up the new state on their next navigation.
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
-
-  if (msg.type === "static_set_replay") {
-    (async () => {
-      const allowed = new Set(["off", "mask", "noise", "chaos"]);
-      const mode = allowed.has(msg.mode) ? msg.mode : "off";
-      await chrome.storage.local.set({ replay_mode: mode });
-      sendResponse({ ok: true, mode });
-    })();
-    return true;
-  }
-
-  if (msg.type === "static_export_log") {
-    (async () => {
-      const {
-        probe_log = {},
-        replay_log = {},
-        adaptive_log = {},
-        cumulative = 0,
-      } = await chrome.storage.local.get({
-        probe_log: {},
-        replay_log: {},
-        adaptive_log: {},
-        cumulative: 0,
-      });
-      sendResponse({
-        schema: "static.probe-log.v1",
-        exportedAt: new Date().toISOString(),
-        cumulative,
-        origins: probe_log,
-        replayDetections: replay_log,
-        adaptiveSignals: adaptive_log,
-      });
-    })();
-    return true;
-  }
-
-  if (msg.type === "static_clear_log") {
-    (async () => {
-      cachedSecret = null;
-      await chrome.storage.local.remove([
-        "probe_log",
-        "replay_log",
-        "adaptive_log",
-        "cumulative",
-        "user_secret",
-      ]);
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
+  const handler = msg && messageHandlers[msg.type];
+  return handler ? handler(msg, sender, sendResponse) : undefined;
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {

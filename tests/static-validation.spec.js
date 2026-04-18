@@ -5,39 +5,77 @@ const path = require("path");
 const repoRoot = path.resolve(__dirname, "..");
 const readJson = (filePath) => JSON.parse(fs.readFileSync(path.join(repoRoot, filePath), "utf8"));
 
-test("manifest references existing files and keeps content-script worlds separated", () => {
-  const manifest = readJson("manifest.json");
-  const referencedFiles = new Set();
+const expectedMainWorldScripts = [
+  "block_adaptive.js",
+  "block.js",
+  "block_vectors.js",
+  "block_replay.js",
+  "block_globals.js",
+];
 
+const addContentScriptFiles = (manifest, referencedFiles) => {
   for (const script of manifest.content_scripts || []) {
     for (const js of script.js || []) referencedFiles.add(js);
   }
-  if (manifest.background && manifest.background.service_worker) {
-    referencedFiles.add(manifest.background.service_worker);
-  }
-  if (manifest.action && manifest.action.default_popup)
-    referencedFiles.add(manifest.action.default_popup);
-  for (const icon of Object.values(manifest.icons || {})) referencedFiles.add(icon);
-  for (const icon of Object.values((manifest.action && manifest.action.default_icon) || {})) {
-    referencedFiles.add(icon);
-  }
+};
+
+const addIconFiles = (icons, referencedFiles) => {
+  for (const icon of Object.values(icons || {})) referencedFiles.add(icon);
+};
+
+const addRulesetFiles = (manifest, referencedFiles) => {
   for (const ruleset of manifest.declarative_net_request.rule_resources || []) {
     referencedFiles.add(ruleset.path);
   }
+};
 
-  for (const filePath of referencedFiles) {
+const addServiceWorkerFiles = (manifest, referencedFiles) => {
+  const serviceWorker = manifest.background && manifest.background.service_worker;
+  if (!serviceWorker) return;
+  referencedFiles.add(serviceWorker);
+  const source = fs.readFileSync(path.join(repoRoot, serviceWorker), "utf8");
+  const importCall = source.match(/importScripts\(([^)]+)\)/);
+  if (!importCall) return;
+  for (const match of importCall[1].matchAll(/"([^"]+)"/g)) {
+    referencedFiles.add(match[1]);
+  }
+};
+
+const collectManifestFiles = (manifest) => {
+  const referencedFiles = new Set();
+  addContentScriptFiles(manifest, referencedFiles);
+  addServiceWorkerFiles(manifest, referencedFiles);
+  if (manifest.action && manifest.action.default_popup) {
+    referencedFiles.add(manifest.action.default_popup);
+  }
+  addIconFiles(manifest.icons, referencedFiles);
+  addIconFiles(manifest.action && manifest.action.default_icon, referencedFiles);
+  addRulesetFiles(manifest, referencedFiles);
+  return referencedFiles;
+};
+
+const expectManifestFilesToExist = (manifest) => {
+  for (const filePath of collectManifestFiles(manifest)) {
     expect(fs.existsSync(path.join(repoRoot, filePath)), filePath).toBe(true);
   }
+};
 
+const expectContentScriptWorlds = (manifest) => {
   const mainWorld = manifest.content_scripts.find((script) => script.world === "MAIN");
   const isolatedWorld = manifest.content_scripts.find((script) => script.world === "ISOLATED");
 
-  expect(mainWorld.js).toEqual(["block.js"]);
+  expect(mainWorld.js).toEqual(expectedMainWorldScripts);
   expect(isolatedWorld.js).toEqual(["lists.js", "bridge.js", "dom_scrubber.js"]);
   expect(mainWorld.run_at).toBe("document_start");
   expect(isolatedWorld.run_at).toBe("document_start");
   expect(mainWorld.all_frames).toBe(true);
   expect(isolatedWorld.all_frames).toBe(true);
+};
+
+test("manifest references existing files and keeps content-script worlds separated", () => {
+  const manifest = readJson("manifest.json");
+  expectManifestFilesToExist(manifest);
+  expectContentScriptWorlds(manifest);
 });
 
 test("DNR rulesets are well-formed and synchronized with metadata and popup IDs", () => {
