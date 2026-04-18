@@ -8,7 +8,7 @@
 // Pattern lists come from lists.js. To keep an extension working, make sure
 // its markers aren't matched by any pattern there.
 (() => {
-  const CFG = (globalThis.__static_config__) || {};
+  const CFG = globalThis.__static_config__ || {};
   const ATTR_PATTERNS = CFG.domStripAttrs || [];
   const TAG_PATTERNS = CFG.domStripTags || [];
   const CLASS_PATTERNS = CFG.domStripClasses || [];
@@ -19,7 +19,10 @@
 
     const tn = el.tagName && el.tagName.toLowerCase();
     if (tn && TAG_PATTERNS.some((p) => p.test(tn))) {
-      try { el.remove(); return; } catch {}
+      try {
+        el.remove();
+        return;
+      } catch {}
     }
 
     if (el.attributes && el.attributes.length) {
@@ -27,7 +30,9 @@
         const attr = el.attributes[i];
         const name = attr.name.toLowerCase();
         if (ATTR_PATTERNS.some((p) => p.test(name))) {
-          try { el.removeAttribute(attr.name); } catch {}
+          try {
+            el.removeAttribute(attr.name);
+          } catch {}
         }
       }
     }
@@ -38,7 +43,9 @@
         if (CLASS_PATTERNS.some((p) => p.test(cls))) toRemove.push(cls);
       }
       for (const cls of toRemove) {
-        try { el.classList.remove(cls); } catch {}
+        try {
+          el.classList.remove(cls);
+        } catch {}
       }
     }
   };

@@ -106,7 +106,9 @@ const getUserSecret = async () => {
   }
   const arr = new Uint8Array(32);
   crypto.getRandomValues(arr);
-  const hex = Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hex = Array.from(arr)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
   await chrome.storage.local.set({ user_secret: hex });
   cachedSecret = hex;
   return hex;

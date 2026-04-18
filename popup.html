@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -23,7 +23,13 @@
         margin: 0;
       }
       body {
-        font: 13px/1.45 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font:
+          13px/1.45 "Inter",
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
         width: 320px;
         color: var(--text);
         background-color: var(--bg);
@@ -237,7 +243,9 @@
         border-radius: 6px;
         cursor: pointer;
         text-align: left;
-        transition: background 0.1s, border-color 0.1s;
+        transition:
+          background 0.1s,
+          border-color 0.1s;
       }
       .log-link:hover {
         background: #eee;
@@ -260,7 +268,9 @@
       .log-link .log-link-arrow {
         color: var(--text-subtle);
         font-size: 12px;
-        transition: color 0.1s, transform 0.1s;
+        transition:
+          color 0.1s,
+          transform 0.1s;
       }
       .log-link[hidden] {
         display: none;
@@ -334,9 +344,9 @@
         <div class="col">
           <div class="ttl">Noise mode</div>
           <div class="desc">
-            Instead of just blocking, return plausible decoy responses for a stable
-            3–8 ID subset of what each site has probed for. Poisons their dataset
-            with IDs they specifically cared about. First visit is always plain-blocked.
+            Instead of just blocking, return plausible decoy responses for a stable 3–8 ID subset of
+            what each site has probed for. Poisons their dataset with IDs they specifically cared
+            about. First visit is always plain-blocked.
           </div>
         </div>
         <label class="switch">
@@ -357,10 +367,7 @@
     </div>
 
     <div class="footer">
-      <a
-        href="https://github.com/G-man3207/Static"
-        target="_blank"
-        rel="noopener noreferrer"
+      <a href="https://github.com/G-man3207/Static" target="_blank" rel="noopener noreferrer"
         >Source on GitHub</a
       >
     </div>

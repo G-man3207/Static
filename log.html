@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -23,7 +23,13 @@
         margin: 0;
       }
       body {
-        font: 14px/1.5 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font:
+          14px/1.5 "Inter",
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
         color: var(--text);
         background-color: var(--bg);
         background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.03 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
@@ -253,13 +259,26 @@
       <div class="container">
         <div class="toolbar">
           <input type="search" id="search" placeholder="Filter by origin or extension ID…" />
-          <button class="btn" id="export-raw" title="Full detail. Contains timestamps and exact counts — keep private.">Export raw log</button>
-          <button class="btn" id="export-shareable" title="Anonymized: no timestamps, log-scale counts, single-hit IDs dropped. Safe to publish.">Export for research</button>
+          <button
+            class="btn"
+            id="export-raw"
+            title="Full detail. Contains timestamps and exact counts — keep private."
+          >
+            Export raw log
+          </button>
+          <button
+            class="btn"
+            id="export-shareable"
+            title="Anonymized: no timestamps, log-scale counts, single-hit IDs dropped. Safe to publish."
+          >
+            Export for research
+          </button>
           <button class="btn btn-danger" id="clear">Clear log</button>
         </div>
         <div class="export-hint">
-          <strong>Raw</strong> keeps timestamps and exact counts — for your own archive, don't publish.
-          <strong>Research</strong> is anonymized (month-bucketed, log-scale counts, canaries dropped) and safe to share or contribute to collective datasets.
+          <strong>Raw</strong> keeps timestamps and exact counts — for your own archive, don't
+          publish. <strong>Research</strong> is anonymized (month-bucketed, log-scale counts,
+          canaries dropped) and safe to share or contribute to collective datasets.
         </div>
         <div class="summary" id="summary"></div>
         <div id="content"></div>

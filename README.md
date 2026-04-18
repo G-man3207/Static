@@ -4,7 +4,7 @@
 
 # Static
 
-**Anti-fingerprinting, not anti-ads.** A Chrome MV3 extension that blocks *active probing* of your browser: extension enumeration, client-side fingerprinting, and session-replay telemetry.
+**Anti-fingerprinting, not anti-ads.** A Chrome MV3 extension that blocks _active probing_ of your browser: extension enumeration, client-side fingerprinting, and session-replay telemetry.
 
 ## What it blocks
 
@@ -13,19 +13,19 @@
 3. **`window` global fingerprinting.** Devtools bridges and extension-presence markers (`__REACT_DEVTOOLS_GLOBAL_HOOK__`, `__GRAMMARLY_DESKTOP_INTEGRATION__`, etc.) are locked to `undefined` before page scripts run.
 4. **Network-layer blocklists (togglable).** Declarative-Net-Request rulesets block known:
    - **Fingerprinting / anti-bot vendors** — FingerprintJS, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
-   - **CAPTCHA vendors** *(off by default, breaks logins)* — Arkose Labs / FunCAPTCHA.
+   - **CAPTCHA vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA.
    - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee.
-   - **Datadog RUM** *(off by default, also used for legitimate monitoring)*.
+   - **Datadog RUM** _(off by default, also used for legitimate monitoring)_.
    - **LinkedIn** — sensor/metrics collection, conversion tracking, ad pixel, adblock detection, internal Piwik, marketing tag system, LMS analytics.
 5. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` of wrapped functions → native-looking strings, so the blocker's API overrides are indistinguishable from natives under any `toString` check.
 
 The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds.
 
-## Noise mode *(opt-in)*
+## Noise mode _(opt-in)_
 
 Blocking a probe proves one thing: "some defense is present." **Noise mode** goes further — it learns each site's probe dictionary from its own behavior, then returns plausible decoy responses for a stable subset of those same IDs. The site sees its targets as "installed" and logs them; the logs get poisoned with IDs the site itself cared about.
 
-- **Self-calibrating.** Each site tells you, by what it probes for, what its threat model is. LinkedIn probes for scraper extensions; a crypto site probes for wallets. The decoy persona Static constructs is drawn from *that specific site's* probe list, so the noise is maximally relevant to what they're looking for.
+- **Self-calibrating.** Each site tells you, by what it probes for, what its threat model is. LinkedIn probes for scraper extensions; a crypto site probes for wallets. The decoy persona Static constructs is drawn from _that specific site's_ probe list, so the noise is maximally relevant to what they're looking for.
 - **Stable per origin.** The 3–8 ID persona for each origin is deterministic from `hash(user_secret + origin + week)`. Stable for a week (so you don't look like a bot changing extensions every pageview); rotates after that; different users' sets differ (no cross-user fingerprint because the secret is random per install).
 - **Conflict-aware.** IDs are bucketed into slots (password manager, ad blocker, grammar, web3 wallet, devtools, translator) and the persona picks at most one per slot — no "three password managers installed" tells.
 - **Canary-resistant by design.** An ID only enters the replay pool after Static has seen it probed at least twice on that origin. One-shot canaries filter out automatically; always-probed "canaries" collapse into the regular probe set and get poisoned.

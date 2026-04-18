@@ -41,13 +41,7 @@
 
     // Custom-element tag names (matched against tagName). Elements with a
     // matching tag are removed from the DOM entirely.
-    domStripTags: [
-      /^grammarly-/i,
-      /^lastpass-/i,
-      /^dashlane-/i,
-      /^honey-/i,
-      /^onepassword-/i,
-    ],
+    domStripTags: [/^grammarly-/i, /^lastpass-/i, /^dashlane-/i, /^honey-/i, /^onepassword-/i],
 
     // CSS class names to strip (element stays; just the class).
     domStripClasses: [
