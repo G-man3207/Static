@@ -1,21 +1,15 @@
 // Shared configuration for Static.
 //
-// Loaded before block.js (MAIN world) and dom_scrubber.js (ISOLATED world)
-// in the same content-script group; also imported by the service worker via
-// importScripts("lists.js"). All pattern / global / slot data lives here.
+// Loaded before dom_scrubber.js (ISOLATED world) and imported by the service
+// worker via importScripts("lists.js"). MAIN-world block.js keeps its own local
+// constants so Static does not expose a detectable page global.
 //
-// To extend coverage, append to the arrays below. To keep a specific
-// browser extension working on your machine, make sure none of the patterns
-// below match its DOM markers or globals, and none of the `conflictSlots`
-// arrays include its ID if you don't want Static to claim it as a decoy.
+// To extend coverage, append to the arrays below. To keep a specific browser
+// extension working on your machine, make sure none of the patterns below match
+// its DOM markers, and none of the `conflictSlots` arrays include its ID if
+// you don't want Static to claim it as a decoy.
 (() => {
   const data = {
-    // URL schemes that indicate a cross-origin probe at an installed browser
-    // extension. Any fetch / XHR / src= / href= to a matching URL is treated
-    // as a fingerprinting attempt and silently rejected (or decoyed when
-    // Noise mode is on).
-    probeUrlRegex: /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i,
-
     // DOM attribute names to strip (case-insensitive regex, matched against
     // the attribute name). Any matching attribute is removed from every
     // element on page load and on every subsequent DOM mutation.
@@ -52,28 +46,6 @@
       /^dashlane($|-)/i,
       /^honey($|-)/i,
       /^onepassword($|-)/i,
-    ],
-
-    // window.* properties that browser extensions set as bridges between
-    // their content script and the page. Locked to undefined before any
-    // page script runs, so later writes silently no-op.
-    stripGlobals: [
-      "__REACT_DEVTOOLS_GLOBAL_HOOK__",
-      "__REDUX_DEVTOOLS_EXTENSION__",
-      "__REDUX_DEVTOOLS_EXTENSION_COMPOSE__",
-      "__VUE_DEVTOOLS_GLOBAL_HOOK__",
-      "__MOBX_DEVTOOLS_GLOBAL_HOOK__",
-      "__APOLLO_DEVTOOLS_GLOBAL_HOOK__",
-      "__GRAMMARLY_DESKTOP_INTEGRATION__",
-      "__grammarlyGlobalSessionId",
-      "__onePasswordExtension",
-      "__1passwordExtension",
-      "__dashlaneExtensionInstalled",
-      "__isDashlaneExtensionInstalled",
-      "__honeyExtensionInstalled",
-      "__keeper_extension_installed",
-      "__nordpassExtensionInstalled",
-      "__roboformExtensionInstalled",
     ],
 
     // Known-extension ID groups used by Noise-mode persona generation.

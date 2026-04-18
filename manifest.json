@@ -55,7 +55,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["lists.js", "block.js"],
+      "js": ["block.js"],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true,

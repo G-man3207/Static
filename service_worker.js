@@ -77,14 +77,13 @@ const enforceCaps = (probeLog) => {
   }
 };
 
-const recordProbes = async (origin, idCounts) => {
+const recordProbes = async (origin, deltaIdCounts) => {
   const { probe_log = {} } = await chrome.storage.local.get({ probe_log: {} });
   const entry = probe_log[origin] || { idCounts: {}, lastUpdated: 0 };
   let changed = false;
-  for (const [id, c] of Object.entries(idCounts)) {
-    const cur = entry.idCounts[id] || 0;
-    if (c > cur) {
-      entry.idCounts[id] = c;
+  for (const [id, c] of Object.entries(deltaIdCounts)) {
+    if (typeof c === "number" && c > 0) {
+      entry.idCounts[id] = (entry.idCounts[id] || 0) + c;
       changed = true;
     }
   }
@@ -217,7 +216,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     const delta = typeof msg.delta === "number" ? msg.delta : 0;
     if (delta > 0) serialize(() => addToCumulative(delta));
-    if (origin && msg.idCounts) serialize(() => recordProbes(origin, msg.idCounts));
+    if (origin && msg.deltaIdCounts && Object.keys(msg.deltaIdCounts).length > 0) {
+      serialize(() => recordProbes(origin, msg.deltaIdCounts));
+    }
     return;
   }
 
@@ -284,7 +285,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "static_clear_log") {
     (async () => {
-      await chrome.storage.local.set({ probe_log: {}, cumulative: 0 });
+      cachedSecret = null;
+      await chrome.storage.local.remove(["probe_log", "cumulative", "user_secret"]);
       sendResponse({ ok: true });
     })();
     return true;

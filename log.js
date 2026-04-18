@@ -221,7 +221,9 @@ document.getElementById("export-shareable").addEventListener("click", () => {
 });
 
 document.getElementById("clear").addEventListener("click", async () => {
-  const ok = confirm("Clear all probe logs? This also resets the since-install counter.");
+  const ok = confirm(
+    "Clear all probe logs? This also resets the since-install counter and Noise-mode identity."
+  );
   if (!ok) return;
   try {
     await chrome.runtime.sendMessage({ type: "static_clear_log" });

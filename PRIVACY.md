@@ -15,14 +15,14 @@ This policy describes exactly what information Static processes on your machine,
 
 ## What Static stores locally
 
-In `chrome.storage.local`, scoped to your browser profile (never written to `chrome.storage.sync`, so nothing is synced off your device through Chrome's sync service):
+Static stores this local state in your browser profile and never writes to `chrome.storage.sync`, so nothing is synced off your device through Chrome's sync service:
 
 1. **Probe log** — a per-origin map of extension IDs that each site has probed you for, with counts. Capped at 100 origins × 2,000 IDs per origin; older entries are evicted beyond that cap.
 2. **Since-install probe counter** — the total number of extension-enumeration probes blocked since you installed Static.
 3. **User secret** — a random 256-bit value generated once, at install time, via `crypto.getRandomValues`. Used only to seed the per-origin decoy personas for Noise mode so that different Static users produce different decoys on the same site. Never displayed anywhere in the UI, never transmitted.
-4. **Preferences** — whether Noise mode is enabled, and which DNR rulesets (LinkedIn telemetry, fingerprinting vendors, CAPTCHA vendors, session replay, Datadog RUM) you have turned on.
+4. **Preferences** — whether Noise mode is enabled, and which DNR rulesets (LinkedIn telemetry, fingerprinting vendors, CAPTCHA vendors, session replay, Datadog RUM) you have turned on. Noise mode is stored in `chrome.storage.local`; DNR ruleset choices are persisted locally by Chrome's extension ruleset API.
 
-You can erase all of this at any time via the **Clear log** button in Static's log viewer, or by uninstalling the extension.
+You can erase the probe log, since-install counter, and Noise-mode user secret at any time via the **Clear log** button in Static's log viewer. Ruleset and Noise-mode preferences can be changed in the popup; uninstalling Static removes all extension-managed data.
 
 ## What Static does NOT store or access
 
@@ -65,7 +65,7 @@ Because Static stores data only on your own machine, your rights of access, port
 
 - **Access**: everything Static has ever recorded about probes against you is visible in the log viewer.
 - **Portability**: downloadable as JSON at any time via the **Export** buttons in the log viewer.
-- **Erasure**: the **Clear log** button wipes the probe log and resets the since-install counter. Uninstalling Static removes all stored data, including the user secret.
+- **Erasure**: the **Clear log** button wipes the probe log, resets the since-install counter, and resets the Noise-mode user secret. Uninstalling Static removes all stored data, including preferences.
 
 No request to the author is required to exercise any of these rights.
 
