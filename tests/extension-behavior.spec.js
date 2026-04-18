@@ -731,6 +731,22 @@ test.describe("Static extension integration", () => {
     );
   });
 
+  test("popup shows replay blocking and poisoning indicators", async () => {
+    await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
+
+    const popupPage = await extension.context.newPage();
+    await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+    await expect(popupPage.getByText("Replay vendor blocking on")).toBeVisible();
+    await expect(popupPage.getByText("Mask poisoning armed")).toBeVisible();
+
+    await popupPage.locator("#rs_session_replay").uncheck();
+    await expect(popupPage.getByText("Replay vendor blocking on")).toHaveCount(0);
+
+    await popupPage.locator("#replay-mode").selectOption("noise");
+    await expect(popupPage.getByText("Noise poisoning armed")).toBeVisible();
+  });
+
   test("Adaptive observe-only logging records multi-signal collectors without adding DNR rules", async () => {
     const page = await extension.context.newPage();
     await page.goto(server.url("/adaptive-positive.html"));
