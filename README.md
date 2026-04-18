@@ -69,6 +69,38 @@ Each category of network rules lives in its own file under `rules/`. Toggle them
 
 `rules/META.json` is a sidecar index with `version`, `last_verified`, and human-readable descriptions for each ruleset. It's consumed by nothing at runtime — it's there so maintainers and contributors can tell which blocklists are fresh.
 
+## Test
+
+Static has two Playwright-backed test layers:
+
+- **Static validation** checks manifest references, DNR rule shape, ruleset metadata, and popup ruleset IDs.
+- **Extension integration** launches Chromium with the unpacked MV3 extension and verifies content-script, service-worker, DOM scrubber, Noise mode, log clearing, and stealth-wrapper behavior.
+
+Install dependencies once:
+
+```bash
+npm ci
+npx playwright install chromium
+```
+
+Run fast static validation:
+
+```bash
+npm run test:static
+```
+
+Run real browser extension tests. On Linux without a desktop display, use Xvfb:
+
+```bash
+npm run test:e2e:xvfb
+```
+
+On a desktop session with a display, this also works:
+
+```bash
+npm run test:e2e
+```
+
 ## Extend coverage
 
 - **DOM markers to strip** — edit the regex arrays in `lists.js`.

@@ -1,17 +1,24 @@
 name: Validate
 
-# Syntactic + light semantic checks on JSON config and manifest file references.
-# Catches the "missing comma / broken path, Chrome refuses to load the extension"
-# class of mistakes before they hit a browser. Uses `jq`, which is pre-installed
-# on GitHub runners — zero npm, zero install.
+# Syntactic checks for extension config plus Playwright coverage for MV3
+# browser behavior. Catches the "Chrome refuses to load the extension" class of
+# mistakes and regressions in content-script / service-worker integration.
 
 on: [push, pull_request]
 
 jobs:
-  json:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
 
       - name: manifest.json is valid JSON
         run: jq empty manifest.json
@@ -78,3 +85,19 @@ jobs:
             | .[]
           ' manifest.json)
           exit $FAIL
+
+      - name: JavaScript parses
+        run: |
+          for f in *.js; do
+            echo "$f"
+            node --check "$f"
+          done
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Static Playwright validation
+        run: npm run test:static
+
+      - name: Extension browser integration tests
+        run: npm run test:e2e:xvfb
