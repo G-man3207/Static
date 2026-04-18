@@ -1,13 +1,15 @@
 name: Validate
 
-# Syntactic checks for extension config plus Playwright coverage for MV3
-# browser behavior. Catches the "Chrome refuses to load the extension" class of
-# mistakes and regressions in content-script / service-worker integration.
+# Syntactic checks for extension config plus Playwright coverage for MV3 browser
+# behavior. Runs only when a new version tag is pushed.
 
-on: [push, pull_request]
+on:
+  push:
+    tags: ["v*.*.*"]
 
 jobs:
   validate:
+    if: ${{ github.event.created && !github.event.deleted }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

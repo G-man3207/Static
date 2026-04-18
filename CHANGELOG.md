@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Changed
+
+- GitHub Actions now run only for new `v*.*.*` version tag pushes; formatting is checked on the tagged commit instead of auto-committed after release.
+
 ## [2.0.4] — 2026-04-18
 
 ### Fixed
