@@ -342,7 +342,8 @@
     return stealth(wrapped, label);
   };
   if (window.Worker) window.Worker = patchWorkerCtor(window.Worker, "Worker");
-  if (window.SharedWorker) window.SharedWorker = patchWorkerCtor(window.SharedWorker, "SharedWorker");
+  if (window.SharedWorker)
+    window.SharedWorker = patchWorkerCtor(window.SharedWorker, "SharedWorker");
 
   // ─── 7. EventSource ─────────────────────────────────────────────────────
   if (window.EventSource) {

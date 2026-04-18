@@ -32,7 +32,7 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `session_replay` (on) — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee.
 - `datadog_rum` (off) — Datadog Real-User-Monitoring intake (all regions + browser agent CDN). Off by default because it's also used for legitimate monitoring.
 
-### Noise mode *(opt-in)*
+### Noise mode _(opt-in)_
 
 - Learns each site's probe dictionary from its own behavior and returns plausible decoy responses for a stable 3–8 ID subset on subsequent visits.
 - Persona is deterministic per `(user_secret, origin, week_number)`: stable for a week, rotates weekly, different users' personas differ because the 256-bit `user_secret` is generated once per install via `crypto.getRandomValues`.

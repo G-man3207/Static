@@ -82,9 +82,7 @@ const renderNoiseSection = (resp) => {
       // so the current page sees the change without a reload.
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab && tab.id != null) {
-        chrome.tabs
-          .sendMessage(tab.id, { type: "static_persona_update" })
-          .catch(() => {});
+        chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {});
       }
     } catch (e) {
       console.error("[Static] noise toggle failed", e);
