@@ -21,6 +21,7 @@ const colorForCount = (n) => {
 };
 
 const fmt = (n) => n.toLocaleString();
+const pct = (n) => `${Math.round((n || 0) * 100)}%`;
 const replayState = {
   replayDetected: false,
   replayMode: "off",
@@ -117,6 +118,84 @@ const renderTopIds = (topIds) => {
   }
 };
 
+const formatCountEntries = (entries) => {
+  if (!Array.isArray(entries) || entries.length === 0) return "none";
+  return entries.map(([name, count]) => `${name} ${fmt(count)}`).join(", ");
+};
+
+const addDiagnosticRow = (container, key, value) => {
+  const row = document.createElement("div");
+  row.className = "diagnostic-row";
+  const keyEl = document.createElement("div");
+  keyEl.className = "diagnostic-key";
+  keyEl.textContent = key;
+  const valueEl = document.createElement("div");
+  valueEl.className = "diagnostic-value";
+  valueEl.textContent = value;
+  row.appendChild(keyEl);
+  row.appendChild(valueEl);
+  container.appendChild(row);
+};
+
+const personaStatusText = (diagnostics) => {
+  if (!diagnostics) return "No origin probe log yet";
+  if (!diagnostics.noiseEnabled) return "Noise off; no decoys claimed";
+  if (!diagnostics.armed) return "Cold start; no eligible decoys yet";
+  return `${fmt(diagnostics.selectedCount)} decoy${diagnostics.selectedCount === 1 ? "" : "s"} armed`;
+};
+
+const renderPowerDiagnostics = (resp) => {
+  const box = document.getElementById("power-diagnostics");
+  box.innerHTML = "";
+
+  if (!(resp && resp.origin)) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No current-site diagnostics available on this page.";
+    box.appendChild(empty);
+    return;
+  }
+
+  const diagnostics = resp.noiseDiagnostics;
+  const playbook = resp.playbook;
+  addDiagnosticRow(box, "Origin", resp.origin);
+  addDiagnosticRow(box, "Persona", personaStatusText(diagnostics));
+  if (diagnostics) {
+    addDiagnosticRow(
+      box,
+      "Noise pool",
+      `${fmt(diagnostics.eligibleTotal)} eligible (${fmt(diagnostics.eligibleKnown)} known, ${fmt(
+        diagnostics.eligibleUnknown
+      )} unknown), target ${fmt(diagnostics.targetMin)}-${fmt(diagnostics.targetMax)}`
+    );
+    addDiagnosticRow(
+      box,
+      "ID pressure",
+      `${fmt(diagnostics.uniqueIds)} unique, ${fmt(diagnostics.repeatedIds)} repeated, ${pct(
+        diagnostics.oneShotPressure
+      )} one-shot`
+    );
+    if (diagnostics.selectedIds && diagnostics.selectedIds.length > 0) {
+      addDiagnosticRow(box, "Decoy IDs", diagnostics.selectedIds.join(", "));
+    }
+  }
+  if (playbook) {
+    addDiagnosticRow(box, "Latest week", `${playbook.week}; ${fmt(playbook.total)} probes`);
+    addDiagnosticRow(box, "Vectors", formatCountEntries(playbook.vectors));
+    addDiagnosticRow(box, "Paths", formatCountEntries(playbook.pathKinds));
+  }
+  if (resp.adaptiveDetected) {
+    const categories = Object.entries(resp.adaptiveCategories || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([category, count]) => `${category} ${fmt(count)}`);
+    addDiagnosticRow(
+      box,
+      "Adaptive",
+      `score ${fmt(resp.adaptiveScore || 0)}${categories.length ? `; ${categories.join(", ")}` : ""}`
+    );
+  }
+};
+
 const renderDetails = (resp) => {
   const total = resp && typeof resp.total === "number" ? resp.total : 0;
   const cumulative = resp && typeof resp.cumulative === "number" ? resp.cumulative : 0;
@@ -129,6 +208,7 @@ const renderDetails = (resp) => {
   renderDriftNotice(resp && resp.drift);
   renderAdaptiveNotice(resp);
   renderTopIds(topIds);
+  renderPowerDiagnostics(resp);
 };
 
 const renderNoiseSection = (resp) => {

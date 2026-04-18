@@ -64,6 +64,14 @@ const addServiceWorkerFiles = (manifest, referencedFiles) => {
   }
 };
 
+const addHtmlScriptFiles = (filePath, referencedFiles) => {
+  const source = readText(filePath);
+  for (const match of source.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
+    const scriptPath = match[1];
+    if (!/^[a-z]+:/i.test(scriptPath)) referencedFiles.add(scriptPath);
+  }
+};
+
 const collectManifestFiles = (manifest) => {
   const referencedFiles = new Set();
   addContentScriptFiles(manifest, referencedFiles);
@@ -74,6 +82,14 @@ const collectManifestFiles = (manifest) => {
   addIconFiles(manifest.icons, referencedFiles);
   addIconFiles(manifest.action && manifest.action.default_icon, referencedFiles);
   addRulesetFiles(manifest, referencedFiles);
+  return referencedFiles;
+};
+
+const collectExtensionPageFiles = () => {
+  const referencedFiles = new Set(["log.html", "popup.html"]);
+  for (const page of [...referencedFiles].filter((filePath) => filePath.endsWith(".html"))) {
+    addHtmlScriptFiles(page, referencedFiles);
+  }
   return referencedFiles;
 };
 
@@ -101,6 +117,12 @@ test("manifest references existing files and keeps content-script worlds separat
   expectContentScriptWorlds(manifest);
 });
 
+test("extension pages reference existing local scripts", () => {
+  for (const filePath of collectExtensionPageFiles()) {
+    expect(fs.existsSync(path.join(repoRoot, filePath)), filePath).toBe(true);
+  }
+});
+
 test("manifest keeps privacy-sensitive exposure and permissions minimal", () => {
   const manifest = readJson("manifest.json");
   expect(manifest.permissions.sort()).toEqual(["declarativeNetRequest", "storage"]);
@@ -113,6 +135,8 @@ test("manifest keeps privacy-sensitive exposure and permissions minimal", () => 
 test("extension runtime code stays local-only", () => {
   const runtimeFiles = [
     ...collectManifestFiles(readJson("manifest.json")),
+    ...collectExtensionPageFiles(),
+    "log_diagnostics.js",
     "popup.js",
     "log.js",
   ].filter((filePath) => filePath.endsWith(".js") || filePath.endsWith(".html"));

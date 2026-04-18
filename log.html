@@ -259,6 +259,27 @@
       .drift-reasons li {
         margin: 3px 0;
       }
+      .metric-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .metric-list li {
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1fr);
+        gap: 12px;
+        padding: 3px 0;
+      }
+      .metric-list .k {
+        color: var(--text-subtle);
+        font-weight: 600;
+      }
+      .metric-list .v {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
       .id-entry {
         display: flex;
         justify-content: space-between;
@@ -335,6 +356,8 @@
       </div>
     </main>
 
+    <script src="lists.js"></script>
+    <script src="log_diagnostics.js"></script>
     <script src="log.js"></script>
   </body>
 </html>

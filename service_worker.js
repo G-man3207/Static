@@ -18,7 +18,9 @@ const CFG = globalThis.__static_config__ || {};
 const {
   enforceCaps,
   ensurePlaybookWeek,
+  latestPlaybookSnapshot,
   mergeCounts,
+  personaDiagnosticsFor,
   playbookDriftForEntry,
   sumCounts,
   trimCountMap,
@@ -400,10 +402,13 @@ const handleAdaptiveSignal = (msg, sender) => {
   if (origin) serialize(() => recordAdaptiveSignal(origin, msg.signal));
 };
 
-const detailsResponseFor = (tabId, stored) => {
+const detailsResponseFor = async (tabId, stored) => {
   const state = perTabState.get(tabId);
   const origin = state ? state.origin : null;
+  const originProbeEntry = origin ? stored.probe_log[origin] : null;
   const adaptiveEntry = origin ? stored.adaptive_log[origin] : null;
+  const selectedPersonaIds =
+    originProbeEntry && stored.noise_enabled ? await personaFor(origin) : [];
   const loggedOrigins = new Set([
     ...Object.keys(stored.probe_log),
     ...Object.keys(stored.replay_log),
@@ -420,9 +425,12 @@ const detailsResponseFor = (tabId, stored) => {
     adaptiveScore: adaptiveEntry ? adaptiveEntry.scoreMax || 0 : 0,
     adaptiveCategories: adaptiveEntry ? adaptiveEntry.categories || {} : {},
     origin,
-    drift:
-      origin && stored.probe_log[origin] ? playbookDriftForEntry(stored.probe_log[origin]) : null,
+    drift: originProbeEntry ? playbookDriftForEntry(originProbeEntry) : null,
+    noiseDiagnostics: originProbeEntry
+      ? personaDiagnosticsFor(originProbeEntry, selectedPersonaIds, stored.noise_enabled, CFG)
+      : null,
     originsLogged: loggedOrigins.size,
+    playbook: originProbeEntry ? latestPlaybookSnapshot(originProbeEntry) : null,
   };
 };
 
@@ -437,7 +445,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
       adaptive_log: {},
       replay_mode: "off",
     });
-    sendResponse(detailsResponseFor(msg.tabId, stored));
+    sendResponse(await detailsResponseFor(msg.tabId, stored));
   })();
   return true;
 };

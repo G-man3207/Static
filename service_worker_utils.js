@@ -26,6 +26,25 @@ globalThis.__static_sw_utils__ = (() => {
     return Object.fromEntries(entries.slice(0, maxEntries));
   };
 
+  const sortedCountEntries = (counts, limit) =>
+    Object.entries(counts || {})
+      .filter(([, count]) => typeof count === "number" && count > 0)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, limit);
+
+  const idPressureFor = (counts) => {
+    const entries = Object.entries(counts || {}).filter(([, count]) => count > 0);
+    const uniqueIds = entries.length;
+    const repeatedIds = entries.filter(([, count]) => count >= 2).length;
+    const oneShotIds = entries.filter(([, count]) => count === 1).length;
+    return {
+      oneShotIds,
+      oneShotPressure: uniqueIds ? oneShotIds / uniqueIds : 0,
+      repeatedIds,
+      uniqueIds,
+    };
+  };
+
   const weekKeyFor = (time) => {
     const date = new Date(time);
     const year = date.getUTCFullYear();
@@ -98,6 +117,66 @@ globalThis.__static_sw_utils__ = (() => {
       mergeCounts(baseline.idCounts, week.idCounts);
     }
     return { latestKey, current, baseline };
+  };
+
+  const latestPlaybookSnapshot = (entry) => {
+    const comparison = latestPlaybookComparison(entry);
+    if (!comparison) return null;
+    const { latestKey, current } = comparison;
+    return {
+      ...idPressureFor(current.idCounts),
+      pathKinds: sortedCountEntries(current.pathKindCounts, 5),
+      total: current.total || 0,
+      vectors: sortedCountEntries(current.vectorCounts, 5),
+      week: latestKey,
+    };
+  };
+
+  const knownPersonaIds = (config) => {
+    const ids = new Set();
+    for (const slotIds of Object.values((config && config.conflictSlots) || {})) {
+      for (const id of slotIds) ids.add(id);
+    }
+    return ids;
+  };
+
+  const eligibilityKindFor = (id, count, knownIds, config) => {
+    const chromeExtIdRe = /^[a-p]{32}$/;
+    if (!chromeExtIdRe.test(id) || typeof count !== "number") return null;
+    const known = knownIds.has(id);
+    const min = known ? config.personaMinCount || 2 : config.unknownPersonaMinCount || 20;
+    return count >= min ? (known ? "known" : "unknown") : null;
+  };
+
+  const personaDiagnosticsFor = (entry, selectedIds, noiseEnabled, config) => {
+    const cfg = config || {};
+    const target = cfg.personaSize || { min: 3, max: 8 };
+    const knownIds = knownPersonaIds(cfg);
+    const stats = idPressureFor(entry && entry.idCounts);
+    let eligibleKnown = 0;
+    let eligibleUnknown = 0;
+
+    for (const [id, count] of Object.entries((entry && entry.idCounts) || {})) {
+      const kind = eligibilityKindFor(id.toLowerCase(), count, knownIds, cfg);
+      if (kind === "known") eligibleKnown++;
+      if (kind === "unknown") eligibleUnknown++;
+    }
+
+    return {
+      ...stats,
+      armed: !!noiseEnabled && selectedIds.length > 0,
+      eligibleKnown,
+      eligibleTotal: eligibleKnown + eligibleUnknown,
+      eligibleUnknown,
+      minKnown: cfg.personaMinCount || 2,
+      minUnknown: cfg.unknownPersonaMinCount || 20,
+      noiseEnabled: !!noiseEnabled,
+      rotationWeeks: cfg.personaRotationWeeks || 1,
+      selectedCount: selectedIds.length,
+      selectedIds,
+      targetMax: target.max || 8,
+      targetMin: target.min || 3,
+    };
   };
 
   const distributionShift = (a, b) => {
@@ -244,7 +323,9 @@ globalThis.__static_sw_utils__ = (() => {
   return {
     enforceCaps,
     ensurePlaybookWeek,
+    latestPlaybookSnapshot,
     mergeCounts,
+    personaDiagnosticsFor,
     playbookDriftForEntry,
     sumCounts,
     trimCountMap,
