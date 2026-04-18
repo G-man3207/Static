@@ -1,0 +1,17 @@
+# Chrome's local storage for loaded-unpacked extensions
+_metadata/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Packaged builds
+*.zip
+*.crx
+*.pem

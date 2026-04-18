@@ -1,0 +1,55 @@
+name: Release
+
+# Triggered when you push a tag matching v*.*.*  (e.g., v2.0.0, v2.1.0-beta).
+# Packages the extension as a zip excluding repo-infra files, creates a GitHub
+# Release with auto-generated notes, and attaches the zip as a release asset.
+#
+# Typical flow:
+#   git tag v2.0.0
+#   git push --tags
+# The release artifact is ready to upload to Chrome Web Store via the developer
+# console (or to automate later with the CWS API and repo secrets).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release zip
+        run: |
+          ZIP_NAME="static-${GITHUB_REF_NAME}.zip"
+          zip -r "$ZIP_NAME" . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x "_metadata/*" \
+            -x ".editorconfig" \
+            -x ".prettierrc" \
+            -x ".prettierignore" \
+            -x ".gitignore" \
+            -x "*.zip" \
+            -x ".DS_Store" \
+            -x "Thumbs.db"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+          echo "--- zip contents ---"
+          unzip -l "$ZIP_NAME"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_NAME }}
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            1. Download `${{ env.ZIP_NAME }}` below and extract it to a folder.
+            2. Open `chrome://extensions`, enable **Developer mode** (top right).
+            3. Click **Load unpacked** and select the extracted folder.
+
+            See [CHANGELOG.md](https://github.com/G-man3207/Static/blob/main/CHANGELOG.md) for the full release notes.

@@ -1,0 +1,164 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fullstory.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fs.net^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||logrocket.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 4,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||logrocket.io^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 5,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||lr-in.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 6,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||mouseflow.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 7,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||contentsquare.net^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 8,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||contentsquare.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 9,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||smartlook.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 10,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||smartlook.cloud^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 11,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||quantummetric.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 12,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||clarity.ms^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 13,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||heap.io^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 14,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||heapanalytics.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 15,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||luckyorange.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 16,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||inspectlet.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 17,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||pendo.io^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 18,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||browsee.io^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  }
+]

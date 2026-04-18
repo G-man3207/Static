@@ -1,0 +1,73 @@
+{
+  "manifest_version": 3,
+  "name": "Static",
+  "version": "2.0.0",
+  "description": "Anti-fingerprinting / anti-probing: blocks browser-extension enumeration, client-side fingerprinting vendors, and session-replay telemetry at the script and network layer.",
+  "permissions": ["declarativeNetRequest", "storage"],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Static",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "linkedin",
+        "enabled": true,
+        "path": "rules/linkedin.json"
+      },
+      {
+        "id": "fingerprint_vendors",
+        "enabled": true,
+        "path": "rules/fingerprint_vendors.json"
+      },
+      {
+        "id": "captcha_vendors",
+        "enabled": false,
+        "path": "rules/captcha_vendors.json"
+      },
+      {
+        "id": "session_replay",
+        "enabled": true,
+        "path": "rules/session_replay.json"
+      },
+      {
+        "id": "datadog_rum",
+        "enabled": false,
+        "path": "rules/datadog_rum.json"
+      }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["lists.js", "block.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["lists.js", "bridge.js", "dom_scrubber.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    }
+  ]
+}

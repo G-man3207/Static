@@ -1,0 +1,34 @@
+{
+  "rulesets": {
+    "linkedin": {
+      "version": "1.0.0",
+      "last_verified": "2026-04-18",
+      "description": "LinkedIn telemetry: sensor/metrics collection, conversion tracking, ad pixel, adblock-detection script, internal Piwik, marketing tag system, LMS analytics, and lnkd.in redirector.",
+      "enabled_by_default": true
+    },
+    "fingerprint_vendors": {
+      "version": "1.0.0",
+      "last_verified": "2026-04-18",
+      "description": "Commercial client-side fingerprinting and anti-bot vendors: FingerprintJS, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.",
+      "enabled_by_default": true
+    },
+    "captcha_vendors": {
+      "version": "1.0.0",
+      "last_verified": "2026-04-18",
+      "description": "CAPTCHA / device-attestation vendors (Arkose Labs, FunCAPTCHA). DISABLED BY DEFAULT — blocking these will break logins on sites that use them as CAPTCHA challenges (X signup, Roblox, several crypto exchanges, some enterprise SSO flows).",
+      "enabled_by_default": false
+    },
+    "session_replay": {
+      "version": "1.0.0",
+      "last_verified": "2026-04-18",
+      "description": "Session-replay, heatmap, and product-analytics vendors that record user interaction: FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee.",
+      "enabled_by_default": true
+    },
+    "datadog_rum": {
+      "version": "1.0.0",
+      "last_verified": "2026-04-18",
+      "description": "Datadog Real User Monitoring intake endpoints (all regions) and browser agent CDN. DISABLED BY DEFAULT — Datadog RUM is also widely used for legitimate performance and error monitoring that site operators and users may want to keep.",
+      "enabled_by_default": false
+    }
+  }
+}

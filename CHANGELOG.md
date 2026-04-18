@@ -1,0 +1,71 @@
+# Changelog
+
+All notable changes to Static will be documented here.
+
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+## [2.0.0] — 2026-04-18
+
+Initial public release.
+
+### Blocking engine (MAIN-world)
+
+- Rejects page-script probes to `chrome-extension://` (and `moz-extension://`, `ms-browser-extension://`, `safari-web-extension://`, `edge-extension://`) across every vector we've seen used: `fetch`, `XMLHttpRequest`, element `src|href|data` setters, `setAttribute` / `setAttributeNS`, `navigator.sendBeacon`, `Worker`, `SharedWorker`, `EventSource`, `navigator.serviceWorker.register`.
+- XHR state stored in a closure `WeakMap` so no tamper marker lands on the instance (some sites log failing XHR objects to console).
+- Stealth: `Function.prototype.toString` patched via `WeakMap` of wrapped functions → native-looking strings, so every patched API is indistinguishable from its native counterpart under any `toString` path.
+- Sandboxed-iframe safe: feature-detection blocks wrapped in `try/catch` so `SecurityError` on restricted APIs like `navigator.serviceWorker` doesn't surface in host-page consoles (seen on x.com tweet embeds).
+
+### DOM-layer defenses (ISOLATED-world)
+
+- MutationObserver-based scrubber strips extension-announcing attributes, classes, and custom-element tags (Grammarly, 1Password, LastPass, Dashlane, Honey, Keeper, NordPass, RoboForm patterns).
+- Known `window` globals used as extension-to-page bridges are locked to `undefined` via `Object.defineProperty(..., { configurable: false })` before any page script runs. Covers React / Redux / Vue / MobX / Apollo devtools hooks, password-manager presence flags, Grammarly session markers.
+
+### Network-layer blocklists
+
+Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-category:
+
+- `linkedin` (on) — sensor/metrics collection, conversion tracking, ad pixel, adblock-detection script, marketing tag system, internal Piwik, `lnkd.in` redirector.
+- `fingerprint_vendors` (on) — FingerprintJS, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
+- `captcha_vendors` (off) — Arkose Labs / FunCAPTCHA. Off by default because blocking breaks logins on some sites.
+- `session_replay` (on) — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee.
+- `datadog_rum` (off) — Datadog Real-User-Monitoring intake (all regions + browser agent CDN). Off by default because it's also used for legitimate monitoring.
+
+### Noise mode *(opt-in)*
+
+- Learns each site's probe dictionary from its own behavior and returns plausible decoy responses for a stable 3–8 ID subset on subsequent visits.
+- Persona is deterministic per `(user_secret, origin, week_number)`: stable for a week, rotates weekly, different users' personas differ because the 256-bit `user_secret` is generated once per install via `crypto.getRandomValues`.
+- Slot-based conflict avoidance prevents implausible combos (no "three password managers installed" tells). Slots: password manager, ad blocker, grammar, Web3 wallet, devtools, translator.
+- Canary-resistant: an ID must be observed at least twice on an origin before entering the replay pool.
+- Decoy responses are path-switched: `/manifest.json` → generic valid MV3 manifest JSON; `*.png|.jpg|.gif|.webp|.ico|.bmp` → 1×1 transparent PNG; `*.svg` → empty SVG; `*.js|.html|.css|.json` → empty body with correct content type.
+- Decoys `fetch` and `XMLHttpRequest`. Element-based probes stay blocked for consistency (partial decoy could be detected by correlating vectors).
+
+### UI
+
+- Popup: per-tab blocked count (magnitude-scaled color: grey → orange at 100 → red at 1000), cumulative since-install counter, top-5 probed extension IDs disclosure, ruleset toggles with live `chrome.declarativeNetRequest.updateEnabledRulesets` (no reload), Noise mode toggle with explainer, link to full probe log.
+- Log viewer (`log.html`): searchable table of origins sorted by probe volume, expandable per-origin ID-count listing, raw + research export buttons.
+- Branding: logo + title header, 3-pixel desaturated SMPTE brand stripe as divider, subtle SVG-noise-texture body background, iOS-style toggle switches.
+
+### Privacy
+
+- Probe logs are stored locally in `chrome.storage.local`, capped at 100 origins × 2,000 IDs per origin. Nothing leaves the machine unless explicitly exported.
+- Two export formats in the log viewer:
+  - **Raw** — full fidelity: timestamps, exact counts, since-install cumulative. For private archival; should not be published (cross-user correlation risk).
+  - **Research** — anonymized: coarse `exportMonth` only, log-scale count buckets (`2-5` / `6-20` / `21-100` / `101-1000` / `1000+`), single-occurrence IDs dropped, origins with <3 qualifying IDs dropped. Safe to publish or contribute to aggregate datasets.
+  - Schema tag on each export (`static.probe-log.v1` and `static.probe-log.shareable.v1`) for future aggregators to validate against.
+
+### Architecture
+
+- Modular: all DOM/global pattern data lives in `lists.js` (single source of truth consumed by content scripts + service worker via `importScripts`). Rulesets live one-per-file under `rules/`. `rules/META.json` sidecar carries version / last_verified / description metadata.
+- Service-worker resilience: cumulative counter uses deltas (not cumulative), so SW restart doesn't double-count. Per-frame blocked-count state uses cumulative snapshots so SW restart self-heals on next message.
+- Internal message / property names namespaced with `static_` / `__static_*` prefix.
+
+### Tooling
+
+- MIT licensed.
+- `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
+- GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
+
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/G-man3207/Static/releases/tag/v2.0.0

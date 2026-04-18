@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Static</title>
+    <style>
+      :root {
+        --bg: #fafafa;
+        --surface: #ffffff;
+        --border: #ececec;
+        --border-strong: #dadada;
+        --text: #1a1a1a;
+        --text-muted: #666;
+        --text-subtle: #999;
+        --accent: #c93131;
+        --accent-amber: #d88030;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        font: 13px/1.45 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        width: 320px;
+        color: var(--text);
+        background-color: var(--bg);
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.035 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 16px 12px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .header img {
+        width: 30px;
+        height: 30px;
+      }
+      .header h1 {
+        font-size: 15px;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: -0.2px;
+      }
+      /* SMPTE mini-stripe as brand mark under the header */
+      .brand-stripe {
+        display: flex;
+        height: 3px;
+      }
+      .brand-stripe span {
+        flex: 1;
+      }
+      .brand-stripe span:nth-child(1) {
+        background: #c0c0c0;
+      }
+      .brand-stripe span:nth-child(2) {
+        background: #c0c01f;
+      }
+      .brand-stripe span:nth-child(3) {
+        background: #1fc0c0;
+      }
+      .brand-stripe span:nth-child(4) {
+        background: #1fc01f;
+      }
+      .brand-stripe span:nth-child(5) {
+        background: #c01fc0;
+      }
+      .brand-stripe span:nth-child(6) {
+        background: #c01f1f;
+      }
+      .brand-stripe span:nth-child(7) {
+        background: #1f1fc0;
+      }
+      .hero {
+        padding: 16px 16px 14px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .count {
+        font-size: 38px;
+        font-weight: 700;
+        line-height: 1;
+        margin: 0;
+        color: var(--text-subtle);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -1.5px;
+      }
+      .label {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 5px;
+      }
+      .cumulative {
+        font-size: 11px;
+        color: var(--text-subtle);
+        margin-top: 3px;
+        font-variant-numeric: tabular-nums;
+        min-height: 14px;
+      }
+      details {
+        margin-top: 10px;
+      }
+      details summary {
+        cursor: pointer;
+        color: var(--text-muted);
+        font-size: 11px;
+        padding: 2px 0;
+        user-select: none;
+        outline: none;
+      }
+      details[open] summary {
+        margin-bottom: 6px;
+      }
+      .top-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .top-list li {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 10px;
+        padding: 3px 0;
+        border-top: 1px solid var(--border);
+      }
+      .top-list li:first-child {
+        border-top: none;
+      }
+      .top-list li .id-text {
+        color: var(--text-muted);
+      }
+      .top-list li .id-count {
+        color: var(--text-subtle);
+        font-variant-numeric: tabular-nums;
+      }
+      .empty {
+        color: var(--text-subtle);
+        font-size: 10px;
+        font-style: italic;
+        padding: 4px 0;
+      }
+      .section {
+        padding: 14px 16px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .section h2 {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        margin: 0 0 10px;
+      }
+      /* Toggle row used for Noise mode */
+      .toggle-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .toggle-row .col {
+        flex: 1;
+        min-width: 0;
+      }
+      .toggle-row .ttl {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .toggle-row .desc {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 3px;
+        line-height: 1.4;
+      }
+      /* iOS-style switch */
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 34px;
+        height: 20px;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .switch-bg {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: #d0d0d0;
+        border-radius: 20px;
+        transition: background 0.15s;
+      }
+      .switch-bg:before {
+        content: "";
+        position: absolute;
+        height: 16px;
+        width: 16px;
+        left: 2px;
+        bottom: 2px;
+        background: #fff;
+        border-radius: 50%;
+        transition: transform 0.15s;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+      }
+      .switch input:checked + .switch-bg {
+        background: var(--accent);
+      }
+      .switch input:checked + .switch-bg:before {
+        transform: translateX(14px);
+      }
+      .log-link {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        margin-top: 12px;
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 11px;
+        color: var(--text-muted);
+        background: #f6f6f6;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: pointer;
+        text-align: left;
+        transition: background 0.1s, border-color 0.1s;
+      }
+      .log-link:hover {
+        background: #eee;
+        border-color: var(--border-strong);
+      }
+      .log-link:hover .log-link-arrow {
+        color: var(--accent);
+        transform: translateX(2px);
+      }
+      .log-link .log-link-text {
+        font-weight: 600;
+        color: var(--text);
+      }
+      .log-link .log-link-stats {
+        flex: 1;
+        margin: 0 8px;
+        color: var(--text-subtle);
+        font-variant-numeric: tabular-nums;
+      }
+      .log-link .log-link-arrow {
+        color: var(--text-subtle);
+        font-size: 12px;
+        transition: color 0.1s, transform 0.1s;
+      }
+      .log-link[hidden] {
+        display: none;
+      }
+      .ruleset {
+        display: flex;
+        align-items: center;
+        padding: 3px 0;
+      }
+      .ruleset input[type="checkbox"] {
+        margin: 0 8px 0 0;
+        flex-shrink: 0;
+      }
+      .ruleset label {
+        flex: 1;
+        font-size: 12px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .ruleset .rule-count {
+        color: var(--text-subtle);
+        font-size: 10px;
+        margin-left: 5px;
+        font-variant-numeric: tabular-nums;
+      }
+      .ruleset-warn {
+        font-size: 10px;
+        color: var(--accent);
+        opacity: 0.85;
+        margin: 0 0 6px 22px;
+        line-height: 1.4;
+      }
+      .footer {
+        padding: 10px 16px;
+        font-size: 10px;
+        color: var(--text-subtle);
+        text-align: center;
+        background: var(--surface);
+      }
+      .footer a {
+        color: var(--text-muted);
+        text-decoration: none;
+      }
+      .footer a:hover {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <img src="icons/icon-128.png" alt="" />
+      <h1>Static</h1>
+    </div>
+    <div class="brand-stripe" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+
+    <div class="hero">
+      <div class="count" id="count">0</div>
+      <div class="label">probes blocked on this tab</div>
+      <div class="cumulative" id="cumulative"></div>
+
+      <details>
+        <summary>Top probed extension IDs</summary>
+        <ul class="top-list" id="top-ids"></ul>
+      </details>
+    </div>
+
+    <div class="section">
+      <div class="toggle-row">
+        <div class="col">
+          <div class="ttl">Noise mode</div>
+          <div class="desc">
+            Instead of just blocking, return plausible decoy responses for a stable
+            3–8 ID subset of what each site has probed for. Poisons their dataset
+            with IDs they specifically cared about. First visit is always plain-blocked.
+          </div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="noise-toggle" />
+          <span class="switch-bg"></span>
+        </label>
+      </div>
+      <button class="log-link" id="view-log" hidden>
+        <span class="log-link-text">View probe log</span>
+        <span class="log-link-stats" id="noise-stats"></span>
+        <span class="log-link-arrow">→</span>
+      </button>
+    </div>
+
+    <div class="section">
+      <h2>Rulesets</h2>
+      <div id="rulesets"></div>
+    </div>
+
+    <div class="footer">
+      <a
+        href="https://github.com/G-man3207/Static"
+        target="_blank"
+        rel="noopener noreferrer"
+        >Source on GitHub</a
+      >
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,1 +1,110 @@
+<p align="center">
+  <img src="icons/icon-128.png" alt="Static" width="128" height="128">
+</p>
+
 # Static
+
+**Anti-fingerprinting, not anti-ads.** A Chrome MV3 extension that blocks *active probing* of your browser: extension enumeration, client-side fingerprinting, and session-replay telemetry.
+
+## What it blocks
+
+1. **Extension enumeration.** Pages that iterate through extension IDs via `fetch("chrome-extension://<id>/<resource>")` (and XHR / `<script src>` / `<link href>` / `<img src>` / `sendBeacon` / `Worker` / `SharedWorker` / `EventSource` / `serviceWorker.register` equivalents) to probe which extensions are installed. All those vectors are patched in the page's MAIN world to reject `chrome-extension://` (plus `moz-extension://`, `ms-browser-extension://`, `safari-web-extension://`, `edge-extension://`) transparently.
+2. **DOM-marker fingerprinting.** A MutationObserver strips attributes, classes, and custom-element tags that browser extensions leave on the DOM to announce their presence.
+3. **`window` global fingerprinting.** Devtools bridges and extension-presence markers (`__REACT_DEVTOOLS_GLOBAL_HOOK__`, `__GRAMMARLY_DESKTOP_INTEGRATION__`, etc.) are locked to `undefined` before page scripts run.
+4. **Network-layer blocklists (togglable).** Declarative-Net-Request rulesets block known:
+   - **Fingerprinting / anti-bot vendors** — FingerprintJS, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
+   - **CAPTCHA vendors** *(off by default, breaks logins)* — Arkose Labs / FunCAPTCHA.
+   - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee.
+   - **Datadog RUM** *(off by default, also used for legitimate monitoring)*.
+   - **LinkedIn** — sensor/metrics collection, conversion tracking, ad pixel, adblock detection, internal Piwik, marketing tag system, LMS analytics.
+5. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` of wrapped functions → native-looking strings, so the blocker's API overrides are indistinguishable from natives under any `toString` check.
+
+The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds.
+
+## Noise mode *(opt-in)*
+
+Blocking a probe proves one thing: "some defense is present." **Noise mode** goes further — it learns each site's probe dictionary from its own behavior, then returns plausible decoy responses for a stable subset of those same IDs. The site sees its targets as "installed" and logs them; the logs get poisoned with IDs the site itself cared about.
+
+- **Self-calibrating.** Each site tells you, by what it probes for, what its threat model is. LinkedIn probes for scraper extensions; a crypto site probes for wallets. The decoy persona Static constructs is drawn from *that specific site's* probe list, so the noise is maximally relevant to what they're looking for.
+- **Stable per origin.** The 3–8 ID persona for each origin is deterministic from `hash(user_secret + origin + week)`. Stable for a week (so you don't look like a bot changing extensions every pageview); rotates after that; different users' sets differ (no cross-user fingerprint because the secret is random per install).
+- **Conflict-aware.** IDs are bucketed into slots (password manager, ad blocker, grammar, web3 wallet, devtools, translator) and the persona picks at most one per slot — no "three password managers installed" tells.
+- **Canary-resistant by design.** An ID only enters the replay pool after Static has seen it probed at least twice on that origin. One-shot canaries filter out automatically; always-probed "canaries" collapse into the regular probe set and get poisoned.
+- **Cold start is honest.** First visit to a site produces no poisoning because there's nothing logged yet. From the second pageview onward, the site gets noise.
+- **Decoy responses by path.** Fetches to `.../manifest.json` return a generic valid manifest; `*.png` etc. return a 1×1 transparent PNG; `*.js`/`.html`/`.css` return empty with correct content types. Covers what site-side detectors typically check for.
+
+**Scope in v2.0:** Noise mode decoys `fetch` and `XMLHttpRequest`. Element-based probes (`<script src>`, `<img src>`, etc.) stay blocked regardless — consistent behavior beats a partial decoy that could be detected by correlating vectors.
+
+**Privacy:** Probe logs are kept locally in `chrome.storage.local`. Capped at 100 origins × 2,000 IDs each. Nothing leaves your machine unless you explicitly export.
+
+Two export formats are available in the log viewer (click **View probe log** in the popup):
+
+- **Export raw log** — full detail. Contains per-origin timestamps (`lastUpdated`), exact probe counts, your since-install cumulative counter, and the precise `exportedAt` moment. This is fine for your own archive but **should not be published** — timestamp + count patterns can cross-correlate users across sites if multiple raw dumps from different users ever end up in the same hands.
+- **Export for research** — anonymized. Replaces precise `exportedAt` with a coarse `"exportMonth": "YYYY-MM"` bucket, drops per-origin `lastUpdated`, drops the `cumulative` counter, coarsens per-ID counts into log-scale buckets (`"2-5"`, `"6-20"`, `"21-100"`, `"101-1000"`, `"1000+"`), drops any ID that was probed fewer than 2 times (canary filter), and drops any origin with fewer than 3 surviving IDs (low-signal noise). Safe to publish or contribute to aggregate datasets documenting how the web fingerprints browser extensions.
+
+Noise mode is **off by default** — turning it on is an active choice to shift Static from pure defense to counter-intelligence. Toggle it from the popup.
+
+## Install
+
+1. Clone this repository.
+2. Open `chrome://extensions`.
+3. Toggle **Developer mode** (top-right).
+4. Click **Load unpacked** and select the repo folder.
+
+## Toggle rulesets
+
+Each category of network rules lives in its own file under `rules/`. Toggle them two ways:
+
+- **From the popup** — click the extension icon. Each ruleset has a checkbox; changes apply live (no reload).
+- **From `manifest.json`** — each `rule_resources` entry has an `enabled` flag. This controls the initial state on fresh install; after that, user toggles from the popup persist.
+
+```json
+"rule_resources": [
+  { "id": "linkedin",            "enabled": true,  "path": "rules/linkedin.json" },
+  { "id": "fingerprint_vendors", "enabled": true,  "path": "rules/fingerprint_vendors.json" },
+  { "id": "captcha_vendors",     "enabled": false, "path": "rules/captcha_vendors.json" },
+  { "id": "session_replay",      "enabled": true,  "path": "rules/session_replay.json" },
+  { "id": "datadog_rum",         "enabled": false, "path": "rules/datadog_rum.json" }
+]
+```
+
+`rules/META.json` is a sidecar index with `version`, `last_verified`, and human-readable descriptions for each ruleset. It's consumed by nothing at runtime — it's there so maintainers and contributors can tell which blocklists are fresh.
+
+## Extend coverage
+
+- **DOM markers / window globals to strip** — edit the regex arrays in `lists.js`.
+- **Endpoints to block at the network layer** — add rules to an existing file under `rules/`, or create a new `rules/<category>.json` and register it in `manifest.json`'s `rule_resources` (and add an entry in `rules/META.json` + `popup.js`'s `RULESET_META`).
+- **A new script-layer probe vector (some new Web API that takes a URL)** — add a wrapper in `block.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns.
+
+## Layout
+
+```
+static/
+├── manifest.json
+├── lists.js              # DOM/global pattern config (edit to extend coverage)
+├── block.js              # MAIN-world engine — API patches + stealth
+├── dom_scrubber.js       # ISOLATED-world DOM MutationObserver
+├── bridge.js             # postMessage → service-worker relay
+├── service_worker.js     # per-tab badge with blocked-probe count
+├── popup.html, popup.js  # popup showing count + ruleset toggles
+├── icons/                # 16/32/48/128 px icon set + original
+└── rules/
+    ├── META.json
+    ├── linkedin.json
+    ├── fingerprint_vendors.json
+    ├── captcha_vendors.json
+    ├── session_replay.json
+    └── datadog_rum.json
+```
+
+## Caveats
+
+- JS-layer patches run only where content scripts run. Pages served from `chrome://`, `about:`, the Chrome Web Store, and a handful of other restricted schemes are not covered.
+- The DOM scrubber ships with a default list of extensions whose markers are stripped. If one of those is an extension you use, its in-page UI (autofill icons, inline suggestions, etc.) may not render. Remove that extension's patterns from `lists.js` to keep it working.
+- Some sites use anti-bot vendors (PerimeterX, DataDome) as part of their login / checkout flow. If a site breaks, try disabling `fingerprint_vendors` first from the popup.
+- `captcha_vendors` is disabled by default because Arkose/FunCAPTCHA is served as a CAPTCHA on some login flows (X signup, Roblox, some crypto exchanges); enabling it will break sign-in there.
+- `datadog_rum` is disabled by default because Datadog RUM is also widely used for legitimate performance and error monitoring that site owners and users may want.
+- Does not cover the entire browser-fingerprinting surface (canvas, WebGL, audio, fonts, font enumeration, WebRTC IP leak, etc.). Complements, doesn't replace, a dedicated anti-fingerprint extension.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

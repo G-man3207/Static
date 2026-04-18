@@ -1,0 +1,128 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fpjs.io^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fpjs.sh^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fpcdn.io^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 4,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||datadome.co^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 5,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||perimeterx.net^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 6,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||px-cdn.net^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 7,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||px-cloud.net^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 8,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||cdn.sift.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 9,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||cdn.forter.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 10,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||online-metrix.net^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 11,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||iovation.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 12,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||kasadacdn.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 13,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||sardine.ai^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 14,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||shape.io^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  }
+]
