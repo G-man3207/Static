@@ -21,6 +21,11 @@ const colorForCount = (n) => {
 };
 
 const fmt = (n) => n.toLocaleString();
+const replayState = {
+  replayDetected: false,
+  replayMode: "off",
+  sessionReplayBlocking: false,
+};
 
 const fetchRuleCount = async (rulesetId) => {
   try {
@@ -138,8 +143,11 @@ const renderReplaySection = (resp) => {
   const detected = document.getElementById("replay-detected");
   const allowed = new Set(["off", "mask", "noise", "chaos"]);
   let current = resp && allowed.has(resp.replayMode) ? resp.replayMode : "off";
+  replayState.replayMode = current;
+  replayState.replayDetected = !!(resp && resp.replayDetected);
   select.value = current;
-  detected.hidden = !(resp && resp.replayDetected);
+  detected.hidden = !replayState.replayDetected;
+  renderReplayIndicators();
 
   select.addEventListener("change", async () => {
     const desired = allowed.has(select.value) ? select.value : "off";
@@ -148,16 +156,56 @@ const renderReplaySection = (resp) => {
       const saved = await chrome.runtime.sendMessage({ type: "static_set_replay", mode: desired });
       current = saved && allowed.has(saved.mode) ? saved.mode : desired;
       select.value = current;
+      replayState.replayMode = current;
+      renderReplayIndicators();
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] replay mode update failed", e);
       select.value = previous;
+      replayState.replayMode = previous;
+      renderReplayIndicators();
     }
   });
 };
 
+const addReplayPill = (container, text, kind) => {
+  const pill = document.createElement("span");
+  pill.className = "replay-pill " + kind;
+  pill.textContent = text;
+  container.appendChild(pill);
+};
+
+const replayModeLabel = (mode) => {
+  if (mode === "mask") return "Mask";
+  if (mode === "noise") return "Noise";
+  if (mode === "chaos") return "Chaos";
+  return "Off";
+};
+
+const renderReplayIndicators = () => {
+  const list = document.getElementById("replay-status-list");
+  list.innerHTML = "";
+
+  if (replayState.sessionReplayBlocking) {
+    addReplayPill(list, "Replay vendor blocking on", "blocking");
+  }
+
+  if (replayState.replayMode !== "off") {
+    const label = replayModeLabel(replayState.replayMode);
+    addReplayPill(
+      list,
+      replayState.replayDetected ? label + " active on this site" : label + " poisoning armed",
+      replayState.replayDetected ? "active" : "armed"
+    );
+  }
+
+  list.hidden = !list.childElementCount;
+};
+
 const renderRulesets = (enabledArr, counts) => {
   const enabled = new Set(enabledArr);
+  replayState.sessionReplayBlocking = enabled.has("session_replay");
+  renderReplayIndicators();
   const container = document.getElementById("rulesets");
   RULESET_META.forEach((meta, i) => {
     const row = document.createElement("div");
@@ -185,9 +233,17 @@ const renderRulesets = (enabledArr, counts) => {
         : { disableRulesetIds: [meta.id] };
       try {
         await chrome.declarativeNetRequest.updateEnabledRulesets(payload);
+        if (meta.id === "session_replay") {
+          replayState.sessionReplayBlocking = input.checked;
+          renderReplayIndicators();
+        }
       } catch (e) {
         console.error("[Static] ruleset toggle failed", meta.id, e);
         input.checked = !input.checked;
+        if (meta.id === "session_replay") {
+          replayState.sessionReplayBlocking = input.checked;
+          renderReplayIndicators();
+        }
       }
     });
 
