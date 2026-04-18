@@ -264,7 +264,7 @@ test("blocked XHR failures settle like native network failures", async ({ extens
   });
 });
 
-test("Noise mode decoys eligible fetch and XHR probes but keeps element probes blocked", async ({
+test("Noise mode decoys eligible fetch, XHR, and passive element probes", async ({
   extension,
   server,
 }) => {
@@ -335,8 +335,8 @@ test("Noise mode decoys eligible fetch and XHR probes but keeps element probes b
   expect(decoys.xhr.status).toBe(200);
   expect(decoys.xhr.contentType).toContain("application/json");
   expect(JSON.parse(decoys.xhr.body)).toMatchObject({ name: "Browser Extension" });
-  expect(decoys.blockedImageSrc).toBeNull();
-  expect(decoys.resolvedImageSrc).toBe("");
+  expect(decoys.blockedImageSrc).toBe(probedUrl(PROBED_ID, "/icon.png"));
+  expect(decoys.resolvedImageSrc).toBe(probedUrl(PROBED_ID, "/icon.png"));
 });
 
 test("Noise mode does not decoy IDs below the minimum observed count", async ({

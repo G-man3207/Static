@@ -10,6 +10,7 @@ const expectedMainWorldScripts = [
   "block.js",
   "block_vectors.js",
   "block_replay.js",
+  "block_element_decoys.js",
   "block_globals.js",
 ];
 

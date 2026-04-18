@@ -94,7 +94,9 @@ Blocking a probe proves one thing: "some defense is present." **Noise mode** goe
 - **Cold start is honest.** First visit to a site produces no poisoning because there's nothing logged yet. From the second pageview onward, the site gets noise.
 - **Decoy responses by path.** Fetches to `.../manifest.json` return a generic valid manifest; `*.png` etc. return a 1×1 transparent PNG; `*.js`/`.html`/`.css` return empty with correct content types. Covers what site-side detectors typically check for.
 
-**Scope in v2.0:** Noise mode decoys `fetch` and `XMLHttpRequest`. Element-based probes (`<script src>`, `<img src>`, etc.) stay blocked regardless — consistent behavior beats a partial decoy that could be detected by correlating vectors.
+**Scope in v2.1:** Noise mode decoys `fetch`, `XMLHttpRequest`, and passive element probes for eligible persona IDs. Images, scripts, and stylesheets receive small inert data-URL resources while page-visible `src` / `href` / `data` getters still report the original extension URL. Frames and active surfaces with larger behavioral footprints (`iframe`, `Worker`, `SharedWorker`, `EventSource`, and `serviceWorker.register`) stay fail-closed.
+
+The cross-vector behavior contract is documented in `docs/noise-behavior.md`.
 
 **Privacy:** Probe logs are kept locally in `chrome.storage.local`. Capped at 100 origins × 2,000 IDs each, with weekly playbook summaries capped to the latest 10 weeks. Nothing leaves your machine unless you explicitly export.
 
@@ -148,10 +150,11 @@ Each category of network rules lives in its own file under `rules/`. Toggle them
 
 ## Test
 
-Static has two Playwright-backed test layers:
+Static has three Playwright-backed test layers:
 
 - **Static validation** checks manifest references, DNR rule shape, ruleset metadata, and popup ruleset IDs.
 - **Extension integration** launches Chromium with the unpacked MV3 extension and verifies content-script, service-worker, DOM scrubber, Noise mode, log clearing, and stealth-wrapper behavior.
+- **Adversarial consistency** probes one learned Noise persona across fetch, XHR, passive elements, attributes, active fail-closed vectors, and API descriptors to catch detector-visible contradictions.
 
 Install dependencies once:
 

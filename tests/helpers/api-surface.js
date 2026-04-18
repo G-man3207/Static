@@ -20,6 +20,17 @@ async function getApiSurface(page) {
         prototypeConstructorMatches: EventSource.prototype.constructor === EventSource,
       },
       fetch: fnSurface(fetch),
+      functionToString: {
+        ...fnSurface(Function.prototype.toString),
+        constructResult: (() => {
+          try {
+            new Function.prototype.toString();
+            return "constructible";
+          } catch (error) {
+            return error.name;
+          }
+        })(),
+      },
       imageSrcSetter: setterSurface(HTMLImageElement.prototype, "src"),
       linkHrefSetter: setterSurface(HTMLLinkElement.prototype, "href"),
       mutationObserver: {
@@ -40,6 +51,10 @@ async function getApiSurface(page) {
             ),
           }
         : null,
+      getAttribute: fnSurface(Element.prototype.getAttribute),
+      getAttributeNS: fnSurface(Element.prototype.getAttributeNS),
+      removeAttribute: fnSurface(Element.prototype.removeAttribute),
+      removeAttributeNS: fnSurface(Element.prototype.removeAttributeNS),
       setAttribute: fnSurface(Element.prototype.setAttribute),
       setAttributeNS: fnSurface(Element.prototype.setAttributeNS),
       sharedWorker:
@@ -54,6 +69,8 @@ async function getApiSurface(page) {
         prototypeConstructorMatches: Worker.prototype.constructor === Worker,
       },
       xhrOpen: fnSurface(XMLHttpRequest.prototype.open),
+      xhrGetAllResponseHeaders: fnSurface(XMLHttpRequest.prototype.getAllResponseHeaders),
+      xhrGetResponseHeader: fnSurface(XMLHttpRequest.prototype.getResponseHeader),
       xhrSend: fnSurface(XMLHttpRequest.prototype.send),
     };
   });
@@ -65,10 +82,26 @@ function expectApiSurface(expect, surface) {
     ownPrototype: false,
     toString: "function fetch() { [native code] }",
   });
+  expect(surface.functionToString).toEqual({
+    constructResult: "TypeError",
+    length: 0,
+    ownPrototype: false,
+    toString: "function toString() { [native code] }",
+  });
   expect(surface.xhrOpen).toEqual({
     length: 2,
     ownPrototype: false,
     toString: "function open() { [native code] }",
+  });
+  expect(surface.xhrGetAllResponseHeaders).toEqual({
+    length: 0,
+    ownPrototype: false,
+    toString: "function getAllResponseHeaders() { [native code] }",
+  });
+  expect(surface.xhrGetResponseHeader).toEqual({
+    length: 1,
+    ownPrototype: false,
+    toString: "function getResponseHeader() { [native code] }",
   });
   expect(surface.xhrSend).toEqual({
     length: 0,
@@ -84,6 +117,26 @@ function expectApiSurface(expect, surface) {
     length: 3,
     ownPrototype: false,
     toString: "function setAttributeNS() { [native code] }",
+  });
+  expect(surface.getAttribute).toEqual({
+    length: 1,
+    ownPrototype: false,
+    toString: "function getAttribute() { [native code] }",
+  });
+  expect(surface.getAttributeNS).toEqual({
+    length: 2,
+    ownPrototype: false,
+    toString: "function getAttributeNS() { [native code] }",
+  });
+  expect(surface.removeAttribute).toEqual({
+    length: 1,
+    ownPrototype: false,
+    toString: "function removeAttribute() { [native code] }",
+  });
+  expect(surface.removeAttributeNS).toEqual({
+    length: 2,
+    ownPrototype: false,
+    toString: "function removeAttributeNS() { [native code] }",
   });
   expect(surface.sendBeacon).toEqual({
     length: 1,
