@@ -22,7 +22,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||browser-intake-us3.datadoghq.com^",
+      "urlFilter": "||browser-intake-us3-datadoghq.com^",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
   },
@@ -31,7 +31,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||browser-intake-us5.datadoghq.com^",
+      "urlFilter": "||browser-intake-us5-datadoghq.com^",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
   },
@@ -40,7 +40,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||browser-intake-ap1.datadoghq.com^",
+      "urlFilter": "||browser-intake-ap1-datadoghq.com^",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
   },
@@ -50,6 +50,24 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||datadoghq-browser-agent.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 7,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||browser-intake-ap2-datadoghq.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 8,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||browser-intake-ddog-gov.com^",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
   }

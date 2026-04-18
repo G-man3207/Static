@@ -6,6 +6,11 @@ const vm = require("vm");
 const repoRoot = path.resolve(__dirname, "..");
 const readJson = (filePath) => JSON.parse(fs.readFileSync(path.join(repoRoot, filePath), "utf8"));
 const readText = (filePath) => fs.readFileSync(path.join(repoRoot, filePath), "utf8");
+const urlFiltersFor = (filePath) => {
+  return readJson(filePath)
+    .map((rule) => rule.condition && rule.condition.urlFilter)
+    .filter(Boolean);
+};
 
 const loadServiceWorkerUtils = () => {
   const context = vm.createContext({});
@@ -25,6 +30,7 @@ const expectedMainWorldScripts = [
   "block_adaptive.js",
   "block.js",
   "block_vectors.js",
+  "block_style_vectors.js",
   "block_replay.js",
   "block_element_decoys.js",
   "block_globals.js",
@@ -231,5 +237,33 @@ test("DNR rulesets are well-formed and synchronized with metadata and popup IDs"
         expect(validResourceTypes.has(resourceType), `${ruleset.path}: ${resourceType}`).toBe(true);
       }
     }
+  }
+});
+
+test("vendor DNR lists cover current official client-side collection hosts", () => {
+  const fingerprintFilters = new Set(urlFiltersFor("rules/fingerprint_vendors.json"));
+  const datadogFilters = new Set(urlFiltersFor("rules/datadog_rum.json"));
+
+  for (const filter of [
+    "||fpjscdn.net^",
+    "||fptls.com^",
+    "||pxchk.net^",
+    "||px-client.net^",
+    "||siftscience.com^",
+  ]) {
+    expect(fingerprintFilters.has(filter), `fingerprint_vendors missing ${filter}`).toBe(true);
+  }
+
+  for (const filter of [
+    "||browser-intake-datadoghq.com^",
+    "||browser-intake-us3-datadoghq.com^",
+    "||browser-intake-us5-datadoghq.com^",
+    "||browser-intake-datadoghq.eu^",
+    "||browser-intake-ap1-datadoghq.com^",
+    "||browser-intake-ap2-datadoghq.com^",
+    "||browser-intake-ddog-gov.com^",
+    "||datadoghq-browser-agent.com^",
+  ]) {
+    expect(datadogFilters.has(filter), `datadog_rum missing ${filter}`).toBe(true);
   }
 });

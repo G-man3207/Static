@@ -6,7 +6,11 @@
     "__static_noise_bridge_init__",
     "__static_replay_bridge_init__",
   ];
-  const PROBE_EVENTS = ["__static_noise_bridge_init__", "__static_probe_bridge_init__"];
+  const PROBE_EVENTS = [
+    "__static_noise_bridge_init__",
+    "__static_probe_bridge_init__",
+    "__static_style_probe_bridge_init__",
+  ];
   const configPorts = new Set();
   let pendingDelta = 0;
   let frameTotal = 0;
