@@ -102,6 +102,10 @@
     } catch {}
   };
 
+  const flushOnHidden = () => {
+    if (document.visibilityState === "hidden") flush();
+  };
+
   const handleProbeBlocked = (data) => {
     pendingDelta++;
     bumpMap(pendingVectorCounts, normalizeVector(data.where));
@@ -191,6 +195,10 @@
     createPort(eventName);
   }
   refreshPersona();
+
+  addEventListener("beforeunload", flush, { capture: true });
+  addEventListener("pagehide", flush, { capture: true });
+  document.addEventListener("visibilitychange", flushOnHidden, { capture: true });
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg && msg.type === "static_persona_update") refreshPersona();
