@@ -1,10 +1,36 @@
 /* eslint-disable max-lines -- integration coverage is easier to maintain in one fixture-backed file */
+const http = require("http");
 const { expect, test } = require("./helpers/extension-fixture");
 const { expectApiSurface, getApiSurface } = require("./helpers/api-surface");
 
 const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const OTHER_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const probedUrl = (id = PROBED_ID, path = "/manifest.json") => `chrome-extension://${id}${path}`;
+
+async function startHeaderFixtureServer({ body = "ok", headers = {}, status = 200 } = {}) {
+  const server = http.createServer((req, res) => {
+    res.writeHead(status, {
+      "content-type": "text/plain; charset=utf-8",
+      ...headers,
+    });
+    res.end(body);
+  });
+  await new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address();
+  return {
+    origin: `http://127.0.0.1:${port}`,
+    url(path = "/") {
+      return `${this.origin}${path}`;
+    },
+    async close() {
+      await new Promise((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+  };
+}
 
 test("keeps wrapped API surfaces close to native browser methods", async ({
   extension,
@@ -81,6 +107,107 @@ test("does not leak probe activity through page-owned console hooks", async ({
   }, probedUrl());
 
   expect(observed).toEqual([]);
+});
+
+test("filters unsupported iframe allow tokens without browser console warnings", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(100);
+
+  const messages = [];
+  const onConsole = (msg) => messages.push({ type: msg.type(), text: msg.text() });
+  page.on("console", onConsole);
+
+  try {
+    const result = await page.evaluate(() => {
+      const supported = new Set(
+        typeof document.featurePolicy?.allowedFeatures === "function"
+          ? document.featurePolicy.allowedFeatures()
+          : []
+      );
+      const tokens = [
+        "fullscreen",
+        "web-share",
+        "speaker",
+        "downloads",
+        "totally-made-up-feature",
+      ];
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("allow", tokens.join("; "));
+      return {
+        allow: iframe.getAttribute("allow"),
+        expected: tokens.filter((token) => supported.has(token)).join("; "),
+      };
+    });
+    await page.waitForTimeout(100);
+
+    expect(result.allow).toBe(result.expected);
+    expect(messages.filter((message) => /Unrecognized feature:/.test(message.text))).toEqual([]);
+  } finally {
+    page.off("console", onConsole);
+  }
+});
+
+test("suppresses unsafe-header console errors while preserving exposed XHR headers", async ({
+  extension,
+  server,
+}) => {
+  const apiServer = await startHeaderFixtureServer({
+    headers: {
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": "X-Visible-Digest",
+      "x-digest-sha256": "abc",
+      "x-digest-sha256-hmac": "def",
+      "x-visible-digest": "visible",
+    },
+  });
+  const page = await extension.context.newPage();
+
+  try {
+    await page.goto(server.url("/blank.html"));
+    await page.waitForTimeout(100);
+
+    const messages = [];
+    const onConsole = (msg) => messages.push({ type: msg.type(), text: msg.text() });
+    page.on("console", onConsole);
+
+    try {
+      const result = await page.evaluate(async (url) => {
+        return await new Promise((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.addEventListener("loadend", () => {
+            resolve({
+              allHeaders: xhr.getAllResponseHeaders(),
+              digest: xhr.getResponseHeader("X-Digest-Sha256"),
+              digestHmac: xhr.getResponseHeader("X-Digest-Sha256-Hmac"),
+              visibleDigest: xhr.getResponseHeader("X-Visible-Digest"),
+            });
+          });
+          xhr.open("GET", url);
+          xhr.send();
+        });
+      }, apiServer.url("/digest.txt"));
+      await page.waitForTimeout(100);
+
+      expect(result).toMatchObject({
+        digest: null,
+        digestHmac: null,
+        visibleDigest: "visible",
+      });
+      expect(result.allHeaders).toContain("x-visible-digest: visible");
+      expect(messages.filter((message) => /Refused to get unsafe header/.test(message.text))).toEqual(
+        []
+      );
+    } finally {
+      page.off("console", onConsole);
+    }
+  } finally {
+    await page.close();
+    await apiServer.close();
+  }
 });
 
 test("blocks broad extension URL vectors and accumulates per-origin ID counts", async ({
