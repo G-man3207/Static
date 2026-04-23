@@ -52,7 +52,7 @@
   const MAX_QUEUED_SIGNALS = 50;
   const VENDOR_SIGNAL_SCORE = 9;
   const vendorState = {
-    datadome: { ddjskey: false, ddoptions: false, scriptUrl: "", source: "" },
+    datadome: { ddjskey: false, ddoptions: false, endpoint: "", scriptUrl: "", source: "" },
     fingerprint: {
       apiKey: false,
       endpoint: "",
@@ -539,14 +539,16 @@
 
   const maybeEmitDatadomeSignal = () => {
     const state = vendorState.datadome;
-    if (!state.ddjskey || !state.scriptUrl) return;
+    const endpoint = state.endpoint || state.scriptUrl;
+    if (!state.ddjskey || !state.scriptUrl || !endpoint) return;
     emitVendorSignal("DataDome", "anti-bot", {
-      source: state.source || stableUrlLabelFor(state.scriptUrl),
-      endpoint: state.scriptUrl,
+      source: state.source || stableUrlLabelFor(state.scriptUrl || endpoint),
+      endpoint,
       reasons: [
         "global:ddjskey",
         state.ddoptions ? "global:ddoptions" : "",
-        "script:tags.js",
+        state.endpoint ? "config:endpoint" : "",
+        state.scriptUrl ? "script:tags.js" : "",
       ],
     });
   };
@@ -713,6 +715,7 @@
     patchWindowValue("ddoptions", (value, source) => {
       const state = vendorState.datadome;
       state.ddoptions = value != null;
+      state.endpoint = firstStringEntry(value && value.endpoint);
       rememberVendorSource(state, source);
       maybeEmitDatadomeSignal();
       return value;
@@ -748,11 +751,12 @@
     const source = stableUrlLabelFor(parsed.href);
     const pathname = parsed.pathname.toLowerCase();
     const host = parsed.hostname.toLowerCase();
-
-    if (
+    const isDatadomeTagPath =
       pathname === "/tags.js" ||
-      (pathname.endsWith("/tags.js") && host.endsWith("datadome.co"))
-    ) {
+      /^\/v\d+\.\d+\.\d+\/tags\.js$/i.test(pathname) ||
+      (pathname.endsWith("/tags.js") && host.endsWith("datadome.co"));
+
+    if (isDatadomeTagPath) {
       const state = vendorState.datadome;
       state.scriptUrl = parsed.href;
       rememberVendorSource(state, source);
