@@ -273,8 +273,13 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     "||fpjscdn.net^",
     "||fpnpmcdn.net^",
     "||fptls.com^",
+    "||perimeterx.net^",
+    "||px-cdn.net^",
+    "||px-cloud.net^",
     "||pxchk.net^",
     "||px-client.net^",
+    "||cdn.sift.com^",
+    "||api.sift.com^",
     "||siftscience.com^",
   ]) {
     expect(fingerprintFilters.has(filter), `fingerprint_vendors missing ${filter}`).toBe(true);
@@ -294,6 +299,10 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
   }
 
   for (const filter of [
+    "||fullstory.com^",
+    "||fs.net^",
+    "||logrocket.com^",
+    "||logrocket.io^",
     "||lr-ingest.io^",
     "||lr-in-prod.com^",
     "||lr-ingest.com^",
@@ -304,6 +313,7 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     "||lrkt-in.com^",
     "||lgrckt-in.com^",
     "||logr-in.com^",
+    "||clarity.ms^",
     "||c.bing.com^",
     "||heap-api.com^",
   ]) {
