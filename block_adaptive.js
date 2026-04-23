@@ -46,6 +46,8 @@
     sift: { account: false, scriptUrl: "", source: "", trackPageview: false },
   };
   let bridgePort = null;
+  let activeAdaptiveSource = "";
+  const asyncSourceWrappers = new WeakMap();
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
@@ -245,12 +247,60 @@
   };
 
   const currentAdaptiveSource = () => {
+    if (activeAdaptiveSource) return activeAdaptiveSource;
     try {
       if (document.currentScript && document.currentScript.src) {
         return stableUrlLabelFor(document.currentScript.src);
       }
     } catch {}
     return stackAdaptiveSource() || "inline-or-runtime";
+  };
+
+  const isFallbackAdaptiveSource = (source) => {
+    const safeSource = String(source || "");
+    return !safeSource || safeSource === "inline-or-runtime" || safeSource.startsWith("runtime:");
+  };
+
+  const runtimeAdaptiveSourceFor = (source, label) => {
+    const safeSource = String(source || "").slice(0, 160);
+    if (!isFallbackAdaptiveSource(safeSource)) return safeSource;
+    if (safeSource.startsWith("runtime:")) return safeSource;
+    const safeLabel = String(label || "async")
+      .toLowerCase()
+      .replace(/[^a-z0-9._:-]+/g, "-")
+      .slice(0, 48);
+    return `runtime:${safeLabel || "async"}`;
+  };
+
+  const runWithAdaptiveSource = (source, callback, thisArg, args) => {
+    const previousSource = activeAdaptiveSource;
+    if (source) activeAdaptiveSource = source;
+    try {
+      return callback.apply(thisArg, args);
+    } finally {
+      activeAdaptiveSource = previousSource;
+    }
+  };
+
+  const wrapAsyncCallback = (callback, source, label) => {
+    if (typeof callback !== "function") return callback;
+    const safeSource = runtimeAdaptiveSourceFor(source, label);
+    let bySource = asyncSourceWrappers.get(callback);
+    if (!bySource) {
+      bySource = new Map();
+      asyncSourceWrappers.set(callback, bySource);
+    }
+    if (bySource.has(safeSource)) return bySource.get(safeSource);
+    const callbackName = callback.name || "callback";
+    const wrapped = function (...args) {
+      return runWithAdaptiveSource(safeSource, callback, this, args);
+    };
+    const stealthed = stealth(wrapped, callbackName, {
+      length: callback.length,
+      source: nativeSourceFor(callback, callbackName),
+    });
+    bySource.set(safeSource, stealthed);
+    return stealthed;
   };
 
   const adaptiveCategoryFor = (kinds) => {
@@ -361,7 +411,9 @@
   const rememberVendorSource = (state, source) => {
     const safeSource = String(source || "").slice(0, 160);
     if (!safeSource) return;
-    if (!state.source || state.source === "inline-or-runtime") state.source = safeSource;
+    if (isFallbackAdaptiveSource(state.source) || !isFallbackAdaptiveSource(safeSource)) {
+      state.source = safeSource;
+    }
   };
 
   const emitVendorSignal = (vendor, category, detail = {}) => {
@@ -778,7 +830,9 @@
     if (typeof MutationObserver !== "function") return;
     const OrigMutationObserver = MutationObserver;
     const WrappedMutationObserver = function MutationObserver(callback) {
-      const observer = new OrigMutationObserver(callback);
+      const observer = new OrigMutationObserver(
+        wrapAsyncCallback(callback, currentAdaptiveSource(), "mutation-observer")
+      );
       const origObserve = observer.observe;
       observer.observe = stealth(
         function observe(target, options) {
@@ -801,6 +855,72 @@
     WrappedMutationObserver.prototype = OrigMutationObserver.prototype;
     alignPrototypeConstructor(WrappedMutationObserver, OrigMutationObserver);
     window.MutationObserver = stealth(WrappedMutationObserver, "MutationObserver", { length: 1 });
+  };
+
+  const patchAsyncSourceContext = () => {
+    patchObjectMethod(window, "setTimeout", (origSetTimeout) =>
+      function setTimeout(_handler) {
+        const args = Array.from(arguments);
+        args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "setTimeout");
+        return origSetTimeout.apply(this, args);
+      }
+    );
+    patchObjectMethod(window, "setInterval", (origSetInterval) =>
+      function setInterval(_handler) {
+        const args = Array.from(arguments);
+        args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "setInterval");
+        return origSetInterval.apply(this, args);
+      }
+    );
+    patchObjectMethod(window, "requestAnimationFrame", (origRequestAnimationFrame) =>
+      function requestAnimationFrame(callback) {
+        return origRequestAnimationFrame.call(
+          this,
+          wrapAsyncCallback(callback, currentAdaptiveSource(), "requestAnimationFrame")
+        );
+      }
+    );
+    patchObjectMethod(window, "requestIdleCallback", (origRequestIdleCallback) =>
+      function requestIdleCallback(_callback) {
+        const args = Array.from(arguments);
+        args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "requestIdleCallback");
+        return origRequestIdleCallback.apply(this, args);
+      }
+    );
+    patchObjectMethod(window, "queueMicrotask", (origQueueMicrotask) =>
+      function queueMicrotask(callback) {
+        return origQueueMicrotask.call(
+          this,
+          wrapAsyncCallback(callback, currentAdaptiveSource(), "queueMicrotask")
+        );
+      }
+    );
+    patchObjectMethod(Promise.prototype, "then", (origThen) =>
+      function then(onFulfilled, onRejected) {
+        const source = currentAdaptiveSource();
+        return origThen.call(
+          this,
+          wrapAsyncCallback(onFulfilled, source, "promise.then"),
+          wrapAsyncCallback(onRejected, source, "promise.then")
+        );
+      }
+    );
+    patchObjectMethod(Promise.prototype, "catch", (origCatch) =>
+      function catch_(onRejected) {
+        return origCatch.call(
+          this,
+          wrapAsyncCallback(onRejected, currentAdaptiveSource(), "promise.catch")
+        );
+      }
+    );
+    patchObjectMethod(Promise.prototype, "finally", (origFinally) =>
+      function finally_(onFinally) {
+        return origFinally.call(
+          this,
+          wrapAsyncCallback(onFinally, currentAdaptiveSource(), "promise.finally")
+        );
+      }
+    );
   };
 
   const patchNetworkApis = () => {
@@ -892,6 +1012,7 @@
     patchCryptoApis();
     patchAudioApis();
     patchMutationObserver();
+    patchAsyncSourceContext();
     patchNetworkApis();
     patchInputHooks();
     for (const prop of [

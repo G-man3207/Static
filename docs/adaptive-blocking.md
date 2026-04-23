@@ -80,6 +80,10 @@ Stage 1: Observe-only adaptive log.
 - When documented globals are absent, attribute behavior-only findings to the executing external
   script source when it can be derived locally, and redact high-entropy path segments or query
   tokens before persisting the source label.
+- Carry that source attribution across common async boundaries such as timers, promise callbacks,
+  microtasks, and mutation-observer callbacks. If no URL-like source survives, persist a local
+  runtime label such as `runtime:settimeout` instead of collapsing everything into
+  `inline-or-runtime`.
 - Do not block.
 - Do not add dynamic or session DNR rules.
 - Do not include adaptive data in anonymized research exports.

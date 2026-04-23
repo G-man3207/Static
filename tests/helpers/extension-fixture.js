@@ -299,6 +299,55 @@ const fixtureFiles = {
     <meta charset="utf-8">
     <script src="/assets/collector-1234567890abcdef1234567890abcdef.js?build=secret-token"></script>
   `,
+  "/adaptive-dynamic-import.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script type="module">
+      const moduleSource = \`
+        Promise.resolve().then(() => {
+          setTimeout(async () => {
+            const canvas = document.createElement("canvas");
+            canvas.width = 16;
+            canvas.height = 16;
+            const ctx = canvas.getContext("2d");
+            ctx.fillStyle = "#fedcba";
+            ctx.fillRect(0, 0, 16, 16);
+            canvas.toDataURL();
+            void navigator.hardwareConcurrency;
+            void navigator.languages;
+            await fetch("/dynamic-collect", { method: "POST", body: "x".repeat(2048) }).catch(
+              () => {}
+            );
+            window.__adaptiveDynamicDone = true;
+          }, 0);
+        });
+      \`;
+      const moduleUrl = URL.createObjectURL(new Blob([moduleSource], { type: "text/javascript" }));
+      import(moduleUrl);
+    </script>
+  `,
+  "/adaptive-runtime-fallback.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      setTimeout(() => {
+        Promise.resolve().then(async () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = 12;
+          canvas.height = 12;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#89abcd";
+          ctx.fillRect(0, 0, 12, 12);
+          canvas.toDataURL();
+          void navigator.hardwareConcurrency;
+          await fetch("/runtime-collect", { method: "POST", body: "x".repeat(2048) }).catch(
+            () => {}
+          );
+          window.__adaptiveRuntimeFallbackDone = true;
+        });
+      }, 0);
+    </script>
+  `,
   "/tags.js": `
     window.__tagScriptLoaded = true;
   `,
