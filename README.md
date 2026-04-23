@@ -89,6 +89,11 @@ For behavior-only collectors that never expose a stable global, Static now also 
 adaptive finding to the external script source when possible, while still redacting high-entropy
 path segments and query tokens before storage.
 
+That source attribution now propagates across common async boundaries too. If a collector resumes in
+timers, promise callbacks, microtasks, or mutation-observer callbacks, Static keeps the redacted
+source label when possible and otherwise falls back to a local `runtime:*` label instead of the
+less useful generic `inline-or-runtime`.
+
 This is intentionally **observe-only** today:
 
 - No backend, no telemetry, no automatic sharing.
