@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- MAIN-world fetch/XHR shims are safer kept contiguous */
 // Static - MAIN-world fetch/XHR extension probe blocker and Noise decoy engine.
 (() => {
   const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
@@ -397,6 +398,16 @@
     statusText: "",
   });
 
+  const parseHeaderNames = (rawHeaders) => {
+    const names = new Set();
+    for (const line of String(rawHeaders || "").split(/\r?\n/)) {
+      const index = line.indexOf(":");
+      if (index <= 0) continue;
+      names.add(line.slice(0, index).trim().toLowerCase());
+    }
+    return names;
+  };
+
   const fakeXhrSuccess = (xhr, blocked, decoyBody = buildDecoyBody(blocked.url)) => {
     const { async = true, method = "GET", url } = blocked;
     if (!decoyBody) {
@@ -465,10 +476,23 @@
 
   const patchXhr = () => {
     const blockedXHRs = new WeakMap();
+    const visibleHeaderCache = new WeakMap();
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;
     const origGetResponseHeader = XMLHttpRequest.prototype.getResponseHeader;
     const origGetAllResponseHeaders = XMLHttpRequest.prototype.getAllResponseHeaders;
+    const visibleHeaderNamesFor = (xhr) => {
+      try {
+        const rawHeaders = origGetAllResponseHeaders.call(xhr);
+        const cached = visibleHeaderCache.get(xhr);
+        if (cached && cached.rawHeaders === rawHeaders) return cached.names;
+        const names = parseHeaderNames(rawHeaders);
+        visibleHeaderCache.set(xhr, { rawHeaders, names });
+        return names;
+      } catch {
+        return null;
+      }
+    };
     const wrappedOpen = {
       open(method, url, ...rest) {
         const bad = isBad(url);
@@ -479,6 +503,7 @@
             url: getUrl(url),
           });
         } else fakeXhrResponses.delete(this);
+        visibleHeaderCache.delete(this);
         return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
       },
     }.open;
@@ -503,6 +528,10 @@
         if (fake) {
           return String(name).toLowerCase() === "content-type" ? fake.contentType : null;
         }
+        const normalizedName = String(name == null ? "" : name).trim().toLowerCase();
+        if (!normalizedName) return null;
+        const visibleHeaderNames = visibleHeaderNamesFor(this);
+        if (visibleHeaderNames && !visibleHeaderNames.has(normalizedName)) return null;
         return origGetResponseHeader.apply(this, arguments);
       },
     }.getResponseHeader;
@@ -510,7 +539,9 @@
       getAllResponseHeaders() {
         const fake = fakeXhrResponses.get(this);
         if (fake) return fake.allHeaders;
-        return origGetAllResponseHeaders.apply(this, arguments);
+        const rawHeaders = origGetAllResponseHeaders.apply(this, arguments);
+        visibleHeaderCache.set(this, { rawHeaders, names: parseHeaderNames(rawHeaders) });
+        return rawHeaders;
       },
     }.getAllResponseHeaders;
     XMLHttpRequest.prototype.open = stealth(wrappedOpen, "open");

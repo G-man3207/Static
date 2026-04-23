@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- MAIN-world vector shims are safer kept contiguous */
 // Static - MAIN-world blocking for extension probe vectors beyond fetch/XHR.
 (() => {
   const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
@@ -215,6 +216,58 @@
     }
   };
 
+  const readPolicyFeatures = (policy) => {
+    if (!policy) return [];
+    try {
+      if (typeof policy.features === "function") return policy.features();
+    } catch {}
+    try {
+      if (typeof policy.allowedFeatures === "function") return policy.allowedFeatures();
+    } catch {}
+    return [];
+  };
+
+  const getSupportedIframeAllowFeatures = (() => {
+    let cached = null;
+    return () => {
+      if (cached) return cached;
+      const supported = [];
+      try {
+        supported.push(...readPolicyFeatures(document.featurePolicy || document.permissionsPolicy));
+      } catch {}
+      if (!supported.length) {
+        try {
+          supported.push(...readPolicyFeatures(document.createElement("iframe").featurePolicy));
+        } catch {}
+      }
+      cached = new Set(supported.map((feature) => String(feature).toLowerCase()));
+      return cached;
+    };
+  })();
+
+  const normalizeIframeAllowValue = (element, value) => {
+    if (typeof HTMLIFrameElement === "undefined" || !(element instanceof HTMLIFrameElement)) {
+      return value;
+    }
+    const raw = value == null ? "" : String(value);
+    const supported = getSupportedIframeAllowFeatures();
+    if (!raw || !supported.size) return raw;
+
+    const kept = [];
+    let changed = false;
+    for (const part of raw.split(";")) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const match = trimmed.match(/^[^\s]+/);
+      if (!match || supported.has(match[0].toLowerCase())) {
+        kept.push(trimmed);
+        continue;
+      }
+      changed = true;
+    }
+    return changed ? kept.join("; ") : raw;
+  };
+
   const attrGuard = (origFn, label, name, length) => {
     const blockedAttrUrl = (attrName, value) => {
       if (attrName === "ping") return firstBadUrlIn(value);
@@ -234,14 +287,19 @@
       [name](...args) {
         const argName = args.length >= 3 ? args[1] : args[0];
         const argValue = args.length >= 3 ? args[2] : args[1];
+        const nextArgs = args.slice();
         if (typeof argName === "string") {
-          const url = blockedAttrUrl(argName.toLowerCase(), argValue);
+          const normalizedName = argName.toLowerCase();
+          const url = blockedAttrUrl(normalizedName, argValue);
           if (url) {
             bump(label, url);
             return;
           }
+          if (normalizedName === "allow") {
+            nextArgs[args.length >= 3 ? 2 : 1] = normalizeIframeAllowValue(this, argValue);
+          }
         }
-        return origFn.apply(this, args);
+        return origFn.apply(this, nextArgs);
       },
     }[name];
     return stealth(wrapped, name, { length });
