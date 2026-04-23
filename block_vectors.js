@@ -271,15 +271,21 @@
   };
 
   const attrGuard = (origFn, label, name, length) => {
+    const attrLocalName = (attrName) => {
+      const normalized = String(attrName || "").toLowerCase();
+      const colon = normalized.lastIndexOf(":");
+      return colon === -1 ? normalized : normalized.slice(colon + 1);
+    };
     const blockedAttrUrl = (attrName, value) => {
-      if (attrName === "ping") return firstBadUrlIn(value);
+      const localName = attrLocalName(attrName);
+      if (localName === "ping") return firstBadUrlIn(value);
       if (
-        attrName === "src" ||
-        attrName === "href" ||
-        attrName === "data" ||
-        attrName === "poster" ||
-        attrName === "action" ||
-        attrName === "formaction"
+        localName === "src" ||
+        localName === "href" ||
+        localName === "data" ||
+        localName === "poster" ||
+        localName === "action" ||
+        localName === "formaction"
       ) {
         return badUrlFor(value);
       }
