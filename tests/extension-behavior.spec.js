@@ -810,6 +810,43 @@ test("Adaptive runtime detection recognizes versioned first-party DataDome route
     });
 });
 
+test("Adaptive runtime detection recognizes HUMAN default first-party sensor routes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-signatures-human-first-party.html"));
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveVendorHumanFirstPartyDone === true))
+    .toBe(true);
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: {
+        "anti-bot": 1,
+      },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/:num/init.js`]: 1,
+      }),
+      reasons: expect.objectContaining({
+        "global:_pxAppId": 1,
+        "script:init.js": 1,
+        "vendor:HUMAN": 1,
+      }),
+      scoreMax: 9,
+      sources: expect.objectContaining({
+        [`${server.origin}/:num/init.js`]: 1,
+      }),
+    });
+});
+
 test("Adaptive runtime detection ignores partial vendor lookalikes", async ({
   extension,
   server,
