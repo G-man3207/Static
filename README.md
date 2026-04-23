@@ -128,6 +128,8 @@ The feature is scoped to replay listeners rather than the whole page. It does no
 
 Sentry Replay is handled here too. Static looks for replay-specific Sentry signatures such as `replayIntegration`, `replayCanvasIntegration`, replay sample-rate options, `@sentry/replay`, `rrweb`, and Sentry CDN bundle paths containing `replay`. It intentionally does not block all `*.ingest.sentry.io` traffic because regular Sentry error monitoring and Session Replay share envelope transport URLs.
 
+Datadog Session Replay is handled more narrowly than the optional Datadog RUM ruleset. Static watches for replay-specific `DD_RUM` init/start signals such as `sessionReplaySampleRate`, legacy `premiumSampleRate` / `replaySampleRate`, and `startSessionReplayRecording()`, so self-hosted or first-party Datadog replay can still be detected without treating every `DD_RUM` install as a replay recorder.
+
 ## Install
 
 1. Clone this repository.

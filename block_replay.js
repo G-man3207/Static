@@ -1,8 +1,9 @@
+/* eslint-disable max-lines -- MAIN-world replay shims are safer kept contiguous */
 // Static - MAIN-world opt-in session-replay poisoning.
 (() => {
   const BRIDGE_EVENT = "__static_replay_bridge_init__";
   const REPLAY_RE =
-    /(fullstory|fs\.js|logrocket|mouseflow|smartlook|clarity|heap|pendo|luckyorange|inspectlet|browsee|contentsquare|quantummetric|session[-_]?replay|@sentry\/replay|sentry.*(?:replay|rrweb)|browser\.sentry-cdn\.com\/.*replay|replayIntegration|replayCanvasIntegration|replaysSessionSampleRate|replaysOnErrorSampleRate|beforeAddRecordingEvent|ReplayCanvas|rrweb)/i;
+    /(fullstory|fs\.js|logrocket|mouseflow|smartlook|clarity|heap|pendo|luckyorange|inspectlet|browsee|contentsquare|quantummetric|session[-_]?replay|@sentry\/replay|sentry.*(?:replay|rrweb)|browser\.sentry-cdn\.com\/.*replay|replayIntegration|replayCanvasIntegration|replaysSessionSampleRate|replaysOnErrorSampleRate|beforeAddRecordingEvent|ReplayCanvas|rrweb|sessionReplaySampleRate|replaySampleRate|premiumSampleRate|startSessionReplayRecording(?:Manually)?|stopSessionReplayRecording|@datadog\/browser-rum)/i;
   const REPLAY_GLOBALS =
     `FS _fs_org _fs_host LogRocket Mouseflow mouseflow smartlook clarity heap pendo __lo_site_id __insp Inspectlet Browsee QuantumMetricAPI`.split(
       " "
@@ -18,6 +19,8 @@
   const targetProxyCache = new WeakMap();
   const replayListenerWrappers = new WeakMap();
   const activeReplayListeners = [];
+  const replayRegistrationStack = [];
+  const datadogGlobals = new WeakSet();
   const MAX_QUEUED_SIGNALS = 50;
   let bridgePort = null;
   let replayMode = "off";
@@ -60,6 +63,125 @@
     } catch {
       return `function ${fallbackName}() { [native code] }`;
     }
+  };
+
+  const isObjectLike = (value) => value && (typeof value === "object" || typeof value === "function");
+
+  const currentReplayRegistration = () =>
+    replayRegistrationStack.length > 0
+      ? replayRegistrationStack[replayRegistrationStack.length - 1]
+      : null;
+
+  const runReplayRegistration = (signal, fn, context = {}) => {
+    if (typeof fn !== "function") return undefined;
+    const ctx = { added: 0, signal };
+    let completed = false;
+    replayRegistrationStack.push(ctx);
+    try {
+      const result = fn.apply(context.thisArg, context.args);
+      completed = true;
+      return result;
+    } finally {
+      replayRegistrationStack.pop();
+      if (completed && (context.markAlways || ctx.added > 0)) {
+        markReplayDetected(signal);
+      }
+    }
+  };
+
+  const positiveNumber = (value) => {
+    const num = typeof value === "string" ? Number(value) : value;
+    return Number.isFinite(num) && num > 0;
+  };
+
+  const datadogReplaySignalForConfig = (config) => {
+    if (!isObjectLike(config)) return null;
+    if (positiveNumber(config.sessionReplaySampleRate)) {
+      return "global:DD_RUM.sessionReplaySampleRate";
+    }
+    if (positiveNumber(config.premiumSampleRate)) {
+      return "global:DD_RUM.premiumSampleRate";
+    }
+    if (positiveNumber(config.replaySampleRate)) {
+      return "global:DD_RUM.replaySampleRate";
+    }
+    return null;
+  };
+
+  const patchDatadogMethod = (target, key, wrap) => {
+    const orig = target && target[key];
+    if (typeof orig !== "function") return;
+    const wrapped = wrap(orig);
+    if (typeof wrapped !== "function") return;
+    try {
+      Object.defineProperty(target, key, {
+        configurable: true,
+        enumerable: Object.prototype.propertyIsEnumerable.call(target, key),
+        writable: true,
+        value: stealth(wrapped, key, {
+          length: orig.length,
+          source: nativeSourceFor(orig, key),
+        }),
+      });
+    } catch {
+      try {
+        target[key] = stealth(wrapped, key, {
+          length: orig.length,
+          source: nativeSourceFor(orig, key),
+        });
+      } catch {}
+    }
+  };
+
+  const instrumentDatadogGlobal = (value) => {
+    if (!isObjectLike(value) || datadogGlobals.has(value)) return value;
+    datadogGlobals.add(value);
+    patchDatadogMethod(value, "init", (origInit) =>
+      function init(config) {
+        const signal = datadogReplaySignalForConfig(config);
+        if (!signal) return origInit.apply(this, arguments);
+        return runReplayRegistration(signal, origInit, { args: arguments, thisArg: this });
+      }
+    );
+    patchDatadogMethod(value, "startSessionReplayRecording", (origStart) =>
+      function startSessionReplayRecording() {
+        return runReplayRegistration("global:DD_RUM.startSessionReplayRecording", origStart, {
+          args: arguments,
+          markAlways: true,
+          thisArg: this,
+        });
+      }
+    );
+    return value;
+  };
+
+  const patchDatadogGlobal = () => {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(window, "DD_RUM");
+      if (desc) {
+        if ("value" in desc) instrumentDatadogGlobal(desc.value);
+        return;
+      }
+      let currentValue = undefined;
+      Object.defineProperty(window, "DD_RUM", {
+        configurable: true,
+        enumerable: true,
+        get: stealth(
+          function get() {
+            return currentValue;
+          },
+          "get DD_RUM",
+          { length: 0 }
+        ),
+        set: stealth(
+          function set(value) {
+            currentValue = instrumentDatadogGlobal(value);
+          },
+          "set DD_RUM",
+          { length: 1 }
+        ),
+      });
+    } catch {}
   };
 
   const applyConfigUpdate = (data) => {
@@ -288,6 +410,8 @@
 
   const shouldWrapReplayListener = (type, listener) => {
     if (!REPLAY_EVENT_TYPES.has(String(type))) return false;
+    const registration = currentReplayRegistration();
+    if (registration) return true;
     if (currentScriptLooksReplay()) {
       markReplayDetected(
         `listener-script:${stableUrlLabelFor(document.currentScript.src).slice(0, 72)}`
@@ -361,7 +485,11 @@
     const exists = activeReplayListeners.some(
       (entry) => entry.target === target && entry.type === eventType && entry.listener === listener
     );
-    if (!exists) activeReplayListeners.push({ target, type: eventType, listener });
+    if (!exists) {
+      activeReplayListeners.push({ target, type: eventType, listener });
+      const registration = currentReplayRegistration();
+      if (registration) registration.added++;
+    }
   };
 
   const forgetActiveReplayListener = (target, type, listener) => {
@@ -478,6 +606,9 @@
 
   const scanReplaySignals = () => {
     replayScanTicks++;
+    try {
+      instrumentDatadogGlobal(window.DD_RUM);
+    } catch {}
     for (const key of REPLAY_GLOBALS) {
       try {
         if (window[key] != null) markReplayDetected(`global:${key}`);
@@ -533,6 +664,7 @@
     return stealth(wrapped, name, { length });
   };
 
+  patchDatadogGlobal();
   patchReplayScriptProperties();
   patchReplayListeners();
   setTimeout(scanReplaySignals, 0);

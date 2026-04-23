@@ -10,7 +10,7 @@
     "test": "npm run test:static && npm run test:e2e",
     "test:ci": "npm run test:static && npm run test:e2e:xvfb",
     "test:static": "playwright test tests/static-validation.spec.js",
-    "test:e2e": "playwright test tests/globals-stealth.spec.js tests/bridge-flush.spec.js tests/extension-behavior.spec.js tests/edge-privacy.spec.js tests/noise-xhr-consistency.spec.js tests/noise-canary.spec.js tests/adversarial-consistency.spec.js",
+    "test:e2e": "playwright test tests/globals-stealth.spec.js tests/bridge-flush.spec.js tests/extension-behavior.spec.js tests/replay-datadog.spec.js tests/edge-privacy.spec.js tests/noise-xhr-consistency.spec.js tests/noise-canary.spec.js tests/adversarial-consistency.spec.js",
     "test:e2e:xvfb": "xvfb-run -a npm run test:e2e"
   },
   "repository": {
