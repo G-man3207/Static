@@ -320,6 +320,7 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     "||logr-in.com^",
     "||clarity.ms^",
     "||c.bing.com^",
+    "||auryc.com^",
     "||heap-api.com^",
     "||heapanalytics.com^",
   ]) {
