@@ -74,6 +74,9 @@ call" sampling is not acceptable because attackers can read the source and time 
 Stage 1: Observe-only adaptive log.
 
 - Record local categories, scores, reasons, script source, and endpoint path.
+- Record documented runtime vendor signatures for first-party or proxied SDKs when the page exposes
+  strong client-side init markers, for example `window.ddjskey`, `window._pxAppId`,
+  `window._sift.push(["_setAccount", ...])`, or `window.FingerprintJS.load(...)`.
 - Do not block.
 - Do not add dynamic or session DNR rules.
 - Do not include adaptive data in anonymized research exports.

@@ -243,6 +243,63 @@ const fixtureFiles = {
       })();
     </script>
   `,
+  "/adaptive-runtime-signatures.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        window.ddjskey = "client-side-key";
+        window.ddoptions = { sessionByHeader: true };
+        const ddScript = document.createElement("script");
+        ddScript.src = "/tags.js";
+        document.head.appendChild(ddScript);
+
+        window._pxAppId = "PXAPP123";
+        window._pxHostUrl = "/px/collector";
+        window._pxJsClientSrc = "/px/main.min.js";
+
+        window._sift = window._sift || [];
+        window._sift.push(["_setAccount", "beacon-key"]);
+        window._sift.push(["_trackPageview"]);
+
+        window.FingerprintJS = {
+          load(options) {
+            window.__fpLoadOptions = options;
+            return Promise.resolve({
+              get() {
+                return Promise.resolve({ visitorId: "visitor" });
+              },
+            });
+          },
+        };
+        const agent = await window.FingerprintJS.load({
+          apiKey: "public-key",
+          endpoint: ["/fp/result"],
+          scriptUrlPattern: ["/fp/loader.js"],
+        });
+        await agent.get();
+        window.__adaptiveVendorDone = true;
+      })();
+    </script>
+  `,
+  "/adaptive-runtime-benign.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      const script = document.createElement("script");
+      script.src = "/tags.js";
+      document.head.appendChild(script);
+      window._sift = [];
+      window._pxHostUrl = "/collector";
+      window.__adaptiveVendorBenignDone = true;
+    </script>
+  `,
+  "/tags.js": `
+    window.__tagScriptLoaded = true;
+  `,
+  "/px/main.min.js": `
+    window.__pxClientLoaded = true;
+  `,
   "/replay-private.html": `
     <!doctype html>
     <meta charset="utf-8">

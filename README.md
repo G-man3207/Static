@@ -80,6 +80,11 @@ anything new.
 
 Static also has a local-only adaptive behavior logger for future dynamic blocking work. It watches for correlated behavior windows such as canvas/WebGL/audio readback plus navigator reads and network transmission, crypto plus network transmission, or document-wide mutation observation plus aggressive input hooks.
 
+It also records strong runtime vendor signatures for documented client-side integrations when they are
+served through first-party or proxied routes, such as `window.ddjskey` + `/tags.js` (DataDome),
+`window._pxAppId` / `window._pxHostUrl` (HUMAN/PerimeterX), `window._sift.push(["_setAccount", ...])`
+(Sift), and `window.FingerprintJS.load(...)` (FingerprintJS).
+
 This is intentionally **observe-only** today:
 
 - No backend, no telemetry, no automatic sharing.
