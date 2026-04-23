@@ -8,6 +8,7 @@ test("runs at document_start without exposing Static config or protected globals
   await page.goto(server.url("/blank.html"));
 
   const result = await page.evaluate(() => {
+    const windowProto = Object.getPrototypeOf(window);
     const before = {
       reactDescriptor: !!Object.getOwnPropertyDescriptor(window, "__REACT_DEVTOOLS_GLOBAL_HOOK__"),
       reactInWindow: "__REACT_DEVTOOLS_GLOBAL_HOOK__" in window,
@@ -24,11 +25,32 @@ test("runs at document_start without exposing Static config or protected globals
       value: () => "present",
       configurable: true,
     });
+    window.__defineGetter__("__GRAMMARLY_DESKTOP_INTEGRATION__", () => ({ marker: true }));
+    windowProto.__defineSetter__("__onePasswordExtension", () => "present");
 
     return {
       before,
       reactHook: window.__REACT_DEVTOOLS_GLOBAL_HOOK__,
       reduxHook: window.__REDUX_DEVTOOLS_EXTENSION__,
+      legacy: {
+        grammarlyDescriptor: !!Object.getOwnPropertyDescriptor(
+          window,
+          "__GRAMMARLY_DESKTOP_INTEGRATION__"
+        ),
+        grammarlyInWindow: "__GRAMMARLY_DESKTOP_INTEGRATION__" in window,
+        grammarlyOwn: Object.prototype.hasOwnProperty.call(
+          window,
+          "__GRAMMARLY_DESKTOP_INTEGRATION__"
+        ),
+        grammarlyValue: window.__GRAMMARLY_DESKTOP_INTEGRATION__,
+        onePasswordDescriptor: !!Object.getOwnPropertyDescriptor(window, "__onePasswordExtension"),
+        onePasswordInWindow: "__onePasswordExtension" in window,
+        onePasswordOwn: Object.prototype.hasOwnProperty.call(window, "__onePasswordExtension"),
+        onePasswordProtoDescriptor: !!Object.getOwnPropertyDescriptor(
+          windowProto,
+          "__onePasswordExtension"
+        ),
+      },
       after: {
         reactDescriptor: !!Object.getOwnPropertyDescriptor(window, "__REACT_DEVTOOLS_GLOBAL_HOOK__"),
         reactInWindow: "__REACT_DEVTOOLS_GLOBAL_HOOK__" in window,
@@ -53,6 +75,16 @@ test("runs at document_start without exposing Static config or protected globals
     },
     reactHook: undefined,
     reduxHook: undefined,
+    legacy: {
+      grammarlyDescriptor: false,
+      grammarlyInWindow: false,
+      grammarlyOwn: false,
+      grammarlyValue: undefined,
+      onePasswordDescriptor: false,
+      onePasswordInWindow: false,
+      onePasswordOwn: false,
+      onePasswordProtoDescriptor: false,
+    },
     after: {
       reactDescriptor: false,
       reactInWindow: false,

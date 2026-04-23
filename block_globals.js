@@ -226,12 +226,37 @@
     });
   };
 
+  const patchLegacyDefineAccessor = (name) => {
+    const proto = Object.prototype;
+    const desc = proto && Object.getOwnPropertyDescriptor(proto, name);
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      [name](key) {
+        if (isProtectedTarget(this) && isProtectedKey(key)) {
+          scrubOwnProp(this, key);
+          return undefined;
+        }
+        return orig.apply(this, arguments);
+      },
+    }[name];
+    Object.defineProperty(proto, name, {
+      ...desc,
+      value: stealth(wrapped, name, {
+        length: orig.length,
+        source: nativeSourceFor(orig, name),
+      }),
+    });
+  };
+
   scrubGlobals();
   patchObjectDefineProperty();
   patchObjectDefineProperties();
   patchObjectAssign();
   patchReflectDefineProperty();
   patchReflectSet();
+  patchLegacyDefineAccessor("__defineGetter__");
+  patchLegacyDefineAccessor("__defineSetter__");
 
   let scrubTicks = 0;
   const scrubTimer = setInterval(() => {
