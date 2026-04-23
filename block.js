@@ -103,14 +103,16 @@
   };
   document.addEventListener(BRIDGE_EVENT, onBridgeInit);
 
+  const normalizeUrlString = (value) => String(value).trim();
+
   const getUrl = (input) => {
     if (input == null) return "";
-    if (typeof input === "string") return input;
+    if (typeof input === "string") return normalizeUrlString(input);
     if (typeof URL !== "undefined" && input instanceof URL) return input.href;
     if (typeof Request !== "undefined" && input instanceof Request) return input.url;
-    if (typeof input.url === "string") return input.url;
+    if (typeof input.url === "string") return normalizeUrlString(input.url);
     try {
-      return String(input);
+      return normalizeUrlString(input);
     } catch {
       return "";
     }

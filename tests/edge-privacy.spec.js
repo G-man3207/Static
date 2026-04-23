@@ -21,6 +21,20 @@ const seedNoisePersona = async (extension, origin, id = PROBED_ID) => {
   );
 };
 
+const vectorCountsFor = (extension, origin) =>
+  extension.serviceWorker.evaluate(
+    (pageOrigin) =>
+      chrome.storage.local.get("probe_log").then(({ probe_log }) => {
+        const weeks =
+          probe_log &&
+          probe_log[pageOrigin] &&
+          probe_log[pageOrigin].playbook &&
+          probe_log[pageOrigin].playbook.weeks;
+        return (weeks && Object.values(weeks)[0].vectorCounts) || {};
+      }),
+    origin
+  );
+
 test("Noise decoys are consistent for passive resource elements", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await seedNoisePersona(extension, server.origin);
@@ -119,25 +133,126 @@ test("Noise decoys are consistent for passive resource elements", async ({ exten
   });
 
   await expect
-    .poll(() =>
-      extension.serviceWorker.evaluate(
-        (origin) =>
-          chrome.storage.local.get("probe_log").then(({ probe_log }) => {
-            const weeks =
-              probe_log &&
-              probe_log[origin] &&
-              probe_log[origin].playbook &&
-              probe_log[origin].playbook.weeks;
-            return weeks && Object.values(weeks)[0].vectorCounts;
-          }),
-        server.origin
-      )
-    )
+    .poll(() => vectorCountsFor(extension, server.origin))
     .toMatchObject({
       "img.src": 1,
       "link.href": 1,
       "script.src": 1,
     });
+});
+
+test("whitespace-padded extension URL probes are normalized before blocking", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const urls = {
+    imageUrl: probedUrl(PROBED_ID, "/icon.png"),
+    manifestUrl: probedUrl(PROBED_ID, "/manifest.json"),
+    pageUrl: probedUrl(PROBED_ID, "/page.html"),
+    scriptUrl: probedUrl(PROBED_ID, "/worker.js"),
+    styleUrl: probedUrl(PROBED_ID, "/style.css"),
+  };
+  const result = await page.evaluate(async (probeUrls) => {
+    const padded = (url) => ` \n\t${url}\t `;
+    const fetchResult = await fetch(padded(probeUrls.manifestUrl)).then(
+      () => "resolved",
+      (error) => error.name
+    );
+    const xhrResult = await new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.addEventListener("loadend", () => {
+        resolve({
+          responseURL: xhr.responseURL,
+          status: xhr.status,
+        });
+      });
+      xhr.open("GET", padded(probeUrls.manifestUrl));
+      xhr.send();
+    });
+
+    const img = new Image();
+    img.src = padded(probeUrls.imageUrl);
+    const attrImg = document.createElement("img");
+    attrImg.setAttribute("src", padded(probeUrls.imageUrl));
+
+    const anchor = document.createElement("a");
+    anchor.href = padded(probeUrls.pageUrl);
+    const attrAnchor = document.createElement("a");
+    attrAnchor.setAttribute("href", padded(probeUrls.pageUrl));
+
+    const el = document.createElement("div");
+    el.style.setProperty("background-image", `url("${padded(probeUrls.styleUrl)}")`);
+
+    let workerResult = "constructed";
+    try {
+      const worker = new Worker(padded(probeUrls.scriptUrl));
+      worker.terminate();
+    } catch (error) {
+      workerResult = error.name;
+    }
+
+    return {
+      anchor: {
+        attr: anchor.getAttribute("href"),
+        href: anchor.href,
+      },
+      attrAnchor: {
+        attr: attrAnchor.getAttribute("href"),
+        href: attrAnchor.href,
+      },
+      attrImg: {
+        attr: attrImg.getAttribute("src"),
+        src: attrImg.src,
+      },
+      fetchResult,
+      img: {
+        attr: img.getAttribute("src"),
+        src: img.src,
+      },
+      styleBackground: el.style.backgroundImage,
+      workerResult,
+      xhrResult,
+    };
+  }, urls);
+
+  expect(result).toEqual({
+    anchor: {
+      attr: null,
+      href: "",
+    },
+    attrAnchor: {
+      attr: null,
+      href: "",
+    },
+    attrImg: {
+      attr: urls.imageUrl,
+      src: urls.imageUrl,
+    },
+    fetchResult: "TypeError",
+    img: {
+      attr: urls.imageUrl,
+      src: urls.imageUrl,
+    },
+    styleBackground: "",
+    workerResult: "SecurityError",
+    xhrResult: {
+      responseURL: "",
+      status: 0,
+    },
+  });
+
+  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
+    Worker: 1,
+    "anchor.href": 1,
+    fetch: 1,
+    "img.src": 1,
+    setAttribute: 2,
+    "style.setProperty": 1,
+    xhr: 1,
+  });
 });
 
 test("Noise keeps frame probes fail-closed and logs attribute vectors", async ({
