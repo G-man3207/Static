@@ -82,7 +82,8 @@ Static also has a local-only adaptive behavior logger for future dynamic blockin
 
 It also records strong runtime vendor signatures for documented client-side integrations when they are
 served through first-party or proxied routes, such as `window.ddjskey` + `/tags.js` or versioned
-`/vX.Y.Z/tags.js` routes (DataDome),
+`/vX.Y.Z/tags.js` routes with the documented `/js/` collector inference, plus explicit
+`window.ddoptions.endpoint` deployments even when the DataDome tag is served from a custom path,
 `window._pxAppId` / `window._pxHostUrl` (HUMAN/PerimeterX), `window._sift.push(["_setAccount", ...])`
 (Sift), and `window.FingerprintJS.load(...)` (FingerprintJS).
 

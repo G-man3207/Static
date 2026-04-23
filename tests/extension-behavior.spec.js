@@ -751,7 +751,7 @@ test("Adaptive runtime detection logs proxied vendor signatures without behavior
       endpoints: expect.objectContaining({
         [`${server.origin}/fp/result`]: 1,
         [`${server.origin}/px/collector`]: 1,
-        [`${server.origin}/tags.js`]: 1,
+        [`${server.origin}/js/`]: 1,
       }),
       reasons: expect.objectContaining({
         "vendor:DataDome": 1,
@@ -806,6 +806,45 @@ test("Adaptive runtime detection recognizes versioned first-party DataDome route
       scoreMax: 9,
       sources: expect.objectContaining({
         [`${server.origin}/v5.1.13/tags.js`]: 1,
+      }),
+    });
+});
+
+test("Adaptive runtime detection recognizes custom DataDome tag paths with explicit endpoints", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-signatures-custom-datadome.html"));
+  await expect.poll(() => page.evaluate(() => window.__adaptiveVendorCustomDatadomeDone === true)).toBe(
+    true
+  );
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: {
+        "anti-bot": 1,
+      },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/dd/custom-js/`]: 1,
+      }),
+      reasons: expect.objectContaining({
+        "config:endpoint": 1,
+        "global:ddjskey": 1,
+        "global:ddoptions": 1,
+        "script:custom-path": 1,
+        "vendor:DataDome": 1,
+      }),
+      scoreMax: 9,
+      sources: expect.objectContaining({
+        [`${server.origin}/assets/datadome-tag.js`]: 1,
       }),
     });
 });

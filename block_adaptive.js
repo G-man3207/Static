@@ -484,9 +484,12 @@
   const recordAdaptiveNetwork = (where, url, body) => {
     const endpoint = stableEndpointFor(url);
     if (!endpoint) return;
+    const source = currentAdaptiveSource();
+    maybeCaptureDatadomeSourceFromNetwork(url, source);
     recordAdaptiveSignal("network", {
       endpoint,
       detail: `${where}:${sizeBucketFor(body)}`,
+      source,
     });
   };
 
@@ -510,6 +513,29 @@
     } catch {
       return null;
     }
+  };
+
+  const isDatadomeTagPath = (pathname, host) =>
+    pathname === "/tags.js" ||
+    /^\/v\d+\.\d+\.\d+\/tags\.js$/i.test(pathname) ||
+    (pathname.endsWith("/tags.js") && host === "js.datadome.co");
+
+  const datadomeEndpointForScriptUrl = (url) => {
+    const parsed = parsedUrlFor(url);
+    if (!parsed) return "";
+    const pathname = parsed.pathname.toLowerCase();
+    const host = parsed.hostname.toLowerCase();
+    if (!isDatadomeTagPath(pathname, host)) return "";
+    if (host === "js.datadome.co") return ["https:", "", "api-js.datadome.co", "js", ""].join("/");
+    return `${parsed.origin}/js/`;
+  };
+
+  const datadomeScriptReasonFor = (url) => {
+    const parsed = parsedUrlFor(url);
+    if (!parsed) return "";
+    return isDatadomeTagPath(parsed.pathname.toLowerCase(), parsed.hostname.toLowerCase())
+      ? "script:tags.js"
+      : "script:custom-path";
   };
 
   const rememberVendorSource = (state, source) => {
@@ -539,7 +565,7 @@
 
   const maybeEmitDatadomeSignal = () => {
     const state = vendorState.datadome;
-    const endpoint = state.endpoint || state.scriptUrl;
+    const endpoint = state.endpoint || datadomeEndpointForScriptUrl(state.scriptUrl);
     if (!state.ddjskey || !state.scriptUrl || !endpoint) return;
     emitVendorSignal("DataDome", "anti-bot", {
       source: state.source || stableUrlLabelFor(state.scriptUrl || endpoint),
@@ -548,9 +574,22 @@
         "global:ddjskey",
         state.ddoptions ? "global:ddoptions" : "",
         state.endpoint ? "config:endpoint" : "",
-        state.scriptUrl ? "script:tags.js" : "",
+        datadomeScriptReasonFor(state.scriptUrl),
       ],
     });
+  };
+
+  const maybeCaptureDatadomeSourceFromNetwork = (url, source) => {
+    const state = vendorState.datadome;
+    if (!state.ddjskey || isFallbackAdaptiveSource(source)) return;
+    const configuredEndpoint = stableEndpointFor(
+      state.endpoint || datadomeEndpointForScriptUrl(state.scriptUrl)
+    );
+    const observedEndpoint = stableEndpointFor(url);
+    if (!configuredEndpoint || !observedEndpoint || configuredEndpoint !== observedEndpoint) return;
+    if (!state.scriptUrl) state.scriptUrl = source;
+    rememberVendorSource(state, source);
+    maybeEmitDatadomeSignal();
   };
 
   const maybeEmitFingerprintSignal = () => {
@@ -776,12 +815,7 @@
     const host = parsed.hostname.toLowerCase();
     const humanDefaultInitPath = humanDefaultFirstPartyInitPathFor(vendorState.human.appId);
     const humanCustomInitPath = humanCustomFirstPartyInitPathFor(vendorState.human.hostUrl);
-    const isDatadomeTagPath =
-      pathname === "/tags.js" ||
-      /^\/v\d+\.\d+\.\d+\/tags\.js$/i.test(pathname) ||
-      (pathname.endsWith("/tags.js") && host.endsWith("datadome.co"));
-
-    if (isDatadomeTagPath) {
+    if (isDatadomeTagPath(pathname, host)) {
       const state = vendorState.datadome;
       state.scriptUrl = parsed.href;
       rememberVendorSource(state, source);

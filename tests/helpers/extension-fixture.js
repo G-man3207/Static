@@ -301,6 +301,25 @@ const fixtureFiles = {
       })();
     </script>
   `,
+  "/adaptive-runtime-signatures-custom-datadome.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        window.ddjskey = "client-side-key";
+        window.ddoptions = { endpoint: "/dd/custom-js/", sessionByHeader: true };
+        const ddScript = document.createElement("script");
+        ddScript.src = "/assets/datadome-tag.js";
+        document.head.appendChild(ddScript);
+        await new Promise((resolve) => {
+          ddScript.addEventListener("load", resolve, { once: true });
+          ddScript.addEventListener("error", resolve, { once: true });
+          setTimeout(resolve, 250);
+        });
+        window.__adaptiveVendorCustomDatadomeDone = true;
+      })();
+    </script>
+  `,
   "/adaptive-runtime-signatures-human-first-party.html": `
     <!doctype html>
     <meta charset="utf-8">
@@ -491,6 +510,10 @@ const fixtureFiles = {
   `,
   "/v5.1.13/tags.js": `
     window.__versionedTagScriptLoaded = true;
+  `,
+  "/assets/datadome-tag.js": `
+    fetch("/dd/custom-js/", { method: "POST", body: "tag-payload" }).catch(() => {});
+    window.__customDatadomeTagLoaded = true;
   `,
   "/px/main.min.js": `
     window.__pxClientLoaded = true;

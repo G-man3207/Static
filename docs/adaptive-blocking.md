@@ -76,7 +76,9 @@ Stage 1: Observe-only adaptive log.
 - Record local categories, scores, reasons, script source, and endpoint path.
 - Record documented runtime vendor signatures for first-party or proxied SDKs when the page exposes
   strong client-side init markers, for example `window.ddjskey` plus `/tags.js` or versioned
-  `/vX.Y.Z/tags.js` routes, `window._pxAppId`,
+  `/vX.Y.Z/tags.js` routes with the documented `/js/` collector inference, or explicit
+  `window.ddoptions.endpoint` deployments even when the tag is served from a custom path,
+  `window._pxAppId`,
   `window._sift.push(["_setAccount", ...])`, or `window.FingerprintJS.load(...)`.
 - When documented globals are absent, attribute behavior-only findings to the executing external
   script source when it can be derived locally, and redact high-entropy path segments or query
