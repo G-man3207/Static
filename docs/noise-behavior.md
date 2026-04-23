@@ -11,8 +11,8 @@ persona with fake two-hit canaries.
 
 | Probe vector                                | Eligible Noise persona ID                                                                        | Non-persona or invalid ID       |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------- |
-| `fetch(.../manifest.json)`                  | Supported static `GET` / `HEAD` paths receive path-matched decoys                                | Native-like `TypeError` failure |
-| `XMLHttpRequest` to `manifest.json`         | Supported static `GET` / `HEAD` paths receive path-matched decoys                                | Native-like network error       |
+| `fetch(.../manifest.json)`                  | Allowlisted static `GET` / `HEAD` paths receive path-matched decoys                              | Native-like `TypeError` failure |
+| `XMLHttpRequest` to `manifest.json`         | Allowlisted static `GET` / `HEAD` paths receive path-matched decoys                              | Native-like network error       |
 | `Image.src` / `img.setAttribute("src")`     | Loads a 1x1 transparent PNG; page-visible getters return the original extension URL              | Blocked                         |
 | `Image.srcset` / `source.srcset`            | Loads a 1x1 transparent PNG candidate; page-visible getters return the original extension URL    | Blocked                         |
 | `input.src` for image inputs                | Loads a 1x1 transparent PNG; page-visible getters return the original extension URL              | Blocked                         |
@@ -43,9 +43,11 @@ Non-`GET` / non-`HEAD` fetch and XHR probes also stay blocked, even for persona 
 web-accessible resources are static reads; answering POST-like canaries would give probing scripts a
 cheap way to distinguish Noise from a browser-managed resource load.
 
-Unsupported path kinds stay blocked too. Returning generic `200 OK` bodies for arbitrary paths would
-let a probing script seed random path canaries and then distinguish Static from a normal extension
-resource lookup.
+Suspicious paths stay blocked too, even when the suffix looks decoyable. Returning generic `200 OK`
+bodies for arbitrary `*.png`, `*.js`, `*.css`, or `*.html` canaries would let a probing script seed
+random path names and then distinguish Static from a normal extension resource lookup. Noise only
+answers a conservative allowlist of plausible extension resource paths such as `manifest.json`,
+common icon names, and common page / script / stylesheet entrypoints.
 
 ## Test Requirements
 
