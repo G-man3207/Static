@@ -77,6 +77,9 @@ Stage 1: Observe-only adaptive log.
 - Record documented runtime vendor signatures for first-party or proxied SDKs when the page exposes
   strong client-side init markers, for example `window.ddjskey`, `window._pxAppId`,
   `window._sift.push(["_setAccount", ...])`, or `window.FingerprintJS.load(...)`.
+- When documented globals are absent, attribute behavior-only findings to the executing external
+  script source when it can be derived locally, and redact high-entropy path segments or query
+  tokens before persisting the source label.
 - Do not block.
 - Do not add dynamic or session DNR rules.
 - Do not include adaptive data in anonymized research exports.

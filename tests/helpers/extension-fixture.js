@@ -294,11 +294,36 @@ const fixtureFiles = {
       window.__adaptiveVendorBenignDone = true;
     </script>
   `,
+  "/adaptive-module-runtime.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script src="/assets/collector-1234567890abcdef1234567890abcdef.js?build=secret-token"></script>
+  `,
   "/tags.js": `
     window.__tagScriptLoaded = true;
   `,
   "/px/main.min.js": `
     window.__pxClientLoaded = true;
+  `,
+  "/assets/collector-1234567890abcdef1234567890abcdef.js": `
+    (async () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 24;
+      canvas.height = 24;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#abcdef";
+      ctx.fillRect(0, 0, 24, 24);
+      canvas.toDataURL();
+      const gl = canvas.getContext("webgl");
+      if (gl) {
+        gl.getParameter(gl.VENDOR);
+        gl.getParameter(gl.RENDERER);
+      }
+      void navigator.hardwareConcurrency;
+      void navigator.languages;
+      await fetch("/module-collect", { method: "POST", body: "x".repeat(2048) }).catch(() => {});
+      window.__adaptiveModuleDone = true;
+    })();
   `,
   "/replay-private.html": `
     <!doctype html>
