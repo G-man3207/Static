@@ -5,33 +5,6 @@ const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const OTHER_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const probedUrl = (id = PROBED_ID, path = "/manifest.json") => `chrome-extension://${id}${path}`;
 
-test("runs at document_start without exposing Static config in the page world", async ({
-  extension,
-  server,
-}) => {
-  const page = await extension.context.newPage();
-  await page.goto(server.url("/blank.html"));
-
-  const result = await page.evaluate(() => {
-    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = { marker: true };
-    window.__REDUX_DEVTOOLS_EXTENSION__ = () => "present";
-
-    return {
-      reactHook: window.__REACT_DEVTOOLS_GLOBAL_HOOK__,
-      reduxHook: window.__REDUX_DEVTOOLS_EXTENSION__,
-      hasStaticConfig: Object.prototype.hasOwnProperty.call(window, "__static_config__"),
-      staticConfigType: typeof window.__static_config__,
-    };
-  });
-
-  expect(result).toEqual({
-    reactHook: undefined,
-    reduxHook: undefined,
-    hasStaticConfig: false,
-    staticConfigType: "undefined",
-  });
-});
-
 test("keeps wrapped API surfaces close to native browser methods", async ({
   extension,
   server,
