@@ -94,6 +94,11 @@ timers, promise callbacks, microtasks, or mutation-observer callbacks, Static ke
 source label when possible and otherwise falls back to a local `runtime:*` label instead of the
 less useful generic `inline-or-runtime`.
 
+The same local attribution now survives event-driven handoffs for message-style flows too,
+including listener objects, `postMessage`, custom-event listeners, and `onmessage` handlers. High-
+frequency replay-sensitive DOM input/mouse event surfaces stay delegated to the replay shim so the
+two defenses do not fight each other.
+
 This is intentionally **observe-only** today:
 
 - No backend, no telemetry, no automatic sharing.

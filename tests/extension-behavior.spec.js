@@ -787,6 +787,115 @@ test("Adaptive behavior logging falls back to runtime labels when async collecto
   expect(adaptiveEntry.sources["inline-or-runtime"]).toBeUndefined();
 });
 
+test("Adaptive behavior logging attributes postMessage listener objects by registration source", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-message-listener.html"));
+  await expect.poll(() => page.evaluate(() => window.__adaptiveMessageDone === true)).toBe(true);
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: { fingerprinting: 1 },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/listener-collect`]: 1,
+      }),
+      sources: expect.objectContaining({
+        [`${server.origin}/assets/:token.js`]: expect.any(Number),
+      }),
+    });
+
+  const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
+    return chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]);
+  }, server.origin);
+
+  expect(adaptiveEntry.reasons).toEqual(
+    expect.objectContaining({
+      canvas: expect.any(Number),
+      navigator: expect.any(Number),
+      network: expect.any(Number),
+    })
+  );
+  const serialized = JSON.stringify(adaptiveEntry);
+  expect(serialized).not.toContain("event-listener-1234567890abcdef1234567890abcdef.js");
+  expect(serialized).not.toContain("secret-token");
+});
+
+test("Adaptive behavior logging attributes onmessage handlers through runtime source context", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-onmessage-runtime.html"));
+  await expect.poll(() => page.evaluate(() => window.__adaptiveOnmessageDone === true)).toBe(true);
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: { fingerprinting: 1 },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/onmessage-collect`]: 1,
+      }),
+      sources: expect.objectContaining({
+        "runtime:settimeout": expect.any(Number),
+      }),
+    });
+
+  const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
+    return chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]);
+  }, server.origin);
+  expect(adaptiveEntry.sources["inline-or-runtime"]).toBeUndefined();
+});
+
+test("listener wrapping preserves removeEventListener for callbacks and listener objects", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(async () => {
+    let functionCount = 0;
+    let objectCount = 0;
+    function onMessage() {
+      functionCount++;
+    }
+    const listenerObject = {
+      handleEvent() {
+        objectCount++;
+      },
+    };
+
+    window.addEventListener("message", onMessage);
+    window.addEventListener("message", listenerObject);
+    window.removeEventListener("message", onMessage);
+    window.removeEventListener("message", listenerObject);
+    window.postMessage({ kind: "noop" }, "*");
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+
+    return { functionCount, objectCount };
+  });
+
+  expect(result).toEqual({ functionCount: 0, objectCount: 0 });
+});
+
 test("blocked EventSource probes keep EventSource shape while failing closed", async ({
   extension,
   server,

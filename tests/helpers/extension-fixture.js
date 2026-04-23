@@ -348,11 +348,65 @@ const fixtureFiles = {
       }, 0);
     </script>
   `,
+  "/adaptive-message-listener.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script src="/assets/event-listener-1234567890abcdef1234567890abcdef.js?key=secret-token"></script>
+    <script>
+      setTimeout(() => {
+        window.postMessage({ kind: "run" }, "*");
+      }, 0);
+    </script>
+  `,
+  "/adaptive-onmessage-runtime.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      setTimeout(() => {
+        window.onmessage = async (event) => {
+          if (!event.data || event.data.kind !== "run" || window.__adaptiveOnmessageDone) return;
+          const canvas = document.createElement("canvas");
+          canvas.width = 10;
+          canvas.height = 10;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#456789";
+          ctx.fillRect(0, 0, 10, 10);
+          canvas.toDataURL();
+          void navigator.hardwareConcurrency;
+          await fetch("/onmessage-collect", { method: "POST", body: "x".repeat(2048) }).catch(
+            () => {}
+          );
+          window.__adaptiveOnmessageDone = true;
+        };
+        window.postMessage({ kind: "run" }, "*");
+      }, 0);
+    </script>
+  `,
   "/tags.js": `
     window.__tagScriptLoaded = true;
   `,
   "/px/main.min.js": `
     window.__pxClientLoaded = true;
+  `,
+  "/assets/event-listener-1234567890abcdef1234567890abcdef.js": `
+    window.addEventListener("message", {
+      async handleEvent(event) {
+        if (!event.data || event.data.kind !== "run" || window.__adaptiveMessageDone) return;
+        const canvas = document.createElement("canvas");
+        canvas.width = 14;
+        canvas.height = 14;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#abcdef";
+        ctx.fillRect(0, 0, 14, 14);
+        canvas.toDataURL();
+        void navigator.hardwareConcurrency;
+        void navigator.languages;
+        await fetch("/listener-collect", { method: "POST", body: "x".repeat(2048) }).catch(
+          () => {}
+        );
+        window.__adaptiveMessageDone = true;
+      },
+    });
   `,
   "/assets/collector-1234567890abcdef1234567890abcdef.js": `
     (async () => {
