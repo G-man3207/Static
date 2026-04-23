@@ -60,7 +60,7 @@
       scriptUrlPattern: "",
       source: "",
     },
-    human: { appId: false, hostUrl: "", jsClientSrc: "", source: "" },
+    human: { appId: "", hostUrl: "", jsClientReason: "", jsClientSrc: "", source: "" },
     sift: { account: false, scriptUrl: "", source: "", trackPageview: false },
   };
   let bridgePort = null;
@@ -577,7 +577,7 @@
       reasons: [
         "global:_pxAppId",
         state.hostUrl ? "global:_pxHostUrl" : "",
-        state.jsClientSrc ? "global:_pxJsClientSrc" : "",
+        state.jsClientReason || "",
       ],
     });
   };
@@ -722,7 +722,7 @@
     });
     patchWindowValue("_pxAppId", (value, source) => {
       const state = vendorState.human;
-      state.appId = value != null && value !== "";
+      state.appId = firstStringEntry(value) || (value != null && value !== "" ? String(value) : "");
       rememberVendorSource(state, source);
       maybeEmitHumanSignal();
       return value;
@@ -737,6 +737,7 @@
     patchWindowValue("_pxJsClientSrc", (value, source) => {
       const state = vendorState.human;
       state.jsClientSrc = firstStringEntry(value);
+      state.jsClientReason = state.jsClientSrc ? "global:_pxJsClientSrc" : "";
       rememberVendorSource(state, source);
       maybeEmitHumanSignal();
       return value;
@@ -745,12 +746,20 @@
     patchWindowValue("FingerprintJS", (value, source) => instrumentFingerprintGlobal(value, source));
   };
 
+  const humanDefaultFirstPartyInitPathFor = (appId) => {
+    const normalized = String(appId || "").trim();
+    const match = normalized.match(/^px([a-z0-9]+)$/i);
+    if (!match) return "";
+    return `/${match[1].toLowerCase()}/init.js`;
+  };
+
   const observeVendorScript = (url) => {
     const parsed = parsedUrlFor(url);
     if (!parsed) return;
     const source = stableUrlLabelFor(parsed.href);
     const pathname = parsed.pathname.toLowerCase();
     const host = parsed.hostname.toLowerCase();
+    const humanDefaultInitPath = humanDefaultFirstPartyInitPathFor(vendorState.human.appId);
     const isDatadomeTagPath =
       pathname === "/tags.js" ||
       /^\/v\d+\.\d+\.\d+\/tags\.js$/i.test(pathname) ||
@@ -776,6 +785,7 @@
     }
 
     if (
+      pathname === humanDefaultInitPath ||
       pathname.endsWith("/main.min.js") ||
       host.endsWith("perimeterx.net") ||
       host.endsWith("px-cdn.net") ||
@@ -783,6 +793,9 @@
     ) {
       const state = vendorState.human;
       if (!state.jsClientSrc) state.jsClientSrc = parsed.href;
+      if (!state.jsClientReason) {
+        state.jsClientReason = pathname === humanDefaultInitPath ? "script:init.js" : "script:main.min.js";
+      }
       rememberVendorSource(state, source);
       maybeEmitHumanSignal();
     }
@@ -805,7 +818,9 @@
     } catch {}
     try {
       if (window._pxAppId != null) {
-        vendorState.human.appId = true;
+        vendorState.human.appId =
+          firstStringEntry(window._pxAppId) ||
+          (window._pxAppId != null && window._pxAppId !== "" ? String(window._pxAppId) : "");
         maybeEmitHumanSignal();
       }
     } catch {}
@@ -818,6 +833,9 @@
     try {
       if (window._pxJsClientSrc != null) {
         vendorState.human.jsClientSrc = firstStringEntry(window._pxJsClientSrc);
+        vendorState.human.jsClientReason = vendorState.human.jsClientSrc
+          ? "global:_pxJsClientSrc"
+          : "";
         maybeEmitHumanSignal();
       }
     } catch {}

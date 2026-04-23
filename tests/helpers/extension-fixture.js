@@ -301,6 +301,24 @@ const fixtureFiles = {
       })();
     </script>
   `,
+  "/adaptive-runtime-signatures-human-first-party.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        window._pxAppId = "PX12345678";
+        const pxScript = document.createElement("script");
+        pxScript.src = "/12345678/init.js";
+        document.head.appendChild(pxScript);
+        await new Promise((resolve) => {
+          pxScript.addEventListener("load", resolve, { once: true });
+          pxScript.addEventListener("error", resolve, { once: true });
+          setTimeout(resolve, 250);
+        });
+        window.__adaptiveVendorHumanFirstPartyDone = true;
+      })();
+    </script>
+  `,
   "/adaptive-runtime-benign.html": `
     <!doctype html>
     <meta charset="utf-8">
