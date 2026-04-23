@@ -662,6 +662,48 @@ test("Adaptive runtime detection ignores partial vendor lookalikes", async ({
   expect(storage.adaptive_log).toBeUndefined();
 });
 
+test("Adaptive behavior logging attributes external collector bundles by script source", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-module-runtime.html"));
+  await expect.poll(() => page.evaluate(() => window.__adaptiveModuleDone === true)).toBe(true);
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: { fingerprinting: 1 },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/module-collect`]: 1,
+      }),
+      sources: expect.objectContaining({
+        [`${server.origin}/assets/:token.js`]: expect.any(Number),
+      }),
+    });
+
+  const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
+    return chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]);
+  }, server.origin);
+
+  expect(adaptiveEntry.reasons).toEqual(
+    expect.objectContaining({
+      canvas: expect.any(Number),
+      navigator: expect.any(Number),
+      network: expect.any(Number),
+    })
+  );
+  const serialized = JSON.stringify(adaptiveEntry);
+  expect(serialized).not.toContain("collector-1234567890abcdef1234567890abcdef.js");
+  expect(serialized).not.toContain("secret-token");
+});
+
 test("blocked EventSource probes keep EventSource shape while failing closed", async ({
   extension,
   server,

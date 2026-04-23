@@ -5,6 +5,7 @@
   const ADAPTIVE_WINDOW_MS = 4000;
   const ADAPTIVE_COOLDOWN_MS = 7000;
   const ADAPTIVE_TRIGGER_SCORE = 7;
+  const ADAPTIVE_SOURCE_URL_RE = /\b(?:https?):\/\/[^\s)]+/g;
   const ADAPTIVE_WEIGHTS = {
     canvas: 2,
     webgl: 2,
@@ -153,15 +154,6 @@
   };
   document.addEventListener(BRIDGE_EVENT, onBridgeInit);
 
-  const currentAdaptiveSource = () => {
-    try {
-      if (document.currentScript && document.currentScript.src) {
-        return stableUrlLabelFor(document.currentScript.src);
-      }
-    } catch {}
-    return "inline-or-runtime";
-  };
-
   const redactPathSegment = (segment) => {
     if (!segment) return segment;
     if (
@@ -230,6 +222,35 @@
     } catch {
       return 0;
     }
+  };
+
+  const stackAdaptiveSource = () => {
+    try {
+      const stack = String(new Error().stack || "");
+      for (const match of stack.matchAll(ADAPTIVE_SOURCE_URL_RE)) {
+        const candidate = match[0].replace(/:\d+(?::\d+)?$/, "");
+        let parsed = null;
+        try {
+          parsed = new URL(candidate, location.href);
+        } catch {
+          continue;
+        }
+        const protocol = parsed.protocol.replace(/:$/, "").toLowerCase();
+        if (protocol !== "http" && protocol !== "https") continue;
+        if (parsed.origin === location.origin && parsed.pathname === location.pathname) continue;
+        return stableUrlLabelFor(parsed.href);
+      }
+    } catch {}
+    return "";
+  };
+
+  const currentAdaptiveSource = () => {
+    try {
+      if (document.currentScript && document.currentScript.src) {
+        return stableUrlLabelFor(document.currentScript.src);
+      }
+    } catch {}
+    return stackAdaptiveSource() || "inline-or-runtime";
   };
 
   const adaptiveCategoryFor = (kinds) => {

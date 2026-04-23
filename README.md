@@ -85,6 +85,10 @@ served through first-party or proxied routes, such as `window.ddjskey` + `/tags.
 `window._pxAppId` / `window._pxHostUrl` (HUMAN/PerimeterX), `window._sift.push(["_setAccount", ...])`
 (Sift), and `window.FingerprintJS.load(...)` (FingerprintJS).
 
+For behavior-only collectors that never expose a stable global, Static now also attributes the local
+adaptive finding to the external script source when possible, while still redacting high-entropy
+path segments and query tokens before storage.
+
 This is intentionally **observe-only** today:
 
 - No backend, no telemetry, no automatic sharing.
