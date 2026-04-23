@@ -847,6 +847,61 @@ test("Adaptive runtime detection recognizes HUMAN default first-party sensor rou
     });
 });
 
+test("Adaptive runtime detection recognizes HUMAN custom first-party prefixes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-signatures-human-custom-prefix.html"));
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveVendorHumanCustomPrefixDone === true))
+    .toBe(true);
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: {
+        "anti-bot": 1,
+      },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/botdefense/xhr/`]: 1,
+      }),
+      reasons: expect.objectContaining({
+        "global:_pxAppId": 1,
+        "global:_pxHostUrl": 1,
+        "script:prefix-init.js": 1,
+        "vendor:HUMAN": 1,
+      }),
+      scoreMax: 9,
+      sources: expect.objectContaining({
+        [`${server.origin}/botdefense/init.js`]: 1,
+      }),
+    });
+});
+
+test("Adaptive runtime detection ignores HUMAN init.js lookalikes without matching xhr prefixes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-benign-human-prefix-lookalike.html"));
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveVendorHumanPrefixLookalikeDone === true))
+    .toBe(true);
+  await page.waitForTimeout(500);
+
+  const storage = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get("adaptive_log")
+  );
+  expect(storage.adaptive_log).toBeUndefined();
+});
+
 test("Adaptive runtime detection ignores partial vendor lookalikes", async ({
   extension,
   server,

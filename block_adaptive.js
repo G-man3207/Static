@@ -570,7 +570,7 @@
 
   const maybeEmitHumanSignal = () => {
     const state = vendorState.human;
-    if (!state.appId || !(state.hostUrl || state.jsClientSrc)) return;
+    if (!state.appId || !state.jsClientSrc) return;
     emitVendorSignal("HUMAN", "anti-bot", {
       source: state.source || stableUrlLabelFor(state.jsClientSrc || state.hostUrl),
       endpoint: state.hostUrl || state.jsClientSrc,
@@ -753,6 +753,18 @@
     return `/${match[1].toLowerCase()}/init.js`;
   };
 
+  const humanCustomFirstPartyPrefixFor = (hostUrl) => {
+    const parsed = parsedUrlFor(hostUrl);
+    if (!parsed || parsed.origin !== location.origin) return "";
+    const match = parsed.pathname.toLowerCase().match(/^(\/.+?)\/xhr(?:\/|$)/);
+    return match ? match[1] : "";
+  };
+
+  const humanCustomFirstPartyInitPathFor = (hostUrl) => {
+    const prefix = humanCustomFirstPartyPrefixFor(hostUrl);
+    return prefix ? `${prefix}/init.js` : "";
+  };
+
   const observeVendorScript = (url) => {
     const parsed = parsedUrlFor(url);
     if (!parsed) return;
@@ -760,6 +772,7 @@
     const pathname = parsed.pathname.toLowerCase();
     const host = parsed.hostname.toLowerCase();
     const humanDefaultInitPath = humanDefaultFirstPartyInitPathFor(vendorState.human.appId);
+    const humanCustomInitPath = humanCustomFirstPartyInitPathFor(vendorState.human.hostUrl);
     const isDatadomeTagPath =
       pathname === "/tags.js" ||
       /^\/v\d+\.\d+\.\d+\/tags\.js$/i.test(pathname) ||
@@ -786,6 +799,7 @@
 
     if (
       pathname === humanDefaultInitPath ||
+      pathname === humanCustomInitPath ||
       pathname.endsWith("/main.min.js") ||
       host.endsWith("perimeterx.net") ||
       host.endsWith("px-cdn.net") ||
@@ -794,7 +808,12 @@
       const state = vendorState.human;
       if (!state.jsClientSrc) state.jsClientSrc = parsed.href;
       if (!state.jsClientReason) {
-        state.jsClientReason = pathname === humanDefaultInitPath ? "script:init.js" : "script:main.min.js";
+        state.jsClientReason =
+          pathname === humanDefaultInitPath
+            ? "script:init.js"
+            : pathname === humanCustomInitPath
+              ? "script:prefix-init.js"
+              : "script:main.min.js";
       }
       rememberVendorSource(state, source);
       maybeEmitHumanSignal();
