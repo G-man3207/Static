@@ -175,6 +175,142 @@ test("Noise mode fails closed for unsupported path canaries", async ({ extension
   });
 });
 
+test("Noise mode fails closed for suspicious supported-suffix path canaries", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await seedNoisePersona(extension, server.origin);
+
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(
+    async ({ imageCanaryUrl, scriptCanaryUrl }) => {
+      const fetchImage = await fetch(imageCanaryUrl).then(
+        () => "resolved",
+        (error) => error.name
+      );
+      const xhrScript = await new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.addEventListener("loadend", () => {
+          resolve({
+            responseURL: xhr.responseURL,
+            status: xhr.status,
+          });
+        });
+        xhr.open("GET", scriptCanaryUrl);
+        xhr.send();
+      });
+
+      return { fetchImage, xhrScript };
+    },
+    {
+      imageCanaryUrl: probedUrl(PROBED_ID, "/canary-probe.png"),
+      scriptCanaryUrl: probedUrl(PROBED_ID, "/canary-probe.js"),
+    }
+  );
+
+  expect(result).toEqual({
+    fetchImage: "TypeError",
+    xhrScript: {
+      responseURL: "",
+      status: 0,
+    },
+  });
+});
+
+test("Noise passive element decoys reject suspicious supported-suffix path canaries", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await seedNoisePersona(extension, server.origin);
+
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(
+    async ({ imageCanaryUrl, scriptCanaryUrl, styleCanaryUrl }) => {
+      const waitForOutcome = async (el, start) => {
+        const eventPromise = new Promise((resolve) => {
+          el.addEventListener("load", () => resolve("load"), { once: true });
+          el.addEventListener("error", () => resolve("error"), { once: true });
+          setTimeout(() => resolve("timeout"), 1000);
+        });
+        start();
+        return await eventPromise;
+      };
+
+      const img = new Image();
+      const imgEvent = await waitForOutcome(img, () => {
+        img.src = imageCanaryUrl;
+        document.body.appendChild(img);
+      });
+
+      const script = document.createElement("script");
+      const scriptEvent = await waitForOutcome(script, () => {
+        script.src = scriptCanaryUrl;
+        document.head.appendChild(script);
+      });
+
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      const linkEvent = await waitForOutcome(link, () => {
+        link.href = styleCanaryUrl;
+        document.head.appendChild(link);
+      });
+
+      return {
+        img: {
+          currentSrc: img.currentSrc,
+          event: imgEvent,
+          naturalWidth: img.naturalWidth,
+          src: img.src,
+        },
+        link: {
+          event: linkEvent,
+          href: link.href,
+          sheetHref: link.sheet && link.sheet.href,
+        },
+        script: {
+          event: scriptEvent,
+          src: script.src,
+        },
+      };
+    },
+    {
+      imageCanaryUrl: probedUrl(PROBED_ID, "/canary-probe.png"),
+      scriptCanaryUrl: probedUrl(PROBED_ID, "/canary-probe.js"),
+      styleCanaryUrl: probedUrl(PROBED_ID, "/canary-probe.css"),
+    }
+  );
+
+  expect(result).toEqual({
+    img: {
+      currentSrc: probedUrl(PROBED_ID, "/canary-probe.png"),
+      event: "error",
+      naturalWidth: 0,
+      src: probedUrl(PROBED_ID, "/canary-probe.png"),
+    },
+    link: {
+      event: "error",
+      href: probedUrl(PROBED_ID, "/canary-probe.css"),
+      sheetHref: probedUrl(PROBED_ID, "/canary-probe.css"),
+    },
+    script: {
+      event: "error",
+      src: probedUrl(PROBED_ID, "/canary-probe.js"),
+    },
+  });
+
+  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
+    "img.src": 1,
+    "link.href": 1,
+    "script.src": 1,
+  });
+});
+
 test("Noise XHR decoys expose a native-like readyState progression", async ({
   extension,
   server,

@@ -160,6 +160,20 @@
     description: "",
     icons: { 16: "icon.png", 48: "icon.png", 128: "icon.png" },
   };
+  const IMAGE_DECOY_PATHS = [
+    /(?:^|\/)(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
+    /(?:^|\/)(?:icons?|images?|img)\/(?:[^/]+\/)*(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
+    /(?:^|\/)(?:16|19|24|32|38|48|64|96|128|256|512)\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
+  ];
+  const SCRIPT_DECOY_PATHS = [
+    /(?:^|\/)(?:content(?:[-_. ]script)?|inject(?:ed)?|background(?:[-_. ]page)?|bundle|main|page|popup|options|index)(?:[-_. ]?[a-z0-9]+)?\.(?:m?js)$/i,
+  ];
+  const HTML_DECOY_PATHS = [
+    /(?:^|\/)(?:page|popup|options|background|index)(?:[-_. ]?[a-z0-9]+)?\.(?:html|htm)$/i,
+  ];
+  const STYLE_DECOY_PATHS = [
+    /(?:^|\/)(?:style|styles|content|popup|options|main|index)(?:[-_. ]?[a-z0-9]+)?\.css$/i,
+  ];
   const fakeXhrResponses = new WeakMap();
   const fakeFetchResponses = new WeakMap();
 
@@ -261,36 +275,56 @@
     }
   };
 
+  const matchesPathPattern = (pathname, patterns) =>
+    patterns.some((pattern) => pattern.test(pathname));
+
+  const decoyKindForPath = (url) => {
+    const pathname = pathForDecoy(url);
+    if (!pathname) return null;
+    if (pathname.endsWith("/manifest.json")) return "manifest";
+    if (/\.(png|jpe?g|gif|webp|ico|bmp|svg)$/i.test(pathname)) {
+      return matchesPathPattern(pathname, IMAGE_DECOY_PATHS) ? "image" : null;
+    }
+    if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) {
+      return matchesPathPattern(pathname, SCRIPT_DECOY_PATHS) ? "script" : null;
+    }
+    if (pathname.endsWith(".html") || pathname.endsWith(".htm")) {
+      return matchesPathPattern(pathname, HTML_DECOY_PATHS) ? "html" : null;
+    }
+    if (pathname.endsWith(".css")) {
+      return matchesPathPattern(pathname, STYLE_DECOY_PATHS) ? "style" : null;
+    }
+    return null;
+  };
+
   const buildDecoyBody = (url) => {
     const pathname = pathForDecoy(url);
-    if (pathname.endsWith("/manifest.json")) {
+    const kind = decoyKindForPath(url);
+    if (kind === "manifest") {
       return {
         body: JSON.stringify(FAKE_MANIFEST),
         contentType: "application/json; charset=utf-8",
       };
     }
-    if (/\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(pathname)) {
+    if (kind === "image") {
+      if (pathname.endsWith(".svg")) {
+        return {
+          body: '<svg xmlns="http://www.w3.org/2000/svg"/>',
+          contentType: "image/svg+xml; charset=utf-8",
+        };
+      }
       return { body: PNG_1X1, contentType: "image/png" };
     }
-    if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) {
+    if (kind === "script") {
       return { body: "", contentType: "application/javascript; charset=utf-8" };
     }
-    if (pathname.endsWith(".html") || pathname.endsWith(".htm")) {
+    if (kind === "html") {
       return {
         body: "<!doctype html><html><body></body></html>",
         contentType: "text/html; charset=utf-8",
       };
     }
-    if (pathname.endsWith(".css")) return { body: "", contentType: "text/css; charset=utf-8" };
-    if (pathname.endsWith(".json")) {
-      return { body: "{}", contentType: "application/json; charset=utf-8" };
-    }
-    if (pathname.endsWith(".svg")) {
-      return {
-        body: '<svg xmlns="http://www.w3.org/2000/svg"/>',
-        contentType: "image/svg+xml; charset=utf-8",
-      };
-    }
+    if (kind === "style") return { body: "", contentType: "text/css; charset=utf-8" };
     return null;
   };
 

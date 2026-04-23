@@ -270,6 +270,9 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
   const replayFilters = new Set(urlFiltersFor("rules/session_replay.json"));
 
   for (const filter of [
+    "||datadome.co^",
+    "||fpcdn.io^",
+    "||fpjs.io^",
     "||fpjscdn.net^",
     "||fpnpmcdn.net^",
     "||fptls.com^",
@@ -299,6 +302,8 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
   }
 
   for (const filter of [
+    "||contentsquare.com^",
+    "||contentsquare.net^",
     "||fullstory.com^",
     "||fs.net^",
     "||logrocket.com^",
@@ -316,6 +321,7 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     "||clarity.ms^",
     "||c.bing.com^",
     "||heap-api.com^",
+    "||heapanalytics.com^",
   ]) {
     expect(replayFilters.has(filter), `session_replay missing ${filter}`).toBe(true);
   }

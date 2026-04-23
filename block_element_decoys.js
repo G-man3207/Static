@@ -6,6 +6,20 @@
   const BRIDGE_EVENT = "__static_element_decoy_bridge_init__";
   const PNG_1X1_B64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const IMAGE_DECOY_PATHS = [
+    /(?:^|\/)(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
+    /(?:^|\/)(?:icons?|images?|img)\/(?:[^/]+\/)*(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
+    /(?:^|\/)(?:16|19|24|32|38|48|64|96|128|256|512)\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
+  ];
+  const SCRIPT_DECOY_PATHS = [
+    /(?:^|\/)(?:content(?:[-_. ]script)?|inject(?:ed)?|background(?:[-_. ]page)?|bundle|main|page|popup|options|index)(?:[-_. ]?[a-z0-9]+)?\.(?:m?js)$/i,
+  ];
+  const HTML_DECOY_PATHS = [
+    /(?:^|\/)(?:page|popup|options|background|index)(?:[-_. ]?[a-z0-9]+)?\.(?:html|htm)$/i,
+  ];
+  const STYLE_DECOY_PATHS = [
+    /(?:^|\/)(?:style|styles|content|popup|options|main|index)(?:[-_. ]?[a-z0-9]+)?\.css$/i,
+  ];
   const queuedProbeEvents = [];
   const elementOriginals = new WeakMap();
   const MAX_QUEUED_PROBES = 1000;
@@ -170,17 +184,50 @@
     }
   };
 
-  const decoyUrlFor = (url, prop, el) => {
-    const path = pathFor(url);
-    const tag = String((el && el.tagName) || "").toLowerCase();
-    if (prop === "srcset") return `data:image/png;base64,${PNG_1X1_B64} 1x`;
-    if (prop === "src" && tag === "script") return "data:application/javascript;charset=utf-8,";
-    if (prop === "poster") return `data:image/png;base64,${PNG_1X1_B64}`;
-    if (prop === "href" && (path.endsWith(".css") || tag === "link")) return "data:text/css,";
-    if (/\.(png|jpe?g|gif|webp|ico|bmp|svg)$/i.test(path) || prop === "src") {
-      return `data:image/png;base64,${PNG_1X1_B64}`;
+  const matchesPathPattern = (pathname, patterns) =>
+    patterns.some((pattern) => pattern.test(pathname));
+
+  const imageDecoyPath = (pathname) => matchesPathPattern(pathname, IMAGE_DECOY_PATHS);
+  const scriptDecoyPath = (pathname) => matchesPathPattern(pathname, SCRIPT_DECOY_PATHS);
+  const htmlDecoyPath = (pathname) => matchesPathPattern(pathname, HTML_DECOY_PATHS);
+  const styleDecoyPath = (pathname) => matchesPathPattern(pathname, STYLE_DECOY_PATHS);
+
+  const passiveHrefDecoyKind = (tag, pathname) => {
+    if (tag === "link") return styleDecoyPath(pathname) ? "style" : null;
+    if (tag === "use" || tag === "image") return imageDecoyPath(pathname) ? "image" : null;
+    return null;
+  };
+
+  const passiveSrcDecoyKind = (tag, pathname) => {
+    if (tag === "script") return scriptDecoyPath(pathname) ? "script" : null;
+    if (tag === "img" || tag === "input" || tag === "source" || tag === "embed") {
+      return imageDecoyPath(pathname) ? "image" : null;
     }
-    if (prop === "data") return "data:text/html;charset=utf-8,<!doctype%20html>";
+    return null;
+  };
+
+  const passiveDecoyKindFor = (url, prop, el) => {
+    const pathname = pathFor(url);
+    const tag = String((el && el.tagName) || "").toLowerCase();
+    if (!pathname) return null;
+
+    if (prop === "srcset" || prop === "poster") return imageDecoyPath(pathname) ? "image" : null;
+
+    if (prop === "data" && tag === "object") return htmlDecoyPath(pathname) ? "html" : null;
+
+    if (prop === "href") return passiveHrefDecoyKind(tag, pathname);
+
+    if (prop === "src") return passiveSrcDecoyKind(tag, pathname);
+
+    return null;
+  };
+
+  const decoyUrlFor = (kind, prop) => {
+    if (kind === "image" && prop === "srcset") return `data:image/png;base64,${PNG_1X1_B64} 1x`;
+    if (kind === "image") return `data:image/png;base64,${PNG_1X1_B64}`;
+    if (kind === "script") return "data:application/javascript;charset=utf-8,";
+    if (kind === "style") return "data:text/css,";
+    if (kind === "html") return "data:text/html;charset=utf-8,<!doctype%20html>";
     return "data:text/plain,";
   };
 
@@ -214,11 +261,12 @@
   const elementProbe = (el, prop, value) => {
     const url = probeUrlFor(prop, value);
     if (!url || !canHandlePassiveElement(el, prop)) return null;
-    return { mode: shouldDecoy(url) ? "decoy" : "block", url };
+    const kind = passiveDecoyKindFor(url, prop, el);
+    return { kind, mode: shouldDecoy(url) && kind ? "decoy" : "block", url };
   };
 
-  const replacementUrlFor = (mode, url, prop, el) => {
-    if (mode === "decoy") return decoyUrlFor(url, prop, el);
+  const replacementUrlFor = (mode, kind, prop) => {
+    if (mode === "decoy") return decoyUrlFor(kind, prop);
     return blockedUrlFor(prop);
   };
 
@@ -234,7 +282,7 @@
           rememberOriginal(this, prop, original);
           if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
           postProbe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
-          desc.set.call(this, replacementUrlFor(probe.mode, probe.url, prop, this));
+          desc.set.call(this, replacementUrlFor(probe.mode, probe.kind, prop));
           return;
         }
         forgetOriginal(this, prop);
@@ -294,11 +342,7 @@
             probe.url,
             probe.mode === "decoy" ? `setAttribute-${prop}-decoy` : "setAttribute"
           );
-          return origSetAttribute.call(
-            this,
-            name,
-            replacementUrlFor(probe.mode, probe.url, prop, this)
-          );
+          return origSetAttribute.call(this, name, replacementUrlFor(probe.mode, probe.kind, prop));
         }
         if (prop) forgetOriginal(this, prop);
         return origSetAttribute.apply(this, arguments);
@@ -318,7 +362,7 @@
             this,
             ns,
             name,
-            replacementUrlFor(probe.mode, probe.url, prop, this)
+            replacementUrlFor(probe.mode, probe.kind, prop)
           );
         }
         if (prop) forgetOriginal(this, prop);
