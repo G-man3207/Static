@@ -1,3 +1,4 @@
+/* eslint-disable max-lines, max-statements -- MAIN-world element decoy shims are safer kept contiguous */
 // Static - MAIN-world passive element decoys for Noise-mode personas.
 (() => {
   const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
@@ -21,6 +22,7 @@
     /(?:^|\/)(?:style|styles|content|popup|options|main|index)(?:[-_. ]?[a-z0-9]+)?\.css$/i,
   ];
   const queuedProbeEvents = [];
+  const animatedHrefProxies = new WeakMap();
   const elementOriginals = new WeakMap();
   const MAX_QUEUED_PROBES = 1000;
   let bridgePort = null;
@@ -178,6 +180,35 @@
     return entry && entry[prop];
   };
 
+  const attrKeyFor = (name) => `attr:${String(name || "").toLowerCase()}`;
+
+  const attrNsKeyFor = (ns, name) =>
+    `attrns:${String(ns || "").toLowerCase()}:${attrLocalName(name)}`;
+
+  const attrLocalName = (name) => {
+    const normalized = String(name || "").toLowerCase();
+    const colon = normalized.lastIndexOf(":");
+    return colon === -1 ? normalized : normalized.slice(colon + 1);
+  };
+
+  const rememberAttributeOriginal = (el, name, url) => {
+    rememberOriginal(el, attrKeyFor(name), url);
+  };
+
+  const rememberNamespacedAttributeOriginal = (el, ns, name, url) => {
+    rememberAttributeOriginal(el, name, url);
+    rememberOriginal(el, attrNsKeyFor(ns, name), url);
+  };
+
+  const forgetAttributeOriginal = (el, name) => {
+    forgetOriginal(el, attrKeyFor(name));
+  };
+
+  const forgetNamespacedAttributeOriginal = (el, ns, name) => {
+    forgetAttributeOriginal(el, name);
+    forgetOriginal(el, attrNsKeyFor(ns, name));
+  };
+
   const pathFor = (url) => {
     try {
       return new URL(url).pathname.toLowerCase();
@@ -312,7 +343,7 @@
   };
 
   const attrPropFor = (name) => {
-    const lower = String(name || "").toLowerCase();
+    const lower = attrLocalName(name);
     if (
       lower === "src" ||
       lower === "srcset" ||
@@ -339,6 +370,7 @@
         if (probe) {
           const original = prop === "srcset" ? String(value) : probe.url;
           rememberOriginal(this, prop, original);
+          rememberAttributeOriginal(this, name, original);
           if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
           postProbe(
             probe.url,
@@ -346,7 +378,10 @@
           );
           return origSetAttribute.call(this, name, replacementUrlFor(probe.mode, probe.kind, prop));
         }
-        if (prop) forgetOriginal(this, prop);
+        if (prop) {
+          forgetOriginal(this, prop);
+          forgetAttributeOriginal(this, name);
+        }
         return origSetAttribute.apply(this, arguments);
       },
       setAttributeNS(ns, name, value) {
@@ -355,6 +390,7 @@
         if (probe) {
           const original = prop === "srcset" ? String(value) : probe.url;
           rememberOriginal(this, prop, original);
+          rememberNamespacedAttributeOriginal(this, ns, name, original);
           if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
           postProbe(
             probe.url,
@@ -367,27 +403,42 @@
             replacementUrlFor(probe.mode, probe.kind, prop)
           );
         }
-        if (prop) forgetOriginal(this, prop);
+        if (prop) {
+          forgetOriginal(this, prop);
+          forgetNamespacedAttributeOriginal(this, ns, name);
+        }
         return origSetAttributeNS.apply(this, arguments);
       },
       getAttribute(name) {
         const prop = attrPropFor(name);
-        return (prop && rememberedOriginal(this, prop)) || origGetAttribute.apply(this, arguments);
+        const attrOriginal = rememberedOriginal(this, attrKeyFor(name));
+        if (attrOriginal) return attrOriginal;
+        const nativeValue = origGetAttribute.apply(this, arguments);
+        const propOriginal = prop && rememberedOriginal(this, prop);
+        return propOriginal && nativeValue != null ? propOriginal : nativeValue;
       },
       getAttributeNS(ns, name) {
         const prop = attrPropFor(name);
-        return (
-          (prop && rememberedOriginal(this, prop)) || origGetAttributeNS.apply(this, arguments)
-        );
+        const attrOriginal = rememberedOriginal(this, attrNsKeyFor(ns, name));
+        if (attrOriginal) return attrOriginal;
+        const nativeValue = origGetAttributeNS.apply(this, arguments);
+        const propOriginal = prop && rememberedOriginal(this, prop);
+        return propOriginal && nativeValue != null ? propOriginal : nativeValue;
       },
       removeAttribute(name) {
         const prop = attrPropFor(name);
-        if (prop) forgetOriginal(this, prop);
+        if (prop) {
+          forgetOriginal(this, prop);
+          forgetAttributeOriginal(this, name);
+        }
         return origRemoveAttribute.apply(this, arguments);
       },
       removeAttributeNS(ns, name) {
         const prop = attrPropFor(name);
-        if (prop) forgetOriginal(this, prop);
+        if (prop) {
+          forgetOriginal(this, prop);
+          forgetNamespacedAttributeOriginal(this, ns, name);
+        }
         return origRemoveAttributeNS.apply(this, arguments);
       },
     };
@@ -448,6 +499,67 @@
     });
   };
 
+  const svgHrefProbe = (el, value) => {
+    const url = isBad(value) ? getUrl(value) : "";
+    if (!url) return null;
+    const kind = passiveDecoyKindFor(url, "href", el);
+    return { kind, mode: shouldDecoy(url) && kind ? "decoy" : "block", url };
+  };
+
+  const animatedHrefProxyFor = (el, animated, label) => {
+    const cached = animatedHrefProxies.get(animated);
+    if (cached) return cached;
+    const proxy = new Proxy(animated, {
+      get(target, prop) {
+        if (prop === "baseVal" || prop === "animVal") {
+          return rememberedOriginal(el, "href") || target[prop];
+        }
+        const value = target[prop];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+      set(target, prop, value) {
+        if (prop !== "baseVal") {
+          return Reflect.set(target, prop, value);
+        }
+        const probe = svgHrefProbe(el, value);
+        if (probe) {
+          rememberOriginal(el, "href", probe.url);
+          rememberAttributeOriginal(el, "href", probe.url);
+          postProbe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
+          target.baseVal = replacementUrlFor(probe.mode, probe.kind, "href");
+          return true;
+        }
+        forgetOriginal(el, "href");
+        forgetAttributeOriginal(el, "href");
+        target.baseVal = value;
+        return true;
+      },
+    });
+    animatedHrefProxies.set(animated, proxy);
+    return proxy;
+  };
+
+  const patchSvgHref = (Ctor, label) => {
+    const proto = Ctor && Ctor.prototype;
+    if (!proto) return;
+    const desc = Object.getOwnPropertyDescriptor(proto, "href");
+    if (!desc || !desc.get) return;
+    Object.defineProperty(proto, "href", {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get: stealth(
+        function get() {
+          const animated = desc.get.call(this);
+          return animated && typeof animated === "object"
+            ? animatedHrefProxyFor(this, animated, label)
+            : animated;
+        },
+        "get href",
+        { length: 0, source: nativeSourceFor(desc.get, "get href") }
+      ),
+    });
+  };
+
   guardProp(HTMLImageElement.prototype, "src", "img.src");
   guardProp(HTMLImageElement.prototype, "srcset", "img.srcset");
   if (typeof HTMLInputElement !== "undefined") {
@@ -471,4 +583,7 @@
   patchAttributes();
   patchCurrentSrc();
   patchStyleSheetHref();
+  if (typeof SVGUseElement !== "undefined") patchSvgHref(SVGUseElement, "svg.use.href");
+  if (typeof SVGImageElement !== "undefined") patchSvgHref(SVGImageElement, "svg.image.href");
+  if (typeof SVGScriptElement !== "undefined") patchSvgHref(SVGScriptElement, "svg.script.href");
 })();
