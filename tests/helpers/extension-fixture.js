@@ -338,6 +338,35 @@ const fixtureFiles = {
       })();
     </script>
   `,
+  "/adaptive-runtime-signatures-human-abr-custom-endpoint.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (() => {
+        window._pxAppId = "PX12345678";
+        window._pxHostUrl = "/abr-shield/xhr/";
+        window._pxJsClientSrc = "/abr-shield/sensor.js?cache=secret-token";
+        const blockScript = document.createElement("script");
+        blockScript.src = "/abr-shield/challenge.js?uuid=1234567890abcdef";
+        document.head.appendChild(blockScript);
+        window.__adaptiveVendorHumanAbrDone = true;
+      })();
+    </script>
+  `,
+  "/adaptive-runtime-benign-human-abr-lookalike.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (() => {
+        window._pxAppId = "PX12345678";
+        window._pxHostUrl = "/abr-shield/xhr/";
+        const sensorScript = document.createElement("script");
+        sensorScript.src = "/abr-shield/sensor.js?cache=secret-token";
+        document.head.appendChild(sensorScript);
+        window.__adaptiveVendorHumanAbrLookalikeDone = true;
+      })();
+    </script>
+  `,
   "/adaptive-runtime-benign-human-prefix-lookalike.html": `
     <!doctype html>
     <meta charset="utf-8">

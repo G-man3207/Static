@@ -738,7 +738,10 @@
       const state = vendorState.human;
       state.jsClientSrc = firstStringEntry(value);
       state.jsClientReason = state.jsClientSrc ? "global:_pxJsClientSrc" : "";
-      rememberVendorSource(state, source);
+      rememberVendorSource(
+        state,
+        state.jsClientSrc ? stableUrlLabelFor(state.jsClientSrc) : source
+      );
       maybeEmitHumanSignal();
       return value;
     });
@@ -855,6 +858,12 @@
         vendorState.human.jsClientReason = vendorState.human.jsClientSrc
           ? "global:_pxJsClientSrc"
           : "";
+        rememberVendorSource(
+          vendorState.human,
+          vendorState.human.jsClientSrc
+            ? stableUrlLabelFor(vendorState.human.jsClientSrc)
+            : currentAdaptiveSource()
+        );
         maybeEmitHumanSignal();
       }
     } catch {}

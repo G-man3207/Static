@@ -885,6 +885,61 @@ test("Adaptive runtime detection recognizes HUMAN custom first-party prefixes", 
     });
 });
 
+test("Adaptive runtime detection recognizes HUMAN ABR custom sensor endpoints from exact globals", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-signatures-human-abr-custom-endpoint.html"));
+  await expect.poll(() => page.evaluate(() => window.__adaptiveVendorHumanAbrDone === true)).toBe(
+    true
+  );
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: {
+        "anti-bot": 1,
+      },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/abr-shield/xhr/`]: 1,
+      }),
+      reasons: expect.objectContaining({
+        "global:_pxAppId": 1,
+        "global:_pxHostUrl": 1,
+        "global:_pxJsClientSrc": 1,
+        "vendor:HUMAN": 1,
+      }),
+      scoreMax: 9,
+      sources: expect.objectContaining({
+        [`${server.origin}/abr-shield/sensor.js`]: 1,
+      }),
+    });
+});
+
+test("Adaptive runtime detection ignores HUMAN ABR lookalikes without exact jsClientSrc globals", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-benign-human-abr-lookalike.html"));
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveVendorHumanAbrLookalikeDone === true))
+    .toBe(true);
+  await page.waitForTimeout(500);
+
+  const storage = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get("adaptive_log")
+  );
+  expect(storage.adaptive_log).toBeUndefined();
+});
+
 test("Adaptive runtime detection ignores HUMAN init.js lookalikes without matching xhr prefixes", async ({
   extension,
   server,
