@@ -84,6 +84,10 @@ Stage 1: Observe-only adaptive log.
   microtasks, and mutation-observer callbacks. If no URL-like source survives, persist a local
   runtime label such as `runtime:settimeout` instead of collapsing everything into
   `inline-or-runtime`.
+- Carry that attribution through message-style event delivery as well, including listener objects,
+  `postMessage`, custom-event listeners, and `onmessage` handlers. Leave replay-sensitive
+  high-frequency DOM input/mouse event surfaces to the replay shim so the two systems do not
+  double-wrap the same listeners.
 - Do not block.
 - Do not add dynamic or session DNR rules.
 - Do not include adaptive data in anonymized research exports.

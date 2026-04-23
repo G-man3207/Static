@@ -26,6 +26,24 @@
     "scroll",
     "touchmove",
   ]);
+  const ADAPTIVE_EVENT_SOURCE_SKIP_TYPES = new Set([
+    "input",
+    "change",
+    "keydown",
+    "keyup",
+    "keypress",
+    "click",
+    "dblclick",
+    "mousedown",
+    "mouseup",
+    "mousemove",
+    "pointerdown",
+    "pointerup",
+    "pointermove",
+    "scroll",
+    "focus",
+    "blur",
+  ]);
   const adaptiveWindows = new Map();
   const queuedSignals = [];
   const reportedVendorSignals = new Set();
@@ -48,6 +66,7 @@
   let bridgePort = null;
   let activeAdaptiveSource = "";
   const asyncSourceWrappers = new WeakMap();
+  const eventListenerWrappers = new WeakMap();
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
@@ -301,6 +320,91 @@
     });
     bySource.set(safeSource, stealthed);
     return stealthed;
+  };
+
+  const eventListenerKeyFor = (type, options) => {
+    const capture =
+      options === true || !!(options && typeof options === "object" && options.capture === true);
+    return `${String(type || "").toLowerCase()}::${capture ? "1" : "0"}`;
+  };
+
+  const wrappedEventListenerFor = (target, registration) => {
+    const { type, listener, options, source } = registration;
+    if (!listener) return listener;
+    const eventType = String(type || "").toLowerCase();
+    if (ADAPTIVE_EVENT_SOURCE_SKIP_TYPES.has(eventType)) return listener;
+    const listenerType = typeof listener;
+    const isFunctionListener = listenerType === "function";
+    const hasHandleEvent =
+      !isFunctionListener &&
+      (listenerType === "object" || listenerType === "function") &&
+      typeof listener.handleEvent === "function";
+    if (!isFunctionListener && !hasHandleEvent) return listener;
+
+    const key = eventListenerKeyFor(eventType, options);
+    let targetMap = eventListenerWrappers.get(listener);
+    if (!targetMap) {
+      targetMap = new WeakMap();
+      eventListenerWrappers.set(listener, targetMap);
+    }
+    let wrappedByKey = targetMap.get(target);
+    if (!wrappedByKey) {
+      wrappedByKey = new Map();
+      targetMap.set(target, wrappedByKey);
+    }
+    if (wrappedByKey.has(key)) return wrappedByKey.get(key);
+
+    const safeSource = runtimeAdaptiveSourceFor(source, `listener.${eventType || "event"}`);
+    const wrapped = isFunctionListener
+      ? (() => {
+          const listenerName = listener.name || "listener";
+          const wrappedListener = function (...args) {
+            return runWithAdaptiveSource(safeSource, listener, this, args);
+          };
+          return stealth(wrappedListener, listenerName, {
+            length: listener.length,
+            source: nativeSourceFor(listener, listenerName),
+          });
+        })()
+      : (() => {
+          const initialHandleEvent = listener.handleEvent;
+          const wrappedHandleEvent = stealth(
+            function handleEvent(...args) {
+              const currentHandleEvent = listener && listener.handleEvent;
+              if (typeof currentHandleEvent !== "function") return;
+              return runWithAdaptiveSource(safeSource, currentHandleEvent, listener, args);
+            },
+            "handleEvent",
+            {
+              length: typeof initialHandleEvent === "function" ? initialHandleEvent.length : 1,
+              source: nativeSourceFor(initialHandleEvent, "handleEvent"),
+            }
+          );
+          const wrappedListener = {};
+          try {
+            Object.defineProperty(wrappedListener, "handleEvent", {
+              configurable: true,
+              enumerable: false,
+              writable: true,
+              value: wrappedHandleEvent,
+            });
+          } catch {
+            wrappedListener.handleEvent = wrappedHandleEvent;
+          }
+          return wrappedListener;
+        })();
+
+    wrappedByKey.set(key, wrapped);
+    return wrapped;
+  };
+
+  const eventListenerForRemoval = (target, type, listener, options) => {
+    if (!listener) return listener;
+    const targetMap = eventListenerWrappers.get(listener);
+    if (!targetMap) return listener;
+    const wrappedByKey = targetMap.get(target);
+    if (!wrappedByKey) return listener;
+    return wrappedByKey.get(eventListenerKeyFor(type, options)) || listener;
   };
 
   const adaptiveCategoryFor = (kinds) => {
@@ -923,6 +1027,44 @@
     );
   };
 
+  const patchEventHandlerProperty = (owner, prop, label) => {
+    if (!owner) return;
+    try {
+      const desc = Object.getOwnPropertyDescriptor(owner, prop);
+      if (!desc || typeof desc.set !== "function") return;
+      Object.defineProperty(owner, prop, {
+        ...desc,
+        set: stealth(
+          function set(value) {
+            return desc.set.call(this, wrapAsyncCallback(value, currentAdaptiveSource(), label));
+          },
+          `set ${prop}`,
+          {
+            length: desc.set.length,
+            source: nativeSourceFor(desc.set, `set ${prop}`),
+          }
+        ),
+      });
+    } catch {}
+  };
+
+  const patchMessageHandlers = () => {
+    patchEventHandlerProperty(window, "onmessage", "onmessage");
+    if (typeof Window !== "undefined" && Window.prototype) {
+      patchEventHandlerProperty(Window.prototype, "onmessage", "onmessage");
+    }
+    if (typeof MessagePort !== "undefined" && MessagePort.prototype) {
+      patchEventHandlerProperty(MessagePort.prototype, "onmessage", "messageport.onmessage");
+    }
+    if (typeof BroadcastChannel !== "undefined" && BroadcastChannel.prototype) {
+      patchEventHandlerProperty(
+        BroadcastChannel.prototype,
+        "onmessage",
+        "broadcastchannel.onmessage"
+      );
+    }
+  };
+
   const patchNetworkApis = () => {
     patchMethod({
       owner: window,
@@ -984,8 +1126,9 @@
   const patchInputHooks = () => {
     if (typeof EventTarget === "undefined" || !EventTarget.prototype) return;
     const origAddEventListener = EventTarget.prototype.addEventListener;
+    const origRemoveEventListener = EventTarget.prototype.removeEventListener;
     const wrappedAddEventListener = {
-      addEventListener(type) {
+      addEventListener(type, listener) {
         try {
           const eventType = String(type);
           const globalTarget =
@@ -997,12 +1140,31 @@
             recordAdaptiveSignal("input_hooks", { detail: `listener.${eventType}` });
           }
         } catch {}
-        return origAddEventListener.apply(this, arguments);
+        const args = Array.from(arguments);
+        args[1] = wrappedEventListenerFor(this, {
+          type,
+          listener,
+          options: arguments[2],
+          source: currentAdaptiveSource(),
+        });
+        return origAddEventListener.apply(this, args);
       },
     }.addEventListener;
+    const wrappedRemoveEventListener = {
+      removeEventListener(type, listener) {
+        const args = Array.from(arguments);
+        args[1] = eventListenerForRemoval(this, type, listener, arguments[2]);
+        return origRemoveEventListener.apply(this, args);
+      },
+    }.removeEventListener;
     EventTarget.prototype.addEventListener = stealth(wrappedAddEventListener, "addEventListener", {
       length: 2,
     });
+    EventTarget.prototype.removeEventListener = stealth(
+      wrappedRemoveEventListener,
+      "removeEventListener",
+      { length: 2 }
+    );
   };
 
   try {
@@ -1013,6 +1175,7 @@
     patchAudioApis();
     patchMutationObserver();
     patchAsyncSourceContext();
+    patchMessageHandlers();
     patchNetworkApis();
     patchInputHooks();
     for (const prop of [
