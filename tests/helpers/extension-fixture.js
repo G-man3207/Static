@@ -319,6 +319,44 @@ const fixtureFiles = {
       })();
     </script>
   `,
+  "/adaptive-runtime-signatures-human-custom-prefix.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        window._pxAppId = "PX12345678";
+        window._pxHostUrl = "/botdefense/xhr/";
+        const pxScript = document.createElement("script");
+        pxScript.src = "/botdefense/init.js";
+        document.head.appendChild(pxScript);
+        await new Promise((resolve) => {
+          pxScript.addEventListener("load", resolve, { once: true });
+          pxScript.addEventListener("error", resolve, { once: true });
+          setTimeout(resolve, 250);
+        });
+        window.__adaptiveVendorHumanCustomPrefixDone = true;
+      })();
+    </script>
+  `,
+  "/adaptive-runtime-benign-human-prefix-lookalike.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        window._pxAppId = "PX12345678";
+        window._pxHostUrl = "/collector";
+        const pxScript = document.createElement("script");
+        pxScript.src = "/botdefense/init.js";
+        document.head.appendChild(pxScript);
+        await new Promise((resolve) => {
+          pxScript.addEventListener("load", resolve, { once: true });
+          pxScript.addEventListener("error", resolve, { once: true });
+          setTimeout(resolve, 250);
+        });
+        window.__adaptiveVendorHumanPrefixLookalikeDone = true;
+      })();
+    </script>
+  `,
   "/adaptive-runtime-benign.html": `
     <!doctype html>
     <meta charset="utf-8">
