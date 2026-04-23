@@ -234,6 +234,15 @@
     }
   },
   {
+    "id": 32,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||auryc.com^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
+  },
+  {
     "id": 15,
     "priority": 1,
     "action": { "type": "block" },
