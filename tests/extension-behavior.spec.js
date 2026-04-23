@@ -772,6 +772,44 @@ test("Adaptive runtime detection logs proxied vendor signatures without behavior
   expect(sessionRules).toEqual([]);
 });
 
+test("Adaptive runtime detection recognizes versioned first-party DataDome routes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-signatures-versioned-datadome.html"));
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveVendorVersionedDatadomeDone === true))
+    .toBe(true);
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: {
+        "anti-bot": 1,
+      },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/js/`]: 1,
+      }),
+      reasons: expect.objectContaining({
+        "config:endpoint": 1,
+        "global:ddjskey": 1,
+        "script:tags.js": 1,
+        "vendor:DataDome": 1,
+      }),
+      scoreMax: 9,
+      sources: expect.objectContaining({
+        [`${server.origin}/v5.1.13/tags.js`]: 1,
+      }),
+    });
+});
+
 test("Adaptive runtime detection ignores partial vendor lookalikes", async ({
   extension,
   server,

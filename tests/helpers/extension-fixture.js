@@ -282,6 +282,25 @@ const fixtureFiles = {
       })();
     </script>
   `,
+  "/adaptive-runtime-signatures-versioned-datadome.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        window.ddjskey = "client-side-key";
+        window.ddoptions = { endpoint: "/js/", sessionByHeader: true };
+        const ddScript = document.createElement("script");
+        ddScript.src = "/v5.1.13/tags.js";
+        document.head.appendChild(ddScript);
+        await new Promise((resolve) => {
+          ddScript.addEventListener("load", resolve, { once: true });
+          ddScript.addEventListener("error", resolve, { once: true });
+          setTimeout(resolve, 250);
+        });
+        window.__adaptiveVendorVersionedDatadomeDone = true;
+      })();
+    </script>
+  `,
   "/adaptive-runtime-benign.html": `
     <!doctype html>
     <meta charset="utf-8">
@@ -384,6 +403,9 @@ const fixtureFiles = {
   `,
   "/tags.js": `
     window.__tagScriptLoaded = true;
+  `,
+  "/v5.1.13/tags.js": `
+    window.__versionedTagScriptLoaded = true;
   `,
   "/px/main.min.js": `
     window.__pxClientLoaded = true;
