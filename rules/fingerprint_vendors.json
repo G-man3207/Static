@@ -169,5 +169,14 @@
       "urlFilter": "||siftscience.com^",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
+  },
+  {
+    "id": 20,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fpnpmcdn.net^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
   }
 ]

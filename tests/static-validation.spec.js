@@ -271,6 +271,7 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
 
   for (const filter of [
     "||fpjscdn.net^",
+    "||fpnpmcdn.net^",
     "||fptls.com^",
     "||pxchk.net^",
     "||px-client.net^",
