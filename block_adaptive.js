@@ -1,3 +1,4 @@
+/* eslint-disable max-lines, max-statements, complexity -- adaptive and vendor-runtime shims are safer kept contiguous */
 // Static - MAIN-world observe-only adaptive behavior logger.
 (() => {
   const BRIDGE_EVENT = "__static_adaptive_bridge_init__";
@@ -26,7 +27,23 @@
   ]);
   const adaptiveWindows = new Map();
   const queuedSignals = [];
+  const reportedVendorSignals = new Set();
+  const instrumentedFingerprintGlobals = new WeakSet();
+  const instrumentedSiftQueues = new WeakSet();
   const MAX_QUEUED_SIGNALS = 50;
+  const VENDOR_SIGNAL_SCORE = 9;
+  const vendorState = {
+    datadome: { ddjskey: false, ddoptions: false, scriptUrl: "", source: "" },
+    fingerprint: {
+      apiKey: false,
+      endpoint: "",
+      loadCalled: false,
+      scriptUrlPattern: "",
+      source: "",
+    },
+    human: { appId: false, hostUrl: "", jsClientSrc: "", source: "" },
+    sift: { account: false, scriptUrl: "", source: "", trackPageview: false },
+  };
   let bridgePort = null;
 
   const stealthFns = new WeakMap();
@@ -71,6 +88,14 @@
         value: wrapped,
       });
     } catch {}
+  };
+
+  const nativeSourceFor = (fn, fallbackName) => {
+    try {
+      return origFnToString.call(fn);
+    } catch {
+      return `function ${fallbackName}() { [native code] }`;
+    }
   };
 
   const sanitizeSignal = (signal) => ({
@@ -290,6 +315,343 @@
     });
   };
 
+  const firstStringEntry = (value) => {
+    if (typeof value === "string") return value;
+    if (typeof URL !== "undefined" && value instanceof URL) return value.href;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = firstStringEntry(item);
+        if (found) return found;
+      }
+    }
+    return "";
+  };
+
+  const parsedUrlFor = (value) => {
+    const candidate = firstStringEntry(value);
+    if (!candidate) return null;
+    try {
+      return new URL(candidate, location.href);
+    } catch {
+      return null;
+    }
+  };
+
+  const rememberVendorSource = (state, source) => {
+    const safeSource = String(source || "").slice(0, 160);
+    if (!safeSource) return;
+    if (!state.source || state.source === "inline-or-runtime") state.source = safeSource;
+  };
+
+  const emitVendorSignal = (vendor, category, detail = {}) => {
+    const key = `${category}:${vendor}`;
+    if (reportedVendorSignals.has(key)) return;
+    reportedVendorSignals.add(key);
+    const reasons = [`vendor:${vendor}`, ...(detail.reasons || [])]
+      .filter(Boolean)
+      .map((reason) => String(reason).slice(0, 64))
+      .slice(0, 12);
+    postAdaptiveSignal({
+      category,
+      score: VENDOR_SIGNAL_SCORE,
+      source: String(detail.source || "inline-or-runtime").slice(0, 160),
+      endpoint: stableEndpointFor(detail.endpoint),
+      reasons,
+    });
+  };
+
+  const maybeEmitDatadomeSignal = () => {
+    const state = vendorState.datadome;
+    if (!state.ddjskey || !state.scriptUrl) return;
+    emitVendorSignal("DataDome", "anti-bot", {
+      source: state.source || stableUrlLabelFor(state.scriptUrl),
+      endpoint: state.scriptUrl,
+      reasons: [
+        "global:ddjskey",
+        state.ddoptions ? "global:ddoptions" : "",
+        "script:tags.js",
+      ],
+    });
+  };
+
+  const maybeEmitFingerprintSignal = () => {
+    const state = vendorState.fingerprint;
+    if (!state.loadCalled) return;
+    emitVendorSignal("FingerprintJS", "fingerprinting", {
+      source: state.source || "inline-or-runtime",
+      endpoint: state.endpoint || state.scriptUrlPattern,
+      reasons: [
+        "api:load",
+        state.apiKey ? "config:apiKey" : "",
+        state.endpoint ? "config:endpoint" : "",
+        state.scriptUrlPattern ? "config:scriptUrlPattern" : "",
+      ],
+    });
+  };
+
+  const maybeEmitHumanSignal = () => {
+    const state = vendorState.human;
+    if (!state.appId || !(state.hostUrl || state.jsClientSrc)) return;
+    emitVendorSignal("HUMAN", "anti-bot", {
+      source: state.source || stableUrlLabelFor(state.jsClientSrc || state.hostUrl),
+      endpoint: state.hostUrl || state.jsClientSrc,
+      reasons: [
+        "global:_pxAppId",
+        state.hostUrl ? "global:_pxHostUrl" : "",
+        state.jsClientSrc ? "global:_pxJsClientSrc" : "",
+      ],
+    });
+  };
+
+  const maybeEmitSiftSignal = () => {
+    const state = vendorState.sift;
+    if (!state.account) return;
+    emitVendorSignal("Sift", "fingerprinting", {
+      source: state.source || stableUrlLabelFor(state.scriptUrl),
+      endpoint: state.scriptUrl,
+      reasons: [
+        "queue:_setAccount",
+        state.trackPageview ? "queue:_trackPageview" : "",
+        state.scriptUrl ? "script:sift" : "",
+      ],
+    });
+  };
+
+  const patchObjectMethod = (target, key, wrap) => {
+    const orig = target && target[key];
+    if (typeof orig !== "function") return;
+    const wrapped = wrap(orig);
+    if (typeof wrapped !== "function") return;
+    try {
+      Object.defineProperty(target, key, {
+        configurable: true,
+        enumerable: Object.prototype.propertyIsEnumerable.call(target, key),
+        writable: true,
+        value: stealth(wrapped, key, {
+          length: orig.length,
+          source: nativeSourceFor(orig, key),
+        }),
+      });
+    } catch {
+      try {
+        target[key] = stealth(wrapped, key, {
+          length: orig.length,
+          source: nativeSourceFor(orig, key),
+        });
+      } catch {}
+    }
+  };
+
+  const observeSiftQueueCommand = (entry, source) => {
+    if (!Array.isArray(entry) || typeof entry[0] !== "string") return;
+    const state = vendorState.sift;
+    const command = entry[0];
+    rememberVendorSource(state, source);
+    if (command === "_setAccount") state.account = true;
+    if (command === "_trackPageview") state.trackPageview = true;
+    maybeEmitSiftSignal();
+  };
+
+  const instrumentSiftQueue = (queue, source = currentAdaptiveSource()) => {
+    if (!queue || (typeof queue !== "object" && typeof queue !== "function")) return queue;
+    if (typeof queue.push !== "function") return queue;
+    if (instrumentedSiftQueues.has(queue)) return queue;
+    instrumentedSiftQueues.add(queue);
+    rememberVendorSource(vendorState.sift, source);
+    try {
+      for (const entry of Array.from(queue)) observeSiftQueueCommand(entry, source);
+    } catch {}
+    patchObjectMethod(queue, "push", (origPush) =>
+      function push(...items) {
+        for (const item of items) observeSiftQueueCommand(item, source);
+        return origPush.apply(this, items);
+      }
+    );
+    return queue;
+  };
+
+  const instrumentFingerprintGlobal = (value, source = currentAdaptiveSource()) => {
+    if (!value || (typeof value !== "object" && typeof value !== "function")) return value;
+    if (typeof value.load !== "function" || instrumentedFingerprintGlobals.has(value)) return value;
+    instrumentedFingerprintGlobals.add(value);
+    patchObjectMethod(value, "load", (origLoad) =>
+      function load(options) {
+        const state = vendorState.fingerprint;
+        rememberVendorSource(state, source);
+        state.loadCalled = true;
+        state.apiKey ||= !!(
+          options &&
+          typeof options === "object" &&
+          Object.prototype.hasOwnProperty.call(options, "apiKey")
+        );
+        const endpoint = firstStringEntry(options && options.endpoint);
+        const scriptUrlPattern = firstStringEntry(options && options.scriptUrlPattern);
+        if (endpoint) state.endpoint = endpoint;
+        if (scriptUrlPattern) state.scriptUrlPattern = scriptUrlPattern;
+        maybeEmitFingerprintSignal();
+        return origLoad.apply(this, arguments);
+      }
+    );
+    return value;
+  };
+
+  const patchWindowValue = (name, transform) => {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(window, name);
+      if (desc && desc.configurable === false) return;
+      const enumerable = desc ? desc.enumerable : true;
+      let currentValue = undefined;
+      if (desc && Object.prototype.hasOwnProperty.call(desc, "value")) {
+        currentValue = transform(desc.value, currentAdaptiveSource());
+      }
+      Object.defineProperty(window, name, {
+        configurable: true,
+        enumerable,
+        get: stealth(
+          function get() {
+            return currentValue;
+          },
+          `get ${name}`,
+          { length: 0 }
+        ),
+        set: stealth(
+          function set(value) {
+            currentValue = transform(value, currentAdaptiveSource());
+          },
+          `set ${name}`,
+          { length: 1 }
+        ),
+      });
+    } catch {}
+  };
+
+  const patchVendorGlobals = () => {
+    patchWindowValue("ddjskey", (value, source) => {
+      const state = vendorState.datadome;
+      state.ddjskey = value != null && value !== "";
+      rememberVendorSource(state, source);
+      maybeEmitDatadomeSignal();
+      return value;
+    });
+    patchWindowValue("ddoptions", (value, source) => {
+      const state = vendorState.datadome;
+      state.ddoptions = value != null;
+      rememberVendorSource(state, source);
+      maybeEmitDatadomeSignal();
+      return value;
+    });
+    patchWindowValue("_pxAppId", (value, source) => {
+      const state = vendorState.human;
+      state.appId = value != null && value !== "";
+      rememberVendorSource(state, source);
+      maybeEmitHumanSignal();
+      return value;
+    });
+    patchWindowValue("_pxHostUrl", (value, source) => {
+      const state = vendorState.human;
+      state.hostUrl = firstStringEntry(value);
+      rememberVendorSource(state, source);
+      maybeEmitHumanSignal();
+      return value;
+    });
+    patchWindowValue("_pxJsClientSrc", (value, source) => {
+      const state = vendorState.human;
+      state.jsClientSrc = firstStringEntry(value);
+      rememberVendorSource(state, source);
+      maybeEmitHumanSignal();
+      return value;
+    });
+    patchWindowValue("_sift", (value, source) => instrumentSiftQueue(value, source));
+    patchWindowValue("FingerprintJS", (value, source) => instrumentFingerprintGlobal(value, source));
+  };
+
+  const observeVendorScript = (url) => {
+    const parsed = parsedUrlFor(url);
+    if (!parsed) return;
+    const source = stableUrlLabelFor(parsed.href);
+    const pathname = parsed.pathname.toLowerCase();
+    const host = parsed.hostname.toLowerCase();
+
+    if (
+      pathname === "/tags.js" ||
+      (pathname.endsWith("/tags.js") && host.endsWith("datadome.co"))
+    ) {
+      const state = vendorState.datadome;
+      state.scriptUrl = parsed.href;
+      rememberVendorSource(state, source);
+      maybeEmitDatadomeSignal();
+    }
+
+    if (
+      pathname === "/s.js" ||
+      /^\/js\/s-\d+\.js$/i.test(pathname) ||
+      (host.endsWith("sift.com") &&
+        (pathname === "/s.js" || /^\/js\/s-\d+\.js$/i.test(pathname)))
+    ) {
+      const state = vendorState.sift;
+      state.scriptUrl = parsed.href;
+      rememberVendorSource(state, source);
+      maybeEmitSiftSignal();
+    }
+
+    if (
+      pathname.endsWith("/main.min.js") ||
+      host.endsWith("perimeterx.net") ||
+      host.endsWith("px-cdn.net") ||
+      host.endsWith("px-cloud.net")
+    ) {
+      const state = vendorState.human;
+      if (!state.jsClientSrc) state.jsClientSrc = parsed.href;
+      rememberVendorSource(state, source);
+      maybeEmitHumanSignal();
+    }
+  };
+
+  let vendorScanTicks = 0;
+  const scanVendorRuntime = () => {
+    vendorScanTicks++;
+    try {
+      if (window.ddjskey != null) {
+        vendorState.datadome.ddjskey = true;
+        maybeEmitDatadomeSignal();
+      }
+    } catch {}
+    try {
+      if (window.ddoptions != null) {
+        vendorState.datadome.ddoptions = true;
+        maybeEmitDatadomeSignal();
+      }
+    } catch {}
+    try {
+      if (window._pxAppId != null) {
+        vendorState.human.appId = true;
+        maybeEmitHumanSignal();
+      }
+    } catch {}
+    try {
+      if (window._pxHostUrl != null) {
+        vendorState.human.hostUrl = firstStringEntry(window._pxHostUrl);
+        maybeEmitHumanSignal();
+      }
+    } catch {}
+    try {
+      if (window._pxJsClientSrc != null) {
+        vendorState.human.jsClientSrc = firstStringEntry(window._pxJsClientSrc);
+        maybeEmitHumanSignal();
+      }
+    } catch {}
+    try {
+      instrumentFingerprintGlobal(window.FingerprintJS);
+    } catch {}
+    try {
+      if (window._sift != null) instrumentSiftQueue(window._sift);
+    } catch {}
+    try {
+      for (const script of document.scripts || []) observeVendorScript(script.src);
+    } catch {}
+    if (vendorScanTicks < 20) setTimeout(scanVendorRuntime, 500);
+  };
+
   const patchMethod = ({ owner, name, label, recorder, length }) => {
     if (!owner || typeof owner[name] !== "function") return;
     const orig = owner[name];
@@ -503,6 +865,7 @@
   };
 
   try {
+    patchVendorGlobals();
     patchReadbackApis();
     patchGpuApis();
     patchCryptoApis();
@@ -519,5 +882,6 @@
     ]) {
       patchNavigatorGetter(prop);
     }
+    setTimeout(scanVendorRuntime, 0);
   } catch {}
 })();

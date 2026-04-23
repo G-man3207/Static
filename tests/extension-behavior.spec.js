@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- integration coverage is easier to maintain in one fixture-backed file */
 const { expect, test } = require("./helpers/extension-fixture");
 const { expectApiSurface, getApiSurface } = require("./helpers/api-surface");
 
@@ -592,6 +593,68 @@ test("Adaptive observe-only logging ignores canvas-heavy apps without corroborat
   await page.goto(server.url("/adaptive-canvas-app.html"));
   await expect.poll(() => page.evaluate(() => window.__canvasAppDone === true)).toBe(true);
   await page.waitForTimeout(400);
+
+  const storage = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get("adaptive_log")
+  );
+  expect(storage.adaptive_log).toBeUndefined();
+});
+
+test("Adaptive runtime detection logs proxied vendor signatures without behavior scoring", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-signatures.html"));
+  await expect.poll(() => page.evaluate(() => window.__adaptiveVendorDone === true)).toBe(true);
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: {
+        "anti-bot": 2,
+        fingerprinting: 2,
+      },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/fp/result`]: 1,
+        [`${server.origin}/px/collector`]: 1,
+        [`${server.origin}/tags.js`]: 1,
+      }),
+      reasons: expect.objectContaining({
+        "vendor:DataDome": 1,
+        "vendor:FingerprintJS": 1,
+        "vendor:HUMAN": 1,
+        "vendor:Sift": 1,
+      }),
+      scoreMax: 9,
+    });
+
+  const dynamicRules = await extension.serviceWorker.evaluate(() =>
+    chrome.declarativeNetRequest.getDynamicRules()
+  );
+  const sessionRules = await extension.serviceWorker.evaluate(() =>
+    chrome.declarativeNetRequest.getSessionRules()
+  );
+  expect(dynamicRules).toEqual([]);
+  expect(sessionRules).toEqual([]);
+});
+
+test("Adaptive runtime detection ignores partial vendor lookalikes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-benign.html"));
+  await expect.poll(() => page.evaluate(() => window.__adaptiveVendorBenignDone === true)).toBe(
+    true
+  );
+  await page.waitForTimeout(500);
 
   const storage = await extension.serviceWorker.evaluate(() =>
     chrome.storage.local.get("adaptive_log")
