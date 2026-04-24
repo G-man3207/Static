@@ -22,6 +22,7 @@ const loadBridgeHarness = () => {
   const messages = [];
   const portsByEvent = {};
   const timers = [];
+  const runtimeListeners = [];
   const windowListeners = {};
   const documentListeners = {};
   const addListener = (listeners, type, fn) => {
@@ -63,7 +64,7 @@ const loadBridgeHarness = () => {
     addEventListener: (type, fn) => addListener(windowListeners, type, fn),
     chrome: {
       runtime: {
-        onMessage: { addListener() {} },
+        onMessage: { addListener(fn) { runtimeListeners.push(fn); } },
         sendMessage(message) {
           messages.push(message);
           if (message && message.type === "static_get_persona") {
@@ -83,6 +84,9 @@ const loadBridgeHarness = () => {
       },
       removeEventListener: (type, fn) => removeListener(documentListeners, type, fn),
     },
+    clearTimeout(id) {
+      timers[id - 1] = null;
+    },
     setTimeout(fn) {
       timers.push(fn);
       return timers.length;
@@ -94,7 +98,14 @@ const loadBridgeHarness = () => {
     messages,
     portsByEvent,
     dispatchWindow: (type) => dispatchListeners(windowListeners, type),
-    runTimers: () => timers.splice(0).forEach((fn) => fn()),
+    runTimers: () => timers.splice(0).forEach((fn) => fn && fn()),
+    sendRuntimeMessage: (message) => {
+      const responses = [];
+      for (const listener of runtimeListeners) {
+        listener(message, {}, (response) => responses.push(response));
+      }
+      return responses;
+    },
   };
 };
 
@@ -336,6 +347,23 @@ test("bridge caps high-cardinality probe ID maps before service-worker flush", (
   expect(message.deltaIdCounts[knownId]).toBe(2);
 });
 
+test("bridge drops pending probe batches when log clear resets page state", () => {
+  const harness = loadBridgeHarness();
+  const port = harness.portsByEvent.__static_noise_bridge_init__;
+  expect(port).toBeTruthy();
+
+  port.postMessage({
+    type: "probe_blocked",
+    url: "chrome-extension://nngceckbapebfimnlniiiahkandclblb/manifest.json",
+    where: "fetch",
+  });
+  harness.sendRuntimeMessage({ resetProbeState: true, type: "static_persona_update" });
+  harness.dispatchWindow("pagehide");
+  harness.runTimers();
+
+  expect(harness.messages.filter((msg) => msg.type === "static_probe_blocked")).toEqual([]);
+});
+
 test("DNR rulesets are well-formed and synchronized with metadata and popup IDs", () => {
   const manifest = readJson("manifest.json");
   const meta = readJson("rules/META.json");
@@ -393,9 +421,15 @@ test("DNR rulesets are well-formed and synchronized with metadata and popup IDs"
 });
 
 test("vendor DNR lists cover current official client-side collection hosts", () => {
+  const captchaFilters = new Set(urlFiltersFor("rules/captcha_vendors.json"));
   const fingerprintFilters = new Set(urlFiltersFor("rules/fingerprint_vendors.json"));
   const datadogFilters = new Set(urlFiltersFor("rules/datadog_rum.json"));
   const replayFilters = new Set(urlFiltersFor("rules/session_replay.json"));
+
+  expect(
+    captchaFilters.has("||captcha-delivery.com^"),
+    "captcha_vendors missing DataDome response pages"
+  ).toBe(true);
 
   for (const filter of [
     "||api.fpjs.pro^",

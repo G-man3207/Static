@@ -6,10 +6,12 @@
   const ADAPTIVE_COOLDOWN_MS = 7000;
   const ADAPTIVE_TRIGGER_SCORE = 7;
   const ADAPTIVE_SOURCE_URL_RE = /\b(?:https?):\/\/[^\s)]+/g;
+  const STATIC_INTERNAL_OBSERVER_RE = /chrome-extension:\/\/[a-p]{32}\/block_style_vectors\.js/i;
   const ADAPTIVE_WEIGHTS = {
-    canvas: 2,
-    webgl: 2,
-    audio: 2,
+    canvas: 4,
+    webgl: 4,
+    audio: 4,
+    environment: 2,
     navigator: 1,
     crypto: 3,
     dom_observer: 3,
@@ -120,6 +122,16 @@
     } catch {
       return `function ${fallbackName}() { [native code] }`;
     }
+  };
+
+  const descriptorOwnerFor = (proto, prop) => {
+    let cursor = proto;
+    while (cursor) {
+      const desc = Object.getOwnPropertyDescriptor(cursor, prop);
+      if (desc) return { desc, owner: cursor };
+      cursor = Object.getPrototypeOf(cursor);
+    }
+    return null;
   };
 
   const sanitizeSignal = (signal) => ({
@@ -275,6 +287,14 @@
       }
     } catch {}
     return stackAdaptiveSource() || "inline-or-runtime";
+  };
+
+  const hasStaticInternalObserverCaller = () => {
+    try {
+      return STATIC_INTERNAL_OBSERVER_RE.test(String(new Error().stack || ""));
+    } catch {
+      return false;
+    }
   };
 
   const isFallbackAdaptiveSource = (source) => {
@@ -956,26 +976,75 @@
     owner[name] = stealth(wrapped, label || name, { length: length ?? orig.length });
   };
 
-  const patchNavigatorGetter = (prop) => {
+  const patchGetter = (proto, prop, detail, kind) => {
     try {
-      const proto = Navigator.prototype;
-      const desc = Object.getOwnPropertyDescriptor(proto, prop);
+      const found = descriptorOwnerFor(proto, prop);
+      const desc = found && found.desc;
       if (!desc || typeof desc.get !== "function") return;
-      Object.defineProperty(proto, prop, {
+      Object.defineProperty(found.owner, prop, {
         configurable: true,
         enumerable: desc.enumerable,
         get: stealth(
           function get() {
             try {
-              recordAdaptiveSignal("navigator", { detail: `navigator.${prop}` });
+              recordAdaptiveSignal(kind, { detail });
             } catch {}
             return desc.get.call(this);
           },
           `get ${prop}`,
-          { length: 0 }
+          { length: 0, source: nativeSourceFor(desc.get, `get ${prop}`) }
         ),
       });
     } catch {}
+  };
+
+  const patchNavigatorGetter = (prop) => {
+    patchGetter(Navigator.prototype, prop, `navigator.${prop}`, "navigator");
+  };
+
+  const patchScreenGetter = (prop) => {
+    if (typeof Screen === "undefined" || !Screen.prototype) return;
+    patchGetter(Screen.prototype, prop, `screen.${prop}`, "environment");
+  };
+
+  const patchEnvironmentApis = () => {
+    for (const prop of [
+      "availHeight",
+      "availWidth",
+      "colorDepth",
+      "height",
+      "pixelDepth",
+      "width",
+    ]) {
+      patchScreenGetter(prop);
+    }
+    patchMethod({
+      owner: Date.prototype,
+      name: "getTimezoneOffset",
+      recorder: () => recordAdaptiveSignal("environment", { detail: "date.getTimezoneOffset" }),
+    });
+    if (typeof Intl !== "undefined" && Intl.DateTimeFormat && Intl.DateTimeFormat.prototype) {
+      patchMethod({
+        owner: Intl.DateTimeFormat.prototype,
+        name: "resolvedOptions",
+        recorder: () => recordAdaptiveSignal("environment", { detail: "intl.resolvedOptions" }),
+      });
+    }
+    try {
+      const storageProto = navigator.storage && Object.getPrototypeOf(navigator.storage);
+      patchMethod({
+        owner: storageProto,
+        name: "estimate",
+        recorder: () => recordAdaptiveSignal("environment", { detail: "storage.estimate" }),
+      });
+    } catch {}
+    if (typeof Navigator !== "undefined" && Navigator.prototype) {
+      patchMethod({
+        owner: Navigator.prototype,
+        name: "getBattery",
+        recorder: () => recordAdaptiveSignal("environment", { detail: "navigator.getBattery" }),
+      });
+    }
   };
 
   const patchReadbackApis = () => {
@@ -1058,7 +1127,12 @@
               target === document ||
               target === document.documentElement ||
               target === document.body;
-            if (globalTarget && options && options.subtree) {
+            if (
+              globalTarget &&
+              options &&
+              options.subtree &&
+              !hasStaticInternalObserverCaller()
+            ) {
               recordAdaptiveSignal("dom_observer", { detail: "mutation.subtree" });
             }
           } catch {}
@@ -1286,6 +1360,7 @@
     patchGpuApis();
     patchCryptoApis();
     patchAudioApis();
+    patchEnvironmentApis();
     patchMutationObserver();
     patchAsyncSourceContext();
     patchMessageHandlers();
@@ -1294,9 +1369,14 @@
     for (const prop of [
       "hardwareConcurrency",
       "deviceMemory",
+      "maxTouchPoints",
+      "pdfViewerEnabled",
       "platform",
       "plugins",
       "languages",
+      "userAgent",
+      "vendor",
+      "webdriver",
     ]) {
       patchNavigatorGetter(prop);
     }

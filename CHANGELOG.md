@@ -9,9 +9,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Changed
 
 - GitHub Actions now run only for new `v*.*.*` version tag pushes; formatting is checked on the tagged commit instead of auto-committed after release.
+- Adaptive observe-only logging now treats environment snapshots (screen, timezone, storage, and high-entropy navigator reads) as corroborating signals for crypto-plus-network collector flows.
+- The disabled CAPTCHA ruleset now covers DataDome response-page hosts under `captcha-delivery.com`.
 
 ### Fixed
 
+- Clear log now resets pending per-page bridge batches so stale probe flushes cannot recreate local probe storage after the user clears it.
 - Clear log now clears in-memory tab probe state, resets badges, and disarms already-open pages'
   Noise personas without requiring a reload.
 - Session replay blocking now covers PostHog's documented `*.i.posthog.com` cloud ingest/assets host family, and Replay poisoning recognizes PostHog replay bundle names used by first-party proxy setups.

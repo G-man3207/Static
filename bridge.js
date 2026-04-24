@@ -146,6 +146,19 @@
     } catch {}
   };
 
+  const resetProbeState = () => {
+    pendingDelta = 0;
+    frameTotal = 0;
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    idCounts.clear();
+    pendingIdCounts.clear();
+    pendingVectorCounts.clear();
+    pendingPathKindCounts.clear();
+  };
+
   const flushOnHidden = () => {
     if (document.visibilityState === "hidden") flush();
   };
@@ -245,6 +258,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg && msg.type === "static_persona_update") {
+      if (msg.resetProbeState) resetProbeState();
       refreshPersona()
         .then(() => sendResponse({ ok: true }))
         .catch(() => sendResponse({ ok: false }));

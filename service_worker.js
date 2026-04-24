@@ -474,13 +474,16 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
   return true;
 };
 
-const broadcastConfigUpdate = async () => {
+const broadcastConfigUpdate = async (options = {}) => {
   try {
+    const resetProbeState = !!options.resetProbeState;
     const tabs = await chrome.tabs.query({});
     await Promise.all(
       tabs.map((tab) => {
         if (tab.id == null) return null;
-        return chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {});
+        return chrome.tabs
+          .sendMessage(tab.id, { resetProbeState, type: "static_persona_update" })
+          .catch(() => {});
       })
     );
   } catch {}
@@ -542,7 +545,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
       "user_secret",
     ]);
     await clearTabStateAndBadges();
-    await broadcastConfigUpdate();
+    await broadcastConfigUpdate({ resetProbeState: true });
     sendResponse({ ok: true });
   })();
   return true;

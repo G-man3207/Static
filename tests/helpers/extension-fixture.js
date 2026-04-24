@@ -323,6 +323,59 @@ const fixtureFiles = {
       window.__canvasAppDone = true;
     </script>
   `,
+  "/adaptive-environment-fingerprint.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        const snapshot = {
+          cores: navigator.hardwareConcurrency,
+          memory: navigator.deviceMemory,
+          maxTouchPoints: navigator.maxTouchPoints,
+          pdfViewerEnabled: navigator.pdfViewerEnabled,
+          platform: navigator.platform,
+          userAgent: navigator.userAgent,
+          vendor: navigator.vendor,
+          webdriver: navigator.webdriver,
+          languages: navigator.languages,
+          screen: [
+            screen.width,
+            screen.height,
+            screen.availWidth,
+            screen.availHeight,
+            screen.colorDepth,
+            screen.pixelDepth,
+          ],
+          timezoneOffset: new Date().getTimezoneOffset(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          storage: navigator.storage && navigator.storage.estimate
+            ? await navigator.storage.estimate().catch(() => null)
+            : null,
+        };
+        await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(snapshot)));
+        await fetch("/spectroscopy-collect", {
+          method: "POST",
+          body: "x".repeat(2048),
+        }).catch(() => {});
+        window.__adaptiveEnvironmentDone = true;
+      })();
+    </script>
+  `,
+  "/adaptive-environment-app.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        window.__layoutSnapshot = {
+          language: navigator.languages,
+          screen: [screen.width, screen.height],
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        };
+        await fetch("/settings.json").catch(() => {});
+        window.__adaptiveEnvironmentAppDone = true;
+      })();
+    </script>
+  `,
   "/adaptive-private.html": `
     <!doctype html>
     <meta charset="utf-8">

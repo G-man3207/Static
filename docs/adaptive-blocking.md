@@ -62,6 +62,8 @@ The scorer uses multi-signal windows. Single APIs are not enough:
 
 - Canvas/WebGL/audio readback suggests fingerprinting only when paired with navigator or network
   signals.
+- Environment snapshots such as screen, timezone, storage, and high-entropy navigator reads suggest
+  fingerprinting only when paired with crypto and network transmission.
 - Crypto plus large network transmission suggests anti-bot/sensor collection only when paired with
   collection signals.
 - Document-wide `MutationObserver` plus aggressive input hooks suggests replay collection.

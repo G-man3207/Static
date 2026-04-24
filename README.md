@@ -46,7 +46,7 @@ Websites quietly probe your browser to figure out **which extensions you have in
 3. **`window` global fingerprinting.** Devtools bridges and extension-presence markers (`__REACT_DEVTOOLS_GLOBAL_HOOK__`, `__GRAMMARLY_DESKTOP_INTEGRATION__`, etc.) are locked to `undefined` before page scripts run.
 4. **Network-layer blocklists (togglable).** Declarative-Net-Request rulesets block known:
    - **Fingerprinting / anti-bot vendors** — Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
-   - **CAPTCHA vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA.
+   - **CAPTCHA / device-check vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA and DataDome response pages.
    - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, PostHog, and Sentry Replay CDN bundles.
    - **Datadog RUM** _(off by default, also used for legitimate monitoring)_.
    - **LinkedIn** — sensor/metrics collection, conversion tracking, ad pixel, adblock detection, internal Piwik, marketing tag system, LMS analytics.
@@ -78,7 +78,7 @@ anything new.
 
 ## Adaptive behavior log _(observe-only)_
 
-Static also has a local-only adaptive behavior logger for future dynamic blocking work. It watches for correlated behavior windows such as canvas/WebGL/audio readback plus navigator reads and network transmission, crypto plus network transmission, or document-wide mutation observation plus aggressive input hooks.
+Static also has a local-only adaptive behavior logger for future dynamic blocking work. It watches for correlated behavior windows such as canvas/WebGL/audio readback plus navigator reads and network transmission, environment snapshots plus crypto and network transmission, or document-wide mutation observation plus aggressive input hooks.
 
 It also records strong runtime vendor signatures for documented client-side integrations when they are
 served through first-party or proxied routes, such as `window.ddjskey` + `/tags.js` or versioned
