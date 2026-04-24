@@ -866,6 +866,45 @@ test("popup exposes local help text for privacy controls", async ({ extension })
   );
 });
 
+test("popup help tooltips stay inside the visible popup bounds", async ({ extension }) => {
+  const popupPage = await extension.context.newPage();
+  await popupPage.setViewportSize({ width: 320, height: 460 });
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  await expect(popupPage.locator("#rs_datadog_rum_help")).toBeVisible();
+
+  const helpTips = popupPage.locator(".help-tip");
+  const helpTipCount = await helpTips.count();
+  expect(helpTipCount).toBeGreaterThan(0);
+
+  for (let i = 0; i < helpTipCount; i++) {
+    const helpTip = helpTips.nth(i);
+    await helpTip.scrollIntoViewIfNeeded();
+    await helpTip.focus();
+
+    const popover = popupPage.locator("#help-tip-popover");
+    await expect(popover).toBeVisible();
+
+    const bounds = await popover.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+      };
+    });
+    const viewport = await popupPage.evaluate(() => ({
+      height: window.innerHeight,
+      width: window.innerWidth,
+    }));
+
+    expect(bounds.left).toBeGreaterThanOrEqual(0);
+    expect(bounds.top).toBeGreaterThanOrEqual(0);
+    expect(bounds.right).toBeLessThanOrEqual(viewport.width);
+    expect(bounds.bottom).toBeLessThanOrEqual(viewport.height);
+  }
+});
+
 test("Adaptive observe-only logging records multi-signal collectors without adding DNR rules", async ({
   extension,
   server,
