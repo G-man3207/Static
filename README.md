@@ -152,7 +152,7 @@ Sentry Replay is handled here too. Static looks for replay-specific Sentry signa
 
 Datadog Session Replay is handled more narrowly than the optional Datadog RUM ruleset. Static watches for replay-specific `DD_RUM` init/start signals such as `sessionReplaySampleRate`, legacy `premiumSampleRate` / `replaySampleRate`, and `startSessionReplayRecording()`, so self-hosted or first-party Datadog replay can still be detected without treating every `DD_RUM` install as a replay recorder.
 
-PostHog Session Replay is blocked on its documented cloud ingest/assets host family (`*.i.posthog.com`). For first-party reverse-proxy deployments, Static also treats PostHog's replay bundle names such as `lazy-recorder`, `posthog-recorder`, and `recorder-v2` as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
+PostHog Session Replay is blocked on its documented cloud ingest/assets host family (`*.i.posthog.com`). For first-party reverse-proxy and bundled SDK deployments, Static also treats PostHog's replay bundle names such as `lazy-recorder`, `posthog-recorder`, and `recorder-v2`, plus documented `posthog.init(...)` default recording starts and `posthog.startSessionRecording()` calls, as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
 
 ## Install
 

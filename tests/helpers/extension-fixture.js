@@ -143,6 +143,76 @@ const fixtureFiles = {
     }
     document.addEventListener("input", posthogLazyRecorder, true);
   `,
+  "/posthog-global-replay.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <input id="secret" type="email" />
+    <script src="/assets/app/posthog-bundled.js"></script>
+    <script>
+      window.__posthogAppValues = [];
+      document.addEventListener("input", (event) => {
+        window.__posthogAppValues.push(event.target.value);
+      });
+      posthog.startSessionRecording();
+    </script>
+  `,
+  "/posthog-global-auto.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <input id="secret" type="email" />
+    <script src="/assets/app/posthog-bundled.js"></script>
+    <script>
+      window.__posthogAppValues = [];
+      document.addEventListener("input", (event) => {
+        window.__posthogAppValues.push(event.target.value);
+      });
+      posthog.init("project-token", {
+        api_host: "https://us.i.posthog.com",
+      });
+    </script>
+  `,
+  "/posthog-global-disabled.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <input id="secret" type="email" />
+    <script src="/assets/app/posthog-bundled.js"></script>
+    <script>
+      window.__posthogAppValues = [];
+      document.addEventListener("input", (event) => {
+        window.__posthogAppValues.push(event.target.value);
+      });
+      posthog.init("project-token", {
+        api_host: "https://us.i.posthog.com",
+        disable_session_recording: true,
+      });
+    </script>
+  `,
+  "/assets/app/posthog-bundled.js": `
+    window.__posthogReplayRecords = [];
+    window.posthog = [];
+    function startRecorder(context) {
+      if (context.__recording) return;
+      context.__recording = true;
+      function recordInput(event) {
+        window.__posthogReplayRecords.push({
+          type: event.type,
+          value: event.target && event.target.value,
+        });
+      }
+      document.addEventListener("input", recordInput, true);
+    }
+    posthog.init = function init(_token, config) {
+      this.config = config || {};
+      if (this.config.disable_session_recording === true) return;
+      startRecorder(this);
+    };
+    posthog.startSessionRecording = function startSessionRecording() {
+      startRecorder(this);
+    };
+    posthog.sessionRecordingStarted = function sessionRecordingStarted() {
+      return !!this.__recording;
+    };
+  `,
   "/datadog-replay-auto.html": `
     <!doctype html>
     <meta charset="utf-8">
