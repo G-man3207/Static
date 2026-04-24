@@ -388,7 +388,6 @@ const addHelpTip = (container, id, text) => {
   tip.type = "button";
   tip.id = id;
   tip.dataset.tip = text;
-  tip.title = text;
   tip.setAttribute("aria-label", "Details");
   tip.setAttribute("aria-describedby", textId);
   tip.textContent = "?";
@@ -445,7 +444,6 @@ const renderRulesets = (enabledArr, counts) => {
     const label = document.createElement("label");
     label.htmlFor = input.id;
     label.textContent = meta.label;
-    label.title = meta.help || meta.label;
     const c = counts[i];
     if (typeof c === "number") {
       const countSpan = document.createElement("span");
@@ -459,7 +457,6 @@ const renderRulesets = (enabledArr, counts) => {
     const helpTextId = addHelpTip(textWrap, `${input.id}_help`, meta.help);
     if (helpTextId) {
       input.setAttribute("aria-describedby", helpTextId);
-      input.title = meta.help;
     }
 
     input.addEventListener("change", async () => {

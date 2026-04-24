@@ -589,11 +589,15 @@
               id="noise-help"
               type="button"
               data-tip="Uses only this site's local probe history. Eligible decoys stay stable for the current weekly bucket and first visits remain plain-blocked."
-              title="Uses only this site's local probe history. Eligible decoys stay stable for the current weekly bucket and first visits remain plain-blocked."
               aria-label="Noise mode details"
+              aria-describedby="noise-help-text"
             >
               ?
             </button>
+            <span class="sr-only" id="noise-help-text"
+              >Uses only this site's local probe history. Eligible decoys stay stable for the
+              current weekly bucket and first visits remain plain-blocked.</span
+            >
           </div>
           <div class="desc" id="noise-desc">
             Instead of just blocking, return plausible decoy responses for a stable 3–8 ID subset of
@@ -620,11 +624,15 @@
               id="replay-help"
               type="button"
               data-tip="Scoped to likely recorder listeners. Normal page handlers still receive the real event values."
-              title="Scoped to likely recorder listeners. Normal page handlers still receive the real event values."
               aria-label="Replay poisoning details"
+              aria-describedby="replay-help-text"
             >
               ?
             </button>
+            <span class="sr-only" id="replay-help-text"
+              >Scoped to likely recorder listeners. Normal page handlers still receive the real
+              event values.</span
+            >
           </div>
           <div class="desc" id="replay-desc">
             When a replay SDK is detected, mask what its listeners see and optionally add local
@@ -660,11 +668,15 @@
           id="rulesets-help"
           type="button"
           data-tip="Network-layer blocks use Chrome declarative rulesets. Toggling a ruleset changes local browser blocking only."
-          title="Network-layer blocks use Chrome declarative rulesets. Toggling a ruleset changes local browser blocking only."
           aria-label="Ruleset details"
+          aria-describedby="rulesets-help-text"
         >
           ?
         </button>
+        <span class="sr-only" id="rulesets-help-text"
+          >Network-layer blocks use Chrome declarative rulesets. Toggling a ruleset changes local
+          browser blocking only.</span
+        >
       </div>
       <div id="rulesets"></div>
     </div>

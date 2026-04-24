@@ -839,7 +839,12 @@ test("popup exposes local help text for privacy controls", async ({ extension })
     "aria-describedby",
     "noise-desc"
   );
-  await expect(popupPage.locator("#noise-help")).toHaveAttribute("title", /local probe history/);
+  await expect(popupPage.locator("#noise-help")).toHaveAttribute("data-tip", /local probe history/);
+  await expect(popupPage.locator("#noise-help")).toHaveAttribute(
+    "aria-describedby",
+    "noise-help-text"
+  );
+  await expect(popupPage.locator("#noise-help")).not.toHaveAttribute("title", /.*/);
   await expect(popupPage.locator("#replay-mode")).toHaveAttribute(
     "aria-labelledby",
     "replay-title-text"
@@ -849,20 +854,39 @@ test("popup exposes local help text for privacy controls", async ({ extension })
     "replay-desc"
   );
   await expect(popupPage.locator("#replay-help")).toHaveAttribute(
-    "title",
+    "data-tip",
     /likely recorder listeners/
   );
+  await expect(popupPage.locator("#replay-help")).toHaveAttribute(
+    "aria-describedby",
+    "replay-help-text"
+  );
+  await expect(popupPage.locator("#replay-help")).not.toHaveAttribute("title", /.*/);
   await expect(popupPage.locator("#rulesets-help")).toHaveAttribute(
-    "title",
+    "data-tip",
     /declarative rulesets/
   );
+  await expect(popupPage.locator("#rulesets-help")).toHaveAttribute(
+    "aria-describedby",
+    "rulesets-help-text"
+  );
+  await expect(popupPage.locator("#rulesets-help")).not.toHaveAttribute("title", /.*/);
   await expect(popupPage.locator("#rs_fingerprint_vendors")).toHaveAttribute(
     "aria-describedby",
     "rs_fingerprint_vendors_help_text"
   );
   await expect(popupPage.locator("#rs_fingerprint_vendors_help")).toHaveAttribute(
-    "title",
+    "data-tip",
     /fingerprinting and anti-bot vendor endpoints/
+  );
+  await expect(popupPage.locator("#rs_fingerprint_vendors_help")).not.toHaveAttribute(
+    "title",
+    /.*/
+  );
+  await expect(popupPage.locator("#rs_fingerprint_vendors")).not.toHaveAttribute("title", /.*/);
+  await expect(popupPage.locator("label[for='rs_fingerprint_vendors']")).not.toHaveAttribute(
+    "title",
+    /.*/
   );
 });
 
