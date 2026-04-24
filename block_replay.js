@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- MAIN-world replay shims are safer kept contiguous */
+/* eslint-disable max-lines, max-statements, complexity -- MAIN-world replay shims are safer kept contiguous */
 // Static - MAIN-world opt-in session-replay poisoning.
 (() => {
   const BRIDGE_EVENT = "__static_replay_bridge_init__";
@@ -21,6 +21,8 @@
   const activeReplayListeners = [];
   const replayRegistrationStack = [];
   const datadogGlobals = new WeakSet();
+  const replayMethodSetters = new WeakSet();
+  const replayWrappedMethods = new WeakSet();
   const MAX_QUEUED_SIGNALS = 50;
   let bridgePort = null;
   let replayMode = "off";
@@ -108,44 +110,131 @@
     return null;
   };
 
-  const patchDatadogMethod = (target, key, wrap) => {
-    const orig = target && target[key];
-    if (typeof orig !== "function") return;
+  const posthogReplayDisabledByConfig = (config) =>
+    isObjectLike(config) &&
+    (config.disable_session_recording === true ||
+      config.sessionReplay === false ||
+      config.session_recording === false);
+
+  const posthogReplaySignalForInit = (config) =>
+    posthogReplayDisabledByConfig(config) ? null : "global:posthog.init.sessionReplay";
+
+  const wrapReplayMethod = (orig, key, wrap) => {
+    if (replayWrappedMethods.has(orig)) return orig;
     const wrapped = wrap(orig);
     if (typeof wrapped !== "function") return;
+    const stealthWrapped = stealth(wrapped, key, {
+      length: orig.length,
+      source: nativeSourceFor(orig, key),
+    });
+    replayWrappedMethods.add(stealthWrapped);
+    return stealthWrapped;
+  };
+
+  const patchReplayMethod = (target, key, wrap) => {
+    if (!isObjectLike(target)) return;
+    const desc = Object.getOwnPropertyDescriptor(target, key);
+    if (desc && "value" in desc) {
+      const orig = desc.value;
+      if (typeof orig !== "function" || replayWrappedMethods.has(orig)) return;
+      const wrapped = wrapReplayMethod(orig, key, wrap);
+      if (typeof wrapped !== "function") return;
+      try {
+        Object.defineProperty(target, key, {
+          configurable: desc.configurable,
+          enumerable: desc.enumerable,
+          writable: desc.writable,
+          value: wrapped,
+        });
+      } catch {
+        try {
+          target[key] = wrapped;
+        } catch {}
+      }
+      return;
+    }
+    if (desc && (desc.get || desc.set)) {
+      if (desc.set && replayMethodSetters.has(desc.set)) return;
+      try {
+        const current = target[key];
+        if (typeof current === "function" && !replayWrappedMethods.has(current)) {
+          target[key] = wrapReplayMethod(current, key, wrap);
+        }
+      } catch {}
+      return;
+    }
+    if (desc && !desc.configurable) return;
+
+    let currentValue;
+    const enumerable = desc ? desc.enumerable : true;
+    const setter = stealth(
+      function set(value) {
+        const nextValue = typeof value === "function" ? wrapReplayMethod(value, key, wrap) : value;
+        try {
+          Object.defineProperty(target, key, {
+            configurable: true,
+            enumerable,
+            writable: true,
+            value: nextValue,
+          });
+        } catch {
+          currentValue = nextValue;
+        }
+      },
+      `set ${key}`,
+      { length: 1 }
+    );
+    replayMethodSetters.add(setter);
     try {
       Object.defineProperty(target, key, {
         configurable: true,
-        enumerable: Object.prototype.propertyIsEnumerable.call(target, key),
-        writable: true,
-        value: stealth(wrapped, key, {
-          length: orig.length,
-          source: nativeSourceFor(orig, key),
-        }),
+        enumerable,
+        get: stealth(
+          function get() {
+            return currentValue;
+          },
+          `get ${key}`,
+          { length: 0 }
+        ),
+        set: setter,
       });
-    } catch {
-      try {
-        target[key] = stealth(wrapped, key, {
-          length: orig.length,
-          source: nativeSourceFor(orig, key),
-        });
-      } catch {}
-    }
+    } catch {}
   };
 
   const instrumentDatadogGlobal = (value) => {
     if (!isObjectLike(value) || datadogGlobals.has(value)) return value;
     datadogGlobals.add(value);
-    patchDatadogMethod(value, "init", (origInit) =>
+    patchReplayMethod(value, "init", (origInit) =>
       function init(config) {
         const signal = datadogReplaySignalForConfig(config);
         if (!signal) return origInit.apply(this, arguments);
         return runReplayRegistration(signal, origInit, { args: arguments, thisArg: this });
       }
     );
-    patchDatadogMethod(value, "startSessionReplayRecording", (origStart) =>
+    patchReplayMethod(value, "startSessionReplayRecording", (origStart) =>
       function startSessionReplayRecording() {
         return runReplayRegistration("global:DD_RUM.startSessionReplayRecording", origStart, {
+          args: arguments,
+          markAlways: true,
+          thisArg: this,
+        });
+      }
+    );
+    return value;
+  };
+
+  const instrumentPostHogGlobal = (value) => {
+    if (!isObjectLike(value)) return value;
+    patchReplayMethod(value, "init", (origInit) =>
+      function init(_token, config) {
+        const signal = posthogReplaySignalForInit(config);
+        if (!signal) return origInit.apply(this, arguments);
+        return runReplayRegistration(signal, origInit, { args: arguments, thisArg: this });
+      }
+    );
+    patchReplayMethod(value, "startSessionRecording", (origStart) =>
+      function startSessionRecording() {
+        return runReplayRegistration("global:posthog.startSessionRecording", origStart, {
           args: arguments,
           markAlways: true,
           thisArg: this,
@@ -178,6 +267,35 @@
             currentValue = instrumentDatadogGlobal(value);
           },
           "set DD_RUM",
+          { length: 1 }
+        ),
+      });
+    } catch {}
+  };
+
+  const patchPostHogGlobal = () => {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(window, "posthog");
+      if (desc) {
+        if ("value" in desc) instrumentPostHogGlobal(desc.value);
+        return;
+      }
+      let currentValue = undefined;
+      Object.defineProperty(window, "posthog", {
+        configurable: true,
+        enumerable: true,
+        get: stealth(
+          function get() {
+            return currentValue;
+          },
+          "get posthog",
+          { length: 0 }
+        ),
+        set: stealth(
+          function set(value) {
+            currentValue = instrumentPostHogGlobal(value);
+          },
+          "set posthog",
           { length: 1 }
         ),
       });
@@ -609,6 +727,9 @@
     try {
       instrumentDatadogGlobal(window.DD_RUM);
     } catch {}
+    try {
+      instrumentPostHogGlobal(window.posthog);
+    } catch {}
     for (const key of REPLAY_GLOBALS) {
       try {
         if (window[key] != null) markReplayDetected(`global:${key}`);
@@ -665,6 +786,7 @@
   };
 
   patchDatadogGlobal();
+  patchPostHogGlobal();
   patchReplayScriptProperties();
   patchReplayListeners();
   setTimeout(scanReplaySignals, 0);

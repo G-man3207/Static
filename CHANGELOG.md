@@ -15,6 +15,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Clear log now clears in-memory tab probe state, resets badges, and disarms already-open pages'
   Noise personas without requiring a reload.
 - Session replay blocking now covers PostHog's documented `*.i.posthog.com` cloud ingest/assets host family, and Replay poisoning recognizes PostHog replay bundle names used by first-party proxy setups.
+- Replay poisoning now recognizes documented PostHog global replay starts (`posthog.init(...)` default recording and `posthog.startSessionRecording()`) without treating explicitly disabled `disable_session_recording` installs as replay recorders.
 - Session replay blocking now covers Heap's documented classic replay `*.auryc.com` host family.
 - Noise mode no longer answers arbitrary supported-suffix path canaries like random `*.png` / `*.js` / `*.css` / `*.html` names; decoys are now limited to a conservative allowlist of plausible extension resource paths.
 
