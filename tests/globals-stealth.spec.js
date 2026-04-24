@@ -52,7 +52,10 @@ test("runs at document_start without exposing Static config or protected globals
         ),
       },
       after: {
-        reactDescriptor: !!Object.getOwnPropertyDescriptor(window, "__REACT_DEVTOOLS_GLOBAL_HOOK__"),
+        reactDescriptor: !!Object.getOwnPropertyDescriptor(
+          window,
+          "__REACT_DEVTOOLS_GLOBAL_HOOK__"
+        ),
         reactInWindow: "__REACT_DEVTOOLS_GLOBAL_HOOK__" in window,
         reactOwn: Object.prototype.hasOwnProperty.call(window, "__REACT_DEVTOOLS_GLOBAL_HOOK__"),
         reduxDescriptor: !!Object.getOwnPropertyDescriptor(window, "__REDUX_DEVTOOLS_EXTENSION__"),

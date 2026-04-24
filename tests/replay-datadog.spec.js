@@ -8,9 +8,9 @@ test("Replay poisoning detects Datadog Session Replay auto-start init", async ({
   await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
 
   await page.goto(server.url("/datadog-replay-auto.html"));
-  await expect.poll(() => page.evaluate(() => Array.isArray(window.__datadogReplayRecords))).toBe(
-    true
-  );
+  await expect
+    .poll(() => page.evaluate(() => Array.isArray(window.__datadogReplayRecords)))
+    .toBe(true);
   await page.waitForTimeout(300);
   await page.locator("#secret").fill("dd-auto@example.com");
 
@@ -38,9 +38,9 @@ test("Replay poisoning detects Datadog Session Replay manual start", async ({
   await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
 
   await page.goto(server.url("/datadog-replay-manual.html"));
-  await expect.poll(() => page.evaluate(() => Array.isArray(window.__datadogReplayRecords))).toBe(
-    true
-  );
+  await expect
+    .poll(() => page.evaluate(() => Array.isArray(window.__datadogReplayRecords)))
+    .toBe(true);
   await page.waitForTimeout(300);
   await page.evaluate(() => window.DD_RUM.startSessionReplayRecording());
   await page.locator("#secret").fill("dd-manual@example.com");

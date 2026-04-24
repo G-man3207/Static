@@ -64,7 +64,11 @@ const loadBridgeHarness = () => {
     addEventListener: (type, fn) => addListener(windowListeners, type, fn),
     chrome: {
       runtime: {
-        onMessage: { addListener(fn) { runtimeListeners.push(fn); } },
+        onMessage: {
+          addListener(fn) {
+            runtimeListeners.push(fn);
+          },
+        },
         sendMessage(message) {
           messages.push(message);
           if (message && message.type === "static_get_persona") {

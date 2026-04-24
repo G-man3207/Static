@@ -1,7 +1,8 @@
 // Static - MAIN-world iframe policy attribute normalizer.
 (() => {
   const LEGACY_ALLOW_ATTRS = ["allowfullscreen", "allowpaymentrequest"];
-  const IFRAME_POLICY_ATTR_RE = /\s(?:sandbox|allow|allowfullscreen|allowpaymentrequest)(?:\s*=|\s|\/?>)/i;
+  const IFRAME_POLICY_ATTR_RE =
+    /\s(?:sandbox|allow|allowfullscreen|allowpaymentrequest)(?:\s*=|\s|\/?>)/i;
   const IFRAME_MARKUP_RE = /<iframe\b/i;
   const IFRAME_TAG_RE = /<iframe\b[^>]*>/gi;
   const SANDBOX_ATTR_RE = /(\ssandbox\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
@@ -9,24 +10,22 @@
   const LEGACY_ALLOW_ATTR_RE =
     /\sallow(?:fullscreen|paymentrequest)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?/gi;
   const HAS_ALLOW_ATTR_RE = /\sallow(?:\s*=|\s|\/?>)/i;
-  const FALLBACK_SANDBOX_TOKENS = new Set(
-    [
-      "allow-downloads",
-      "allow-forms",
-      "allow-modals",
-      "allow-orientation-lock",
-      "allow-pointer-lock",
-      "allow-popups",
-      "allow-popups-to-escape-sandbox",
-      "allow-presentation",
-      "allow-same-origin",
-      "allow-scripts",
-      "allow-storage-access-by-user-activation",
-      "allow-top-navigation",
-      "allow-top-navigation-by-user-activation",
-      "allow-top-navigation-to-custom-protocols",
-    ]
-  );
+  const FALLBACK_SANDBOX_TOKENS = new Set([
+    "allow-downloads",
+    "allow-forms",
+    "allow-modals",
+    "allow-orientation-lock",
+    "allow-pointer-lock",
+    "allow-popups",
+    "allow-popups-to-escape-sandbox",
+    "allow-presentation",
+    "allow-same-origin",
+    "allow-scripts",
+    "allow-storage-access-by-user-activation",
+    "allow-top-navigation",
+    "allow-top-navigation-by-user-activation",
+    "allow-top-navigation-to-custom-protocols",
+  ]);
   let supportedAllowFeatures = null;
   let sandboxTokenList = null;
   let nativeRemoveAttribute = null;
@@ -391,7 +390,9 @@
     const wrapped = {
       replace(token, newToken) {
         if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
-        const oldToken = String(token || "").trim().toLowerCase();
+        const oldToken = String(token || "")
+          .trim()
+          .toLowerCase();
         const [safeNewToken] = normalizeSandboxTokens([newToken]);
         if (!oldToken || !sandboxSupports(oldToken) || !safeNewToken) return false;
         return orig.call(this, oldToken, safeNewToken);

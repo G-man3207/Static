@@ -564,7 +564,9 @@
         if (fake) {
           return String(name).toLowerCase() === "content-type" ? fake.contentType : null;
         }
-        const normalizedName = String(name == null ? "" : name).trim().toLowerCase();
+        const normalizedName = String(name == null ? "" : name)
+          .trim()
+          .toLowerCase();
         if (!normalizedName) return null;
         const visibleHeaderNames = visibleHeaderNamesFor(this);
         if (visibleHeaderNames && !visibleHeaderNames.has(normalizedName)) return null;

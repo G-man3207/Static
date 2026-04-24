@@ -96,11 +96,13 @@ test("Noise decoys srcset probes without exposing the replacement URL", async ({
     sourceSrcset: `${imageUrl} 1x`,
   });
 
-  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
-    "img.srcset": 1,
-    "setAttribute-srcset": 1,
-    "source.srcset": 1,
-  });
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      "img.srcset": 1,
+      "setAttribute-srcset": 1,
+      "source.srcset": 1,
+    });
 });
 
 test("Noise passive decoys preserve original URLs through attribute nodes and serialization", async ({
@@ -154,11 +156,13 @@ test("Noise passive decoys preserve original URLs through attribute nodes and se
     expect(value).not.toContain("data:image");
   }
 
-  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
-    "attr.value-src": 1,
-    "img.src": 1,
-    "setAttributeNode-src": 1,
-  });
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      "attr.value-src": 1,
+      "img.src": 1,
+      "setAttributeNode-src": 1,
+    });
 });
 
 test("Noise mode fails closed for non-GET method canaries", async ({ extension, server }) => {
@@ -168,25 +172,28 @@ test("Noise mode fails closed for non-GET method canaries", async ({ extension, 
   await page.goto(server.url("/blank.html"));
   await page.waitForTimeout(300);
 
-  const result = await page.evaluate(async (manifestUrl) => {
-    const fetchPost = await fetch(manifestUrl, { method: "POST" }).then(
-      () => "resolved",
-      (error) => error.name
-    );
-    const xhrPost = await new Promise((resolve) => {
-      const xhr = new XMLHttpRequest();
-      xhr.addEventListener("loadend", () => {
-        resolve({
-          responseURL: xhr.responseURL,
-          status: xhr.status,
+  const result = await page.evaluate(
+    async (manifestUrl) => {
+      const fetchPost = await fetch(manifestUrl, { method: "POST" }).then(
+        () => "resolved",
+        (error) => error.name
+      );
+      const xhrPost = await new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.addEventListener("loadend", () => {
+          resolve({
+            responseURL: xhr.responseURL,
+            status: xhr.status,
+          });
         });
+        xhr.open("POST", manifestUrl);
+        xhr.send("canary");
       });
-      xhr.open("POST", manifestUrl);
-      xhr.send("canary");
-    });
 
-    return { fetchPost, xhrPost };
-  }, probedUrl(PROBED_ID, "/manifest.json"));
+      return { fetchPost, xhrPost };
+    },
+    probedUrl(PROBED_ID, "/manifest.json")
+  );
 
   expect(result).toEqual({
     fetchPost: "TypeError",
@@ -204,25 +211,28 @@ test("Noise mode fails closed for unsupported path canaries", async ({ extension
   await page.goto(server.url("/blank.html"));
   await page.waitForTimeout(300);
 
-  const result = await page.evaluate(async (canaryUrl) => {
-    const fetchGet = await fetch(canaryUrl).then(
-      () => "resolved",
-      (error) => error.name
-    );
-    const xhrGet = await new Promise((resolve) => {
-      const xhr = new XMLHttpRequest();
-      xhr.addEventListener("loadend", () => {
-        resolve({
-          responseURL: xhr.responseURL,
-          status: xhr.status,
+  const result = await page.evaluate(
+    async (canaryUrl) => {
+      const fetchGet = await fetch(canaryUrl).then(
+        () => "resolved",
+        (error) => error.name
+      );
+      const xhrGet = await new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.addEventListener("loadend", () => {
+          resolve({
+            responseURL: xhr.responseURL,
+            status: xhr.status,
+          });
         });
+        xhr.open("GET", canaryUrl);
+        xhr.send();
       });
-      xhr.open("GET", canaryUrl);
-      xhr.send();
-    });
 
-    return { fetchGet, xhrGet };
-  }, probedUrl(PROBED_ID, "/canary-probe.bin"));
+      return { fetchGet, xhrGet };
+    },
+    probedUrl(PROBED_ID, "/canary-probe.bin")
+  );
 
   expect(result).toEqual({
     fetchGet: "TypeError",
@@ -391,11 +401,13 @@ test("Noise passive element decoys reject suspicious supported-suffix path canar
     },
   });
 
-  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
-    "img.src": 1,
-    "link.href": 4,
-    "script.src": 1,
-  });
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      "img.src": 1,
+      "link.href": 4,
+      "script.src": 1,
+    });
 });
 
 test("Noise XHR decoys expose a native-like readyState progression", async ({
@@ -553,15 +565,17 @@ test("style setProperty and cssText URL probes are fail-closed", async ({ extens
     textStyleText: "",
   });
 
-  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
-    "style.append": 1,
-    "style.cssText": 1,
-    "style.domInsertion": 1,
-    "style.innerHTML": 1,
-    "style.insertAdjacentHTML": 1,
-    "style.setProperty": 1,
-    "style.textContent": 1,
-  });
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      "style.append": 1,
+      "style.cssText": 1,
+      "style.domInsertion": 1,
+      "style.innerHTML": 1,
+      "style.insertAdjacentHTML": 1,
+      "style.setProperty": 1,
+      "style.textContent": 1,
+    });
 });
 
 test("style attribute URL probes are scrubbed synchronously across HTML sinks", async ({
@@ -581,8 +595,7 @@ test("style attribute URL probes are scrubbed synchronously across HTML sinks", 
       backgroundImage: el.style.backgroundImage,
       color: el.style.color,
       hasStyleUrl:
-        (el.getAttribute("style") || "").includes(styleUrl) ||
-        el.style.cssText.includes(styleUrl),
+        (el.getAttribute("style") || "").includes(styleUrl) || el.style.cssText.includes(styleUrl),
     });
 
     const bySetAttribute = document.createElement("div");
@@ -592,9 +605,7 @@ test("style attribute URL probes are scrubbed synchronously across HTML sinks", 
     bySetAttributeNS.setAttributeNS(null, "style", styleAttr("rgb(2, 3, 4)"));
 
     const innerHost = document.createElement("div");
-    innerHost.innerHTML = `<span id="inner-style" style='${styleAttr(
-      "rgb(3, 4, 5)"
-    )}'></span>`;
+    innerHost.innerHTML = `<span id="inner-style" style='${styleAttr("rgb(3, 4, 5)")}'></span>`;
     const byInnerHTML = innerHost.querySelector("#inner-style");
 
     const outerTarget = document.createElement("div");
@@ -613,7 +624,10 @@ test("style attribute URL probes are scrubbed synchronously across HTML sinks", 
     const byInsertAdjacentHTML = document.getElementById("adjacent-style");
 
     const parsed = new DOMParser()
-      .parseFromString(`<div id="parsed-style" style='${styleAttr("rgb(6, 7, 8)")}'></div>`, "text/html")
+      .parseFromString(
+        `<div id="parsed-style" style='${styleAttr("rgb(6, 7, 8)")}'></div>`,
+        "text/html"
+      )
       .querySelector("#parsed-style");
     document.body.appendChild(parsed);
 
@@ -652,13 +666,15 @@ test("style attribute URL probes are scrubbed synchronously across HTML sinks", 
     expect(observed.attr).not.toContain(imageUrl);
   }
 
-  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
-    "style.domInsertion": 1,
-    "style.innerHTML": 1,
-    "style.insertAdjacentHTML": 1,
-    "style.outerHTML": 1,
-    "style.replaceChildren": 1,
-    "style.setAttribute": 1,
-    "style.setAttributeNS": 1,
-  });
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      "style.domInsertion": 1,
+      "style.innerHTML": 1,
+      "style.insertAdjacentHTML": 1,
+      "style.outerHTML": 1,
+      "style.replaceChildren": 1,
+      "style.setAttribute": 1,
+      "style.setAttributeNS": 1,
+    });
 });

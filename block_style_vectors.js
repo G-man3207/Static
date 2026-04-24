@@ -520,7 +520,12 @@
       setAttributeNS(ns, name, value) {
         if (attrLocalName(name) === "style") {
           const sanitized = sanitizeStyleDeclarationValue(value, "style.setAttributeNS");
-          return origSetAttributeNS.call(this, ns, name, sanitized.changed ? sanitized.value : value);
+          return origSetAttributeNS.call(
+            this,
+            ns,
+            name,
+            sanitized.changed ? sanitized.value : value
+          );
         }
         return origSetAttributeNS.apply(this, arguments);
       },

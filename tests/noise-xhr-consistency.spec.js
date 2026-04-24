@@ -182,7 +182,10 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
   });
 });
 
-test("Noise setting changes refresh existing pages without reload", async ({ extension, server }) => {
+test("Noise setting changes refresh existing pages without reload", async ({
+  extension,
+  server,
+}) => {
   await seedNoisePersona(extension, server.origin);
   const pageOne = await extension.context.newPage();
   const pageTwo = await extension.context.newPage();
@@ -248,8 +251,7 @@ test("clearing logs disarms existing-page Noise personas without reload", async 
       extension.serviceWorker.evaluate(
         ({ id, origin }) =>
           chrome.storage.local.get(["probe_log", "user_secret"]).then((stored) => ({
-            blockedProbeCount:
-              (stored.probe_log && stored.probe_log[origin]?.idCounts?.[id]) || 0,
+            blockedProbeCount: (stored.probe_log && stored.probe_log[origin]?.idCounts?.[id]) || 0,
             hasSecret: typeof stored.user_secret === "string",
           })),
         { id: PROBED_ID, origin: server.origin }

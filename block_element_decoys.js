@@ -346,10 +346,7 @@
   };
 
   const trustedPolicyForScriptUrls = () => {
-    if (
-      !globalThis.trustedTypes ||
-      typeof globalThis.trustedTypes.createPolicy !== "function"
-    ) {
+    if (!globalThis.trustedTypes || typeof globalThis.trustedTypes.createPolicy !== "function") {
       return null;
     }
     if (trustedScriptUrlPolicy !== undefined) return trustedScriptUrlPolicy;
@@ -539,7 +536,9 @@
         desc.set.call(this, value);
       },
     };
-    const wrappedSet = desc.set ? Object.getOwnPropertyDescriptor(setterHolder, prop).set : desc.set;
+    const wrappedSet = desc.set
+      ? Object.getOwnPropertyDescriptor(setterHolder, prop).set
+      : desc.set;
     Object.defineProperty(proto, prop, {
       configurable: true,
       enumerable: desc.enumerable,
@@ -612,9 +611,7 @@
     const nativeEscaped = escapeSerializedAttr(nativeValue);
     if (!nativeEscaped || !html.includes(nativeEscaped)) return html;
     const pattern = new RegExp(
-      `(\\s${escapeRegExp(String(name).toLowerCase())}\\s*=\\s*")${escapeRegExp(
-        nativeEscaped
-      )}(")`,
+      `(\\s${escapeRegExp(String(name).toLowerCase())}\\s*=\\s*")${escapeRegExp(nativeEscaped)}(")`,
       "i"
     );
     return html.replace(pattern, `$1${escapeSerializedAttr(originalValue)}$2`);
@@ -646,12 +643,7 @@
   const applySerializedOriginalsFor = (el, html) => {
     let nextHtml = html;
     for (const entry of serializedAttrEntriesFor(el)) {
-      nextHtml = replaceSerializedAttrOnce(
-        nextHtml,
-        entry.name,
-        entry.nativeValue,
-        entry.original
-      );
+      nextHtml = replaceSerializedAttrOnce(nextHtml, entry.name, entry.nativeValue, entry.original);
     }
     return nextHtml;
   };
@@ -683,10 +675,14 @@
       Object.defineProperty(Element.prototype, "innerHTML", {
         configurable: true,
         enumerable: innerDesc.enumerable,
-        get: stealth(Object.getOwnPropertyDescriptor(innerGetterHolder, "innerHTML").get, "get innerHTML", {
-          length: 0,
-          source: nativeSourceFor(innerDesc.get, "get innerHTML"),
-        }),
+        get: stealth(
+          Object.getOwnPropertyDescriptor(innerGetterHolder, "innerHTML").get,
+          "get innerHTML",
+          {
+            length: 0,
+            source: nativeSourceFor(innerDesc.get, "get innerHTML"),
+          }
+        ),
         set: innerDesc.set,
       });
     }
@@ -699,10 +695,14 @@
       Object.defineProperty(Element.prototype, "outerHTML", {
         configurable: true,
         enumerable: outerDesc.enumerable,
-        get: stealth(Object.getOwnPropertyDescriptor(outerGetterHolder, "outerHTML").get, "get outerHTML", {
-          length: 0,
-          source: nativeSourceFor(outerDesc.get, "get outerHTML"),
-        }),
+        get: stealth(
+          Object.getOwnPropertyDescriptor(outerGetterHolder, "outerHTML").get,
+          "get outerHTML",
+          {
+            length: 0,
+            source: nativeSourceFor(outerDesc.get, "get outerHTML"),
+          }
+        ),
         set: outerDesc.set,
       });
     }

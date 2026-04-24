@@ -87,7 +87,9 @@ test("worklet module loaders fail closed for extension script URLs", async ({
     source: "function addModule() { [native code] }",
   });
 
-  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
-    "Worklet.addModule": availableCount,
-  });
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      "Worklet.addModule": availableCount,
+    });
 });

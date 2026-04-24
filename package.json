@@ -4,7 +4,10 @@
   "description": "Chrome MV3 extension that blocks extension-enumeration probes and known fingerprinting telemetry.",
   "private": true,
   "scripts": {
-    "check": "npm run lint:strict && npm run test:ci",
+    "prepare": "husky",
+    "check": "npm run format:check && npm run lint:strict && npm run test:ci",
+    "format": "prettier --write \"**/*.{js,html,json,md,yml}\"",
+    "format:check": "prettier --check \"**/*.{js,html,json,md,yml}\"",
     "lint": "eslint .",
     "lint:strict": "eslint . --max-warnings=0",
     "test": "npm run test:static && npm run test:e2e",
@@ -35,6 +38,8 @@
     "@eslint/json": "^1.2.0",
     "@playwright/test": "^1.59.1",
     "eslint": "^10.2.1",
-    "globals": "^17.5.0"
+    "globals": "^17.5.0",
+    "husky": "^9.1.7",
+    "prettier": "^3.8.3"
   }
 }

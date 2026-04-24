@@ -67,7 +67,8 @@
     }
   };
 
-  const isObjectLike = (value) => value && (typeof value === "object" || typeof value === "function");
+  const isObjectLike = (value) =>
+    value && (typeof value === "object" || typeof value === "function");
 
   const currentReplayRegistration = () =>
     replayRegistrationStack.length > 0
@@ -204,42 +205,54 @@
   const instrumentDatadogGlobal = (value) => {
     if (!isObjectLike(value) || datadogGlobals.has(value)) return value;
     datadogGlobals.add(value);
-    patchReplayMethod(value, "init", (origInit) =>
-      function init(config) {
-        const signal = datadogReplaySignalForConfig(config);
-        if (!signal) return origInit.apply(this, arguments);
-        return runReplayRegistration(signal, origInit, { args: arguments, thisArg: this });
-      }
+    patchReplayMethod(
+      value,
+      "init",
+      (origInit) =>
+        function init(config) {
+          const signal = datadogReplaySignalForConfig(config);
+          if (!signal) return origInit.apply(this, arguments);
+          return runReplayRegistration(signal, origInit, { args: arguments, thisArg: this });
+        }
     );
-    patchReplayMethod(value, "startSessionReplayRecording", (origStart) =>
-      function startSessionReplayRecording() {
-        return runReplayRegistration("global:DD_RUM.startSessionReplayRecording", origStart, {
-          args: arguments,
-          markAlways: true,
-          thisArg: this,
-        });
-      }
+    patchReplayMethod(
+      value,
+      "startSessionReplayRecording",
+      (origStart) =>
+        function startSessionReplayRecording() {
+          return runReplayRegistration("global:DD_RUM.startSessionReplayRecording", origStart, {
+            args: arguments,
+            markAlways: true,
+            thisArg: this,
+          });
+        }
     );
     return value;
   };
 
   const instrumentPostHogGlobal = (value) => {
     if (!isObjectLike(value)) return value;
-    patchReplayMethod(value, "init", (origInit) =>
-      function init(_token, config) {
-        const signal = posthogReplaySignalForInit(config);
-        if (!signal) return origInit.apply(this, arguments);
-        return runReplayRegistration(signal, origInit, { args: arguments, thisArg: this });
-      }
+    patchReplayMethod(
+      value,
+      "init",
+      (origInit) =>
+        function init(_token, config) {
+          const signal = posthogReplaySignalForInit(config);
+          if (!signal) return origInit.apply(this, arguments);
+          return runReplayRegistration(signal, origInit, { args: arguments, thisArg: this });
+        }
     );
-    patchReplayMethod(value, "startSessionRecording", (origStart) =>
-      function startSessionRecording() {
-        return runReplayRegistration("global:posthog.startSessionRecording", origStart, {
-          args: arguments,
-          markAlways: true,
-          thisArg: this,
-        });
-      }
+    patchReplayMethod(
+      value,
+      "startSessionRecording",
+      (origStart) =>
+        function startSessionRecording() {
+          return runReplayRegistration("global:posthog.startSessionRecording", origStart, {
+            args: arguments,
+            markAlways: true,
+            thisArg: this,
+          });
+        }
     );
     return value;
   };
