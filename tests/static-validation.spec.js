@@ -121,6 +121,7 @@ const expectedMainWorldScripts = [
   "block_adaptive.js",
   "block.js",
   "block_vectors.js",
+  "block_iframe_attrs.js",
   "block_style_vectors.js",
   "block_replay.js",
   "block_element_decoys.js",
@@ -324,7 +325,7 @@ test("bridge caps high-cardinality probe ID maps before service-worker flush", (
     });
   }
 
-  harness.dispatchWindow("beforeunload");
+  harness.dispatchWindow("pagehide");
   harness.runTimers();
   const message = harness.messages.find((msg) => msg.type === "static_probe_blocked");
 

@@ -4,6 +4,7 @@ const { startFixtureServer } = require("./server");
 
 const fixtureFiles = {
   "/blank.html": '<!doctype html><meta charset="utf-8"><body>blank</body>',
+  "/trusted-types.html": `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"><body>trusted</body>`,
   "/message-listener.html": `
     <!doctype html>
     <meta charset="utf-8">
