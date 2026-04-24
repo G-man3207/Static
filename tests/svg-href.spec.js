@@ -44,43 +44,46 @@ test("Noise handles SVG namespaced href and animated href probes consistently", 
   await page.goto(server.url("/blank.html"));
   await page.waitForTimeout(300);
 
-  const result = await page.evaluate((imageUrl) => {
-    const svgNs = "http://www.w3.org/2000/svg";
-    const xlinkNs = "http://www.w3.org/1999/xlink";
-    const use = document.createElementNS(svgNs, "use");
-    use.setAttributeNS(xlinkNs, "xlink:href", imageUrl);
+  const result = await page.evaluate(
+    (imageUrl) => {
+      const svgNs = "http://www.w3.org/2000/svg";
+      const xlinkNs = "http://www.w3.org/1999/xlink";
+      const use = document.createElementNS(svgNs, "use");
+      use.setAttributeNS(xlinkNs, "xlink:href", imageUrl);
 
-    const image = document.createElementNS(svgNs, "image");
-    image.href.baseVal = imageUrl;
-    const imageHref = image.href;
+      const image = document.createElementNS(svgNs, "image");
+      image.href.baseVal = imageUrl;
+      const imageHref = image.href;
 
-    const anchor = document.createElementNS(svgNs, "a");
-    anchor.setAttributeNS(xlinkNs, "xlink:href", imageUrl);
+      const anchor = document.createElementNS(svgNs, "a");
+      anchor.setAttributeNS(xlinkNs, "xlink:href", imageUrl);
 
-    const useHref = use.href;
-    return {
-      anchor: {
-        attr: anchor.getAttribute("xlink:href"),
-        attrNS: anchor.getAttributeNS(xlinkNs, "href"),
-        baseVal: anchor.href.baseVal,
-      },
-      image: {
-        attr: image.getAttribute("href"),
-        attrNS: image.getAttributeNS(xlinkNs, "href"),
-        baseVal: imageHref.baseVal,
-        hrefInstance: imageHref instanceof SVGAnimatedString,
-        sameHrefObject: imageHref === image.href,
-      },
-      use: {
-        attr: use.getAttribute("xlink:href"),
-        attrNS: use.getAttributeNS(xlinkNs, "href"),
-        baseVal: useHref.baseVal,
-        hrefAttr: use.getAttribute("href"),
-        hrefInstance: useHref instanceof SVGAnimatedString,
-        sameHrefObject: useHref === use.href,
-      },
-    };
-  }, probedUrl(PROBED_ID, "/icon.png"));
+      const useHref = use.href;
+      return {
+        anchor: {
+          attr: anchor.getAttribute("xlink:href"),
+          attrNS: anchor.getAttributeNS(xlinkNs, "href"),
+          baseVal: anchor.href.baseVal,
+        },
+        image: {
+          attr: image.getAttribute("href"),
+          attrNS: image.getAttributeNS(xlinkNs, "href"),
+          baseVal: imageHref.baseVal,
+          hrefInstance: imageHref instanceof SVGAnimatedString,
+          sameHrefObject: imageHref === image.href,
+        },
+        use: {
+          attr: use.getAttribute("xlink:href"),
+          attrNS: use.getAttributeNS(xlinkNs, "href"),
+          baseVal: useHref.baseVal,
+          hrefAttr: use.getAttribute("href"),
+          hrefInstance: useHref instanceof SVGAnimatedString,
+          sameHrefObject: useHref === use.href,
+        },
+      };
+    },
+    probedUrl(PROBED_ID, "/icon.png")
+  );
 
   expect(result).toEqual({
     anchor: {
@@ -105,9 +108,11 @@ test("Noise handles SVG namespaced href and animated href probes consistently", 
     },
   });
 
-  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
-    "setAttributeNS-href": 1,
-    "svg.image.href": 1,
-    setAttributeNS: 1,
-  });
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      "setAttributeNS-href": 1,
+      "svg.image.href": 1,
+      setAttributeNS: 1,
+    });
 });

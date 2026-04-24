@@ -391,8 +391,12 @@
   };
 
   const patchWorkers = () => {
-    if (window.Worker) window.Worker = patchWorkerCtor(window.Worker, "Worker");
-    if (window.SharedWorker) window.SharedWorker = patchWorkerCtor(window.SharedWorker, "SharedWorker");
+    if (window.Worker) {
+      window.Worker = patchWorkerCtor(window.Worker, "Worker");
+    }
+    if (window.SharedWorker) {
+      window.SharedWorker = patchWorkerCtor(window.SharedWorker, "SharedWorker");
+    }
   };
 
   const patchAudioCtor = () => {
@@ -407,7 +411,10 @@
     };
     wrappedAudio.prototype = OrigAudio.prototype;
     alignPrototypeConstructor(wrappedAudio, OrigAudio);
-    window.Audio = stealth(wrappedAudio, "Audio", { length: OrigAudio.length, source: nativeSourceFor(OrigAudio, "Audio") });
+    window.Audio = stealth(wrappedAudio, "Audio", {
+      length: OrigAudio.length,
+      source: nativeSourceFor(OrigAudio, "Audio"),
+    });
   };
 
   const makeBlockedEventSource = (url, opts, origES) => {

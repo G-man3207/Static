@@ -128,13 +128,7 @@ test("filters unsupported iframe allow tokens without browser console warnings",
           ? document.featurePolicy.allowedFeatures()
           : []
       );
-      const tokens = [
-        "fullscreen",
-        "web-share",
-        "speaker",
-        "downloads",
-        "totally-made-up-feature",
-      ];
+      const tokens = ["fullscreen", "web-share", "speaker", "downloads", "totally-made-up-feature"];
       const iframe = document.createElement("iframe");
       iframe.setAttribute("allow", tokens.join("; "));
       return {
@@ -264,35 +258,38 @@ test("uses TrustedScriptURL-compatible script decoys on Trusted Types pages", as
     await page.goto(server.url("/trusted-types.html"));
     await page.waitForTimeout(100);
 
-    const result = await page.evaluate((url) => {
-      const assignProperty = document.createElement("script");
-      const setAttribute = document.createElement("script");
-      const outcomes = {};
+    const result = await page.evaluate(
+      (url) => {
+        const assignProperty = document.createElement("script");
+        const setAttribute = document.createElement("script");
+        const outcomes = {};
 
-      try {
-        assignProperty.src = url;
-        outcomes.property = {
-          attr: assignProperty.getAttribute("src"),
-          ok: true,
-          src: assignProperty.src,
-        };
-      } catch (error) {
-        outcomes.property = { message: error.message, name: error.name, ok: false };
-      }
+        try {
+          assignProperty.src = url;
+          outcomes.property = {
+            attr: assignProperty.getAttribute("src"),
+            ok: true,
+            src: assignProperty.src,
+          };
+        } catch (error) {
+          outcomes.property = { message: error.message, name: error.name, ok: false };
+        }
 
-      try {
-        setAttribute.setAttribute("src", url);
-        outcomes.attribute = {
-          attr: setAttribute.getAttribute("src"),
-          ok: true,
-          src: setAttribute.src,
-        };
-      } catch (error) {
-        outcomes.attribute = { message: error.message, name: error.name, ok: false };
-      }
+        try {
+          setAttribute.setAttribute("src", url);
+          outcomes.attribute = {
+            attr: setAttribute.getAttribute("src"),
+            ok: true,
+            src: setAttribute.src,
+          };
+        } catch (error) {
+          outcomes.attribute = { message: error.message, name: error.name, ok: false };
+        }
 
-      return outcomes;
-    }, probedUrl(PROBED_ID, "/content.js"));
+        return outcomes;
+      },
+      probedUrl(PROBED_ID, "/content.js")
+    );
     await page.waitForTimeout(100);
 
     expect(result).toEqual({
@@ -362,9 +359,9 @@ test("suppresses unsafe-header console errors while preserving exposed XHR heade
         visibleDigest: "visible",
       });
       expect(result.allHeaders).toContain("x-visible-digest: visible");
-      expect(messages.filter((message) => /Refused to get unsafe header/.test(message.text))).toEqual(
-        []
-      );
+      expect(
+        messages.filter((message) => /Refused to get unsafe header/.test(message.text))
+      ).toEqual([]);
     } finally {
       page.off("console", onConsole);
     }
@@ -936,9 +933,9 @@ test("Adaptive observe-only logging records environment snapshot telemetry with 
 }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-environment-fingerprint.html"));
-  await expect.poll(() => page.evaluate(() => window.__adaptiveEnvironmentDone === true)).toBe(
-    true
-  );
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveEnvironmentDone === true))
+    .toBe(true);
 
   await expect
     .poll(() =>
@@ -1110,9 +1107,9 @@ test("Adaptive runtime detection recognizes custom DataDome tag paths with expli
 }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-custom-datadome.html"));
-  await expect.poll(() => page.evaluate(() => window.__adaptiveVendorCustomDatadomeDone === true)).toBe(
-    true
-  );
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveVendorCustomDatadomeDone === true))
+    .toBe(true);
 
   await expect
     .poll(() =>
@@ -1224,9 +1221,9 @@ test("Adaptive runtime detection recognizes HUMAN ABR custom sensor endpoints fr
 }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-human-abr-custom-endpoint.html"));
-  await expect.poll(() => page.evaluate(() => window.__adaptiveVendorHumanAbrDone === true)).toBe(
-    true
-  );
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveVendorHumanAbrDone === true))
+    .toBe(true);
 
   await expect
     .poll(() =>
@@ -1296,9 +1293,9 @@ test("Adaptive runtime detection ignores partial vendor lookalikes", async ({
 }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-benign.html"));
-  await expect.poll(() => page.evaluate(() => window.__adaptiveVendorBenignDone === true)).toBe(
-    true
-  );
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveVendorBenignDone === true))
+    .toBe(true);
   await page.waitForTimeout(500);
 
   const storage = await extension.serviceWorker.evaluate(() =>
@@ -1334,7 +1331,9 @@ test("Adaptive behavior logging attributes external collector bundles by script 
     });
 
   const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
-    return chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]);
+    return chrome.storage.local
+      .get("adaptive_log")
+      .then(({ adaptive_log }) => adaptive_log[origin]);
   }, server.origin);
 
   expect(adaptiveEntry.reasons).toEqual(
@@ -1376,7 +1375,9 @@ test("Adaptive behavior logging attributes dynamic module collectors by redacted
     });
 
   const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
-    return chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]);
+    return chrome.storage.local
+      .get("adaptive_log")
+      .then(({ adaptive_log }) => adaptive_log[origin]);
   }, server.origin);
 
   expect(adaptiveEntry.reasons).toEqual(
@@ -1419,7 +1420,9 @@ test("Adaptive behavior logging falls back to runtime labels when async collecto
     });
 
   const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
-    return chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]);
+    return chrome.storage.local
+      .get("adaptive_log")
+      .then(({ adaptive_log }) => adaptive_log[origin]);
   }, server.origin);
 
   expect(adaptiveEntry.reasons).toEqual(
@@ -1459,7 +1462,9 @@ test("Adaptive behavior logging attributes postMessage listener objects by regis
     });
 
   const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
-    return chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]);
+    return chrome.storage.local
+      .get("adaptive_log")
+      .then(({ adaptive_log }) => adaptive_log[origin]);
   }, server.origin);
 
   expect(adaptiveEntry.reasons).toEqual(
@@ -1501,7 +1506,9 @@ test("Adaptive behavior logging attributes onmessage handlers through runtime so
     });
 
   const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
-    return chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]);
+    return chrome.storage.local
+      .get("adaptive_log")
+      .then(({ adaptive_log }) => adaptive_log[origin]);
   }, server.origin);
   expect(adaptiveEntry.sources["inline-or-runtime"]).toBeUndefined();
 });
@@ -1791,9 +1798,7 @@ test("DOM marker scrubber hides transient markers from page MutationObservers", 
       markedAttrHasData: markedAttr.hasAttribute("data-dashlanecreated"),
       markerConnected: marker.isConnected,
       records,
-      safeSeen: records.some((record) =>
-        record.added.some((node) => node.id === "safe-observed")
-      ),
+      safeSeen: records.some((record) => record.added.some((node) => node.id === "safe-observed")),
     };
   });
 

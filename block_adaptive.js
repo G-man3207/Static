@@ -49,7 +49,8 @@
   const DOM_MARKER_ATTR_RE =
     /^(?:data-(?:1password(?:-|$)|1p(?:-|$)|onepassword(?:-|$)|op(?:-|$)|lastpass(?:-|$)|lp-(?:ignore|id|tab)|dashlane(?:-|$)|dashlanecreated|grammarly(?:-|$)|gramm(?:-|$)|gr-c-s-(?:loaded|check-loaded)$|honey(?:-|$)|honeyextension(?:-|$)|keeper(?:-|$)|roboform(?:-|$)|nordpass(?:-|$))|__lpform_)/i;
   const DOM_MARKER_TAG_RE = /^(?:grammarly-|lastpass-|dashlane-|honey-|onepassword-)/i;
-  const DOM_MARKER_CLASS_RE = /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-))/i;
+  const DOM_MARKER_CLASS_RE =
+    /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-))/i;
   const adaptiveWindows = new Map();
   const queuedSignals = [];
   const reportedVendorSignals = new Set();
@@ -705,11 +706,14 @@
     try {
       for (const entry of Array.from(queue)) observeSiftQueueCommand(entry, source);
     } catch {}
-    patchObjectMethod(queue, "push", (origPush) =>
-      function push(...items) {
-        for (const item of items) observeSiftQueueCommand(item, source);
-        return origPush.apply(this, items);
-      }
+    patchObjectMethod(
+      queue,
+      "push",
+      (origPush) =>
+        function push(...items) {
+          for (const item of items) observeSiftQueueCommand(item, source);
+          return origPush.apply(this, items);
+        }
     );
     return queue;
   };
@@ -744,19 +748,25 @@
     if ((!hasLoad && !hasStart) || instrumentedFingerprintGlobals.has(value)) return value;
     instrumentedFingerprintGlobals.add(value);
     if (hasLoad) {
-      patchObjectMethod(value, "load", (origLoad) =>
-        function load(options) {
-          observeFingerprintCall("load", options, source);
-          return origLoad.apply(this, arguments);
-        }
+      patchObjectMethod(
+        value,
+        "load",
+        (origLoad) =>
+          function load(options) {
+            observeFingerprintCall("load", options, source);
+            return origLoad.apply(this, arguments);
+          }
       );
     }
     if (hasStart) {
-      patchObjectMethod(value, "start", (origStart) =>
-        function start(options) {
-          observeFingerprintCall("start", options, source);
-          return origStart.apply(this, arguments);
-        }
+      patchObjectMethod(
+        value,
+        "start",
+        (origStart) =>
+          function start(options) {
+            observeFingerprintCall("start", options, source);
+            return origStart.apply(this, arguments);
+          }
       );
     }
     return value;
@@ -835,7 +845,9 @@
     });
     patchWindowValue("_sift", (value, source) => instrumentSiftQueue(value, source));
     patchWindowValue("Fingerprint", (value, source) => instrumentFingerprintGlobal(value, source));
-    patchWindowValue("FingerprintJS", (value, source) => instrumentFingerprintGlobal(value, source));
+    patchWindowValue("FingerprintJS", (value, source) =>
+      instrumentFingerprintGlobal(value, source)
+    );
   };
 
   const humanDefaultFirstPartyInitPathFor = (appId) => {
@@ -875,8 +887,7 @@
     if (
       pathname === "/s.js" ||
       /^\/js\/s-\d+\.js$/i.test(pathname) ||
-      (host.endsWith("sift.com") &&
-        (pathname === "/s.js" || /^\/js\/s-\d+\.js$/i.test(pathname)))
+      (host.endsWith("sift.com") && (pathname === "/s.js" || /^\/js\/s-\d+\.js$/i.test(pathname)))
     ) {
       const state = vendorState.sift;
       state.scriptUrl = parsed.href;
@@ -1205,12 +1216,7 @@
               target === document ||
               target === document.documentElement ||
               target === document.body;
-            if (
-              globalTarget &&
-              options &&
-              options.subtree &&
-              !hasStaticInternalObserverCaller()
-            ) {
+            if (globalTarget && options && options.subtree && !hasStaticInternalObserverCaller()) {
               recordAdaptiveSignal("dom_observer", { detail: "mutation.subtree" });
             }
           } catch {}
@@ -1227,68 +1233,92 @@
   };
 
   const patchAsyncSourceContext = () => {
-    patchObjectMethod(window, "setTimeout", (origSetTimeout) =>
-      function setTimeout(_handler) {
-        const args = Array.from(arguments);
-        args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "setTimeout");
-        return origSetTimeout.apply(this, args);
-      }
+    patchObjectMethod(
+      window,
+      "setTimeout",
+      (origSetTimeout) =>
+        function setTimeout(_handler) {
+          const args = Array.from(arguments);
+          args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "setTimeout");
+          return origSetTimeout.apply(this, args);
+        }
     );
-    patchObjectMethod(window, "setInterval", (origSetInterval) =>
-      function setInterval(_handler) {
-        const args = Array.from(arguments);
-        args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "setInterval");
-        return origSetInterval.apply(this, args);
-      }
+    patchObjectMethod(
+      window,
+      "setInterval",
+      (origSetInterval) =>
+        function setInterval(_handler) {
+          const args = Array.from(arguments);
+          args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "setInterval");
+          return origSetInterval.apply(this, args);
+        }
     );
-    patchObjectMethod(window, "requestAnimationFrame", (origRequestAnimationFrame) =>
-      function requestAnimationFrame(callback) {
-        return origRequestAnimationFrame.call(
-          this,
-          wrapAsyncCallback(callback, currentAdaptiveSource(), "requestAnimationFrame")
-        );
-      }
+    patchObjectMethod(
+      window,
+      "requestAnimationFrame",
+      (origRequestAnimationFrame) =>
+        function requestAnimationFrame(callback) {
+          return origRequestAnimationFrame.call(
+            this,
+            wrapAsyncCallback(callback, currentAdaptiveSource(), "requestAnimationFrame")
+          );
+        }
     );
-    patchObjectMethod(window, "requestIdleCallback", (origRequestIdleCallback) =>
-      function requestIdleCallback(_callback) {
-        const args = Array.from(arguments);
-        args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "requestIdleCallback");
-        return origRequestIdleCallback.apply(this, args);
-      }
+    patchObjectMethod(
+      window,
+      "requestIdleCallback",
+      (origRequestIdleCallback) =>
+        function requestIdleCallback(_callback) {
+          const args = Array.from(arguments);
+          args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "requestIdleCallback");
+          return origRequestIdleCallback.apply(this, args);
+        }
     );
-    patchObjectMethod(window, "queueMicrotask", (origQueueMicrotask) =>
-      function queueMicrotask(callback) {
-        return origQueueMicrotask.call(
-          this,
-          wrapAsyncCallback(callback, currentAdaptiveSource(), "queueMicrotask")
-        );
-      }
+    patchObjectMethod(
+      window,
+      "queueMicrotask",
+      (origQueueMicrotask) =>
+        function queueMicrotask(callback) {
+          return origQueueMicrotask.call(
+            this,
+            wrapAsyncCallback(callback, currentAdaptiveSource(), "queueMicrotask")
+          );
+        }
     );
-    patchObjectMethod(Promise.prototype, "then", (origThen) =>
-      function then(onFulfilled, onRejected) {
-        const source = currentAdaptiveSource();
-        return origThen.call(
-          this,
-          wrapAsyncCallback(onFulfilled, source, "promise.then"),
-          wrapAsyncCallback(onRejected, source, "promise.then")
-        );
-      }
+    patchObjectMethod(
+      Promise.prototype,
+      "then",
+      (origThen) =>
+        function then(onFulfilled, onRejected) {
+          const source = currentAdaptiveSource();
+          return origThen.call(
+            this,
+            wrapAsyncCallback(onFulfilled, source, "promise.then"),
+            wrapAsyncCallback(onRejected, source, "promise.then")
+          );
+        }
     );
-    patchObjectMethod(Promise.prototype, "catch", (origCatch) =>
-      function catch_(onRejected) {
-        return origCatch.call(
-          this,
-          wrapAsyncCallback(onRejected, currentAdaptiveSource(), "promise.catch")
-        );
-      }
+    patchObjectMethod(
+      Promise.prototype,
+      "catch",
+      (origCatch) =>
+        function catch_(onRejected) {
+          return origCatch.call(
+            this,
+            wrapAsyncCallback(onRejected, currentAdaptiveSource(), "promise.catch")
+          );
+        }
     );
-    patchObjectMethod(Promise.prototype, "finally", (origFinally) =>
-      function finally_(onFinally) {
-        return origFinally.call(
-          this,
-          wrapAsyncCallback(onFinally, currentAdaptiveSource(), "promise.finally")
-        );
-      }
+    patchObjectMethod(
+      Promise.prototype,
+      "finally",
+      (origFinally) =>
+        function finally_(onFinally) {
+          return origFinally.call(
+            this,
+            wrapAsyncCallback(onFinally, currentAdaptiveSource(), "promise.finally")
+          );
+        }
     );
   };
 

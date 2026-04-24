@@ -8,9 +8,9 @@ test("Replay poisoning detects proxied PostHog lazy recorder bundles", async ({
   await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
 
   await page.goto(server.url("/posthog-replay.html"));
-  await expect.poll(() => page.evaluate(() => Array.isArray(window.__posthogReplayRecords))).toBe(
-    true
-  );
+  await expect
+    .poll(() => page.evaluate(() => Array.isArray(window.__posthogReplayRecords)))
+    .toBe(true);
   await page.waitForTimeout(300);
   await page.locator("#secret").fill("posthog-replay@example.com");
 

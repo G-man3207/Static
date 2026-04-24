@@ -244,15 +244,17 @@ test("whitespace-padded extension URL probes are normalized before blocking", as
     },
   });
 
-  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
-    Worker: 1,
-    "anchor.href": 1,
-    fetch: 1,
-    "img.src": 1,
-    setAttribute: 2,
-    "style.setProperty": 1,
-    xhr: 1,
-  });
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      Worker: 1,
+      "anchor.href": 1,
+      fetch: 1,
+      "img.src": 1,
+      setAttribute: 2,
+      "style.setProperty": 1,
+      xhr: 1,
+    });
 });
 
 test("Noise keeps frame probes fail-closed and logs attribute vectors", async ({
@@ -603,33 +605,36 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
-  const result = await page.evaluate(async (styleUrl) => {
-    const insertedSheet = new CSSStyleSheet();
-    const insertResult = insertedSheet.insertRule(`@import url("${styleUrl}")`);
+  const result = await page.evaluate(
+    async (styleUrl) => {
+      const insertedSheet = new CSSStyleSheet();
+      const insertResult = insertedSheet.insertRule(`@import url("${styleUrl}")`);
 
-    const replaceSheet = new CSSStyleSheet();
-    const replaceResult = await replaceSheet.replace(`@import url("${styleUrl}")`);
+      const replaceSheet = new CSSStyleSheet();
+      const replaceResult = await replaceSheet.replace(`@import url("${styleUrl}")`);
 
-    const replaceSyncSheet = new CSSStyleSheet();
-    const replaceSyncResult = replaceSyncSheet.replaceSync(`@import url("${styleUrl}")`);
-    const addRuleSheet = new CSSStyleSheet();
-    const addRuleAvailable = typeof addRuleSheet.addRule === "function";
-    const addRuleResult = addRuleAvailable
-      ? addRuleSheet.addRule("body", `background-image: url("${styleUrl}")`)
-      : "unavailable";
+      const replaceSyncSheet = new CSSStyleSheet();
+      const replaceSyncResult = replaceSyncSheet.replaceSync(`@import url("${styleUrl}")`);
+      const addRuleSheet = new CSSStyleSheet();
+      const addRuleAvailable = typeof addRuleSheet.addRule === "function";
+      const addRuleResult = addRuleAvailable
+        ? addRuleSheet.addRule("body", `background-image: url("${styleUrl}")`)
+        : "unavailable";
 
-    return {
-      addRuleAvailable,
-      addRuleResult,
-      addRuleRules: addRuleSheet.cssRules.length,
-      insertResult,
-      insertedRules: insertedSheet.cssRules.length,
-      replaceResultIsSheet: replaceResult === replaceSheet,
-      replaceRules: replaceSheet.cssRules.length,
-      replaceSyncResult,
-      replaceSyncRules: replaceSyncSheet.cssRules.length,
-    };
-  }, probedUrl(PROBED_ID, "/style.css"));
+      return {
+        addRuleAvailable,
+        addRuleResult,
+        addRuleRules: addRuleSheet.cssRules.length,
+        insertResult,
+        insertedRules: insertedSheet.cssRules.length,
+        replaceResultIsSheet: replaceResult === replaceSheet,
+        replaceRules: replaceSheet.cssRules.length,
+        replaceSyncResult,
+        replaceSyncRules: replaceSyncSheet.cssRules.length,
+      };
+    },
+    probedUrl(PROBED_ID, "/style.css")
+  );
 
   expect(result).toMatchObject({
     insertResult: 0,
