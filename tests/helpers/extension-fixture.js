@@ -111,6 +111,37 @@ const fixtureFiles = {
     }
     document.addEventListener("input", sentryReplayIntegrationRecorder, true);
   `,
+  "/posthog-replay.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <input id="secret" type="email" />
+    <script src="/assets/posthog/static/lazy-recorder.js"></script>
+    <script>
+      window.__posthogAppValues = [];
+      document.addEventListener("input", (event) => {
+        window.__posthogAppValues.push(event.target.value);
+      });
+    </script>
+  `,
+  "/assets/posthog/static/lazy-recorder.js": `
+    window.__posthogReplayRecords = [];
+    window.__PosthogExtensions__ = {
+      initSessionRecording() {},
+      rrweb: { record() {} },
+    };
+    window.posthog = {
+      sessionRecordingStarted() {
+        return true;
+      },
+    };
+    function posthogLazyRecorder(event) {
+      window.__posthogReplayRecords.push({
+        type: event.type,
+        value: event.target && event.target.value,
+      });
+    }
+    document.addEventListener("input", posthogLazyRecorder, true);
+  `,
   "/datadog-replay-auto.html": `
     <!doctype html>
     <meta charset="utf-8">

@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Fixed
 
+- Session replay blocking now covers PostHog's documented `*.i.posthog.com` cloud ingest/assets host family, and Replay poisoning recognizes PostHog replay bundle names used by first-party proxy setups.
 - Session replay blocking now covers Heap's documented classic replay `*.auryc.com` host family.
 - Noise mode no longer answers arbitrary supported-suffix path canaries like random `*.png` / `*.js` / `*.css` / `*.html` names; decoys are now limited to a conservative allowlist of plausible extension resource paths.
 

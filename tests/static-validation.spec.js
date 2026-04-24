@@ -325,6 +325,7 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     "||auryc.com^",
     "||heap-api.com^",
     "||heapanalytics.com^",
+    "||i.posthog.com^",
   ]) {
     expect(replayFilters.has(filter), `session_replay missing ${filter}`).toBe(true);
   }

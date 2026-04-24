@@ -3,7 +3,7 @@
 (() => {
   const BRIDGE_EVENT = "__static_replay_bridge_init__";
   const REPLAY_RE =
-    /(fullstory|fs\.js|logrocket|mouseflow|smartlook|clarity|heap|pendo|luckyorange|inspectlet|browsee|contentsquare|quantummetric|session[-_]?replay|@sentry\/replay|sentry.*(?:replay|rrweb)|browser\.sentry-cdn\.com\/.*replay|replayIntegration|replayCanvasIntegration|replaysSessionSampleRate|replaysOnErrorSampleRate|beforeAddRecordingEvent|ReplayCanvas|rrweb|sessionReplaySampleRate|replaySampleRate|premiumSampleRate|startSessionReplayRecording(?:Manually)?|stopSessionReplayRecording|@datadog\/browser-rum)/i;
+    /(fullstory|fs\.js|logrocket|mouseflow|smartlook|clarity|heap|pendo|luckyorange|inspectlet|browsee|contentsquare|quantummetric|session[-_]?replay|posthog-recorder|lazy-recorder|recorder-v2|(?:^|\/|\.)recorder\.js|startSessionRecording|stopSessionRecording|sessionRecordingStarted|@sentry\/replay|sentry.*(?:replay|rrweb)|browser\.sentry-cdn\.com\/.*replay|replayIntegration|replayCanvasIntegration|replaysSessionSampleRate|replaysOnErrorSampleRate|beforeAddRecordingEvent|ReplayCanvas|rrweb|sessionReplaySampleRate|replaySampleRate|premiumSampleRate|startSessionReplayRecording(?:Manually)?|stopSessionReplayRecording|@datadog\/browser-rum)/i;
   const REPLAY_GLOBALS =
     `FS _fs_org _fs_host LogRocket Mouseflow mouseflow smartlook clarity heap pendo __lo_site_id __insp Inspectlet Browsee QuantumMetricAPI`.split(
       " "
