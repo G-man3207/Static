@@ -25,5 +25,14 @@
       "urlFilter": "||captcha-delivery.com^",
       "resourceTypes": ["sub_frame", "xmlhttprequest", "ping", "image", "script", "other"]
     }
+  },
+  {
+    "id": 4,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||challenges.cloudflare.com^",
+      "resourceTypes": ["sub_frame", "xmlhttprequest", "ping", "image", "script", "other"]
+    }
   }
 ]

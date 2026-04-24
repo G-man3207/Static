@@ -430,6 +430,10 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     captchaFilters.has("||captcha-delivery.com^"),
     "captcha_vendors missing DataDome response pages"
   ).toBe(true);
+  expect(
+    captchaFilters.has("||challenges.cloudflare.com^"),
+    "captcha_vendors missing Cloudflare Turnstile / Challenge Platform"
+  ).toBe(true);
 
   for (const filter of [
     "||api.fpjs.pro^",

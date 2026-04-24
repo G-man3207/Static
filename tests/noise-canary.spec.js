@@ -554,7 +554,6 @@ test("style setProperty and cssText URL probes are fail-closed", async ({ extens
   });
 
   await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
-    "style.attribute": 1,
     "style.append": 1,
     "style.cssText": 1,
     "style.domInsertion": 1,
@@ -562,5 +561,104 @@ test("style setProperty and cssText URL probes are fail-closed", async ({ extens
     "style.insertAdjacentHTML": 1,
     "style.setProperty": 1,
     "style.textContent": 1,
+  });
+});
+
+test("style attribute URL probes are scrubbed synchronously across HTML sinks", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const imageUrl = probedUrl(PROBED_ID, "/icon.png");
+  const result = await page.evaluate((styleUrl) => {
+    const styleAttr = (color) => `color: ${color}; background-image: url("${styleUrl}")`;
+    const summarize = (el) => ({
+      attr: el.getAttribute("style") || "",
+      backgroundImage: el.style.backgroundImage,
+      color: el.style.color,
+      hasStyleUrl:
+        (el.getAttribute("style") || "").includes(styleUrl) ||
+        el.style.cssText.includes(styleUrl),
+    });
+
+    const bySetAttribute = document.createElement("div");
+    bySetAttribute.setAttribute("style", styleAttr("rgb(1, 2, 3)"));
+
+    const bySetAttributeNS = document.createElement("div");
+    bySetAttributeNS.setAttributeNS(null, "style", styleAttr("rgb(2, 3, 4)"));
+
+    const innerHost = document.createElement("div");
+    innerHost.innerHTML = `<span id="inner-style" style='${styleAttr(
+      "rgb(3, 4, 5)"
+    )}'></span>`;
+    const byInnerHTML = innerHost.querySelector("#inner-style");
+
+    const outerTarget = document.createElement("div");
+    document.body.appendChild(outerTarget);
+    outerTarget.outerHTML = `<section id="outer-style" style='${styleAttr(
+      "rgb(4, 5, 6)"
+    )}'></section>`;
+    const byOuterHTML = document.getElementById("outer-style");
+
+    const adjacentHost = document.createElement("div");
+    document.body.appendChild(adjacentHost);
+    adjacentHost.insertAdjacentHTML(
+      "beforeend",
+      `<span id="adjacent-style" style='${styleAttr("rgb(5, 6, 7)")}'></span>`
+    );
+    const byInsertAdjacentHTML = document.getElementById("adjacent-style");
+
+    const parsed = new DOMParser()
+      .parseFromString(`<div id="parsed-style" style='${styleAttr("rgb(6, 7, 8)")}'></div>`, "text/html")
+      .querySelector("#parsed-style");
+    document.body.appendChild(parsed);
+
+    const replacement = new DOMParser()
+      .parseFromString(
+        `<div id="replacement-style" style='${styleAttr("rgb(7, 8, 9)")}'></div>`,
+        "text/html"
+      )
+      .querySelector("#replacement-style");
+    const replaceHost = document.createElement("div");
+    document.body.appendChild(replaceHost);
+    replaceHost.replaceChildren(replacement);
+
+    return {
+      insertAdjacentHTML: summarize(byInsertAdjacentHTML),
+      innerHTML: summarize(byInnerHTML),
+      outerHTML: summarize(byOuterHTML),
+      parsedInsertion: summarize(parsed),
+      replaceChildren: summarize(replacement),
+      setAttribute: summarize(bySetAttribute),
+      setAttributeNS: summarize(bySetAttributeNS),
+    };
+  }, imageUrl);
+
+  expect(result).toMatchObject({
+    insertAdjacentHTML: { backgroundImage: "", color: "rgb(5, 6, 7)", hasStyleUrl: false },
+    innerHTML: { backgroundImage: "", color: "rgb(3, 4, 5)", hasStyleUrl: false },
+    outerHTML: { backgroundImage: "", color: "rgb(4, 5, 6)", hasStyleUrl: false },
+    parsedInsertion: { backgroundImage: "", color: "rgb(6, 7, 8)", hasStyleUrl: false },
+    replaceChildren: { backgroundImage: "", color: "rgb(7, 8, 9)", hasStyleUrl: false },
+    setAttribute: { backgroundImage: "", color: "rgb(1, 2, 3)", hasStyleUrl: false },
+    setAttributeNS: { backgroundImage: "", color: "rgb(2, 3, 4)", hasStyleUrl: false },
+  });
+
+  for (const observed of Object.values(result)) {
+    expect(observed.attr).not.toContain(imageUrl);
+  }
+
+  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
+    "style.domInsertion": 1,
+    "style.innerHTML": 1,
+    "style.insertAdjacentHTML": 1,
+    "style.outerHTML": 1,
+    "style.replaceChildren": 1,
+    "style.setAttribute": 1,
+    "style.setAttributeNS": 1,
   });
 });
