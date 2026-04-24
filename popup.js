@@ -41,6 +41,97 @@ const replayState = {
   replayMode: "off",
   sessionReplayBlocking: false,
 };
+const boundHelpTips = new WeakSet();
+let activeHelpTip = null;
+let helpTipPopover = null;
+
+const tooltipMargin = 10;
+const tooltipOffset = 6;
+
+const ensureHelpTipPopover = () => {
+  if (helpTipPopover) return helpTipPopover;
+  helpTipPopover = document.createElement("div");
+  helpTipPopover.id = "help-tip-popover";
+  helpTipPopover.className = "help-tip-popover";
+  helpTipPopover.setAttribute("role", "tooltip");
+  helpTipPopover.hidden = true;
+  document.body.appendChild(helpTipPopover);
+  return helpTipPopover;
+};
+
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+const positionHelpTipPopover = (trigger) => {
+  const popover = ensureHelpTipPopover();
+  const triggerRect = trigger.getBoundingClientRect();
+  const popoverRect = popover.getBoundingClientRect();
+  const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+  const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+  const maxLeft = Math.max(tooltipMargin, viewportWidth - popoverRect.width - tooltipMargin);
+  const maxTop = Math.max(tooltipMargin, viewportHeight - popoverRect.height - tooltipMargin);
+  const centeredLeft = triggerRect.left + triggerRect.width / 2 - popoverRect.width / 2;
+  let top = triggerRect.bottom + tooltipOffset;
+  const hasSpaceAbove = triggerRect.top - popoverRect.height - tooltipOffset >= tooltipMargin;
+
+  popover.classList.remove("above");
+  if (top + popoverRect.height + tooltipMargin > viewportHeight && hasSpaceAbove) {
+    top = triggerRect.top - popoverRect.height - tooltipOffset;
+    popover.classList.add("above");
+  }
+
+  popover.style.left = `${Math.round(clamp(centeredLeft, tooltipMargin, maxLeft))}px`;
+  popover.style.top = `${Math.round(clamp(top, tooltipMargin, maxTop))}px`;
+};
+
+const showHelpTip = (trigger) => {
+  if (!trigger.dataset.tip) return;
+  const popover = ensureHelpTipPopover();
+  activeHelpTip = trigger;
+  popover.textContent = trigger.dataset.tip;
+  popover.hidden = false;
+  popover.classList.remove("is-visible");
+  positionHelpTipPopover(trigger);
+  requestAnimationFrame(() => {
+    if (activeHelpTip === trigger) popover.classList.add("is-visible");
+  });
+};
+
+const hideHelpTip = (trigger) => {
+  if (trigger && activeHelpTip !== trigger) return;
+  activeHelpTip = null;
+  if (!helpTipPopover) return;
+  helpTipPopover.classList.remove("is-visible");
+  helpTipPopover.hidden = true;
+};
+
+const bindHelpTip = (tip) => {
+  if (boundHelpTips.has(tip)) return;
+  boundHelpTips.add(tip);
+  tip.addEventListener("pointerenter", () => showHelpTip(tip));
+  tip.addEventListener("focus", () => showHelpTip(tip));
+  tip.addEventListener("pointerleave", () => {
+    if (document.activeElement !== tip) hideHelpTip(tip);
+  });
+  tip.addEventListener("blur", () => hideHelpTip(tip));
+  tip.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hideHelpTip(tip);
+  });
+};
+
+const setupHelpTips = () => {
+  document.querySelectorAll(".help-tip").forEach(bindHelpTip);
+};
+
+window.addEventListener("resize", () => {
+  if (activeHelpTip) positionHelpTipPopover(activeHelpTip);
+});
+window.addEventListener(
+  "scroll",
+  () => {
+    if (activeHelpTip) positionHelpTipPopover(activeHelpTip);
+  },
+  true
+);
 
 const fetchRuleCount = async (rulesetId) => {
   try {
@@ -422,4 +513,5 @@ const renderRulesets = (enabledArr, counts) => {
   renderNoiseSection(details);
   renderReplaySection(details);
   renderRulesets(enabledArr, counts);
+  setupHelpTips();
 })();
