@@ -182,6 +182,41 @@
       .drift-cell {
         white-space: nowrap;
       }
+      .rank-cell {
+        width: 48px;
+        color: var(--text-subtle);
+      }
+      .severity-cell {
+        white-space: nowrap;
+      }
+      .severity-pill {
+        display: inline-flex;
+        align-items: center;
+        min-width: 58px;
+        justify-content: center;
+        padding: 3px 7px;
+        border-radius: 6px;
+        border: 1px solid var(--border-strong);
+        color: var(--text-muted);
+        background: #f6f6f6;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .severity-pill.high {
+        color: var(--accent);
+        border-color: #ead0d0;
+        background: #fff5f5;
+      }
+      .severity-pill.medium {
+        color: #8a4b00;
+        border-color: #efd4a8;
+        background: #fff7e8;
+      }
+      .severity-pill.low {
+        color: #225b74;
+        border-color: #cce2eb;
+        background: #f2fbff;
+      }
       .drift-pill {
         display: inline-flex;
         align-items: center;
@@ -214,7 +249,7 @@
       .origin-row:hover {
         background: #fafafa;
       }
-      .origin-row td:first-child {
+      .origin-row td:nth-child(2) {
         font-weight: 500;
       }
       .caret {
@@ -258,6 +293,44 @@
       }
       .drift-reasons li {
         margin: 3px 0;
+      }
+      .reason-guide {
+        margin-top: 10px;
+      }
+      .reason-list {
+        margin: 0;
+        padding: 0;
+      }
+      .reason-item {
+        display: grid;
+        grid-template-columns: 170px minmax(0, 1fr);
+        gap: 14px;
+        padding: 8px 0;
+        border-top: 1px solid var(--border);
+      }
+      .reason-item:first-child {
+        border-top: none;
+      }
+      .reason-item dt {
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 700;
+        min-width: 0;
+      }
+      .reason-item dd {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 12px;
+        min-width: 0;
+      }
+      .reason-token {
+        display: block;
+        margin-top: 2px;
+        color: var(--text-subtle);
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 11px;
+        font-weight: 500;
+        overflow-wrap: anywhere;
       }
       .metric-list {
         margin: 0;
