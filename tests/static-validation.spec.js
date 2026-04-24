@@ -18,6 +18,97 @@ const loadServiceWorkerUtils = () => {
   return context.__static_sw_utils__;
 };
 
+const loadBridgeHarness = () => {
+  const messages = [];
+  const portsByEvent = {};
+  const timers = [];
+  const windowListeners = {};
+  const documentListeners = {};
+  const addListener = (listeners, type, fn) => {
+    (listeners[type] ||= []).push(fn);
+  };
+  const removeListener = (listeners, type, fn) => {
+    listeners[type] = (listeners[type] || []).filter((listener) => listener !== fn);
+  };
+  const dispatchListeners = (listeners, type, event = { type }) => {
+    for (const fn of listeners[type] || []) fn(event);
+  };
+  const makePort = () => ({
+    onmessage: null,
+    postMessage(message) {
+      if (this.peer && typeof this.peer.onmessage === "function") {
+        this.peer.onmessage({ data: message });
+      }
+    },
+    start() {},
+  });
+  class MockMessageChannel {
+    constructor() {
+      this.port1 = makePort();
+      this.port2 = makePort();
+      this.port1.peer = this.port2;
+      this.port2.peer = this.port1;
+    }
+  }
+  class MockMessageEvent {
+    constructor(type, init = {}) {
+      this.type = type;
+      this.ports = init.ports || [];
+    }
+  }
+  const context = vm.createContext({
+    MessageChannel: MockMessageChannel,
+    MessageEvent: MockMessageEvent,
+    URL,
+    addEventListener: (type, fn) => addListener(windowListeners, type, fn),
+    chrome: {
+      runtime: {
+        onMessage: { addListener() {} },
+        sendMessage(message) {
+          messages.push(message);
+          if (message && message.type === "static_get_persona") {
+            return Promise.resolve({ ids: [], noiseEnabled: false, replayMode: "off" });
+          }
+          return Promise.resolve({ ok: true });
+        },
+      },
+    },
+    document: {
+      visibilityState: "visible",
+      addEventListener: (type, fn) => addListener(documentListeners, type, fn),
+      dispatchEvent(event) {
+        if (event && event.ports && event.ports[0]) portsByEvent[event.type] = event.ports[0];
+        dispatchListeners(documentListeners, event.type, event);
+        return true;
+      },
+      removeEventListener: (type, fn) => removeListener(documentListeners, type, fn),
+    },
+    setTimeout(fn) {
+      timers.push(fn);
+      return timers.length;
+    },
+  });
+  vm.runInContext(readText("lists.js"), context);
+  vm.runInContext(readText("bridge.js"), context);
+  return {
+    messages,
+    portsByEvent,
+    dispatchWindow: (type) => dispatchListeners(windowListeners, type),
+    runTimers: () => timers.splice(0).forEach((fn) => fn()),
+  };
+};
+
+const extensionIdFor = (index) => {
+  const alphabet = "abcdefghijklmnop";
+  let n = index;
+  let id = "";
+  for (let i = 0; i < 32; i++) {
+    id += alphabet[n % alphabet.length];
+    n = Math.floor(n / alphabet.length);
+  }
+  return id;
+};
+
 const countMap = (count, prefix = "k") =>
   Object.fromEntries(
     Array.from({ length: count }, (_, index) => [
@@ -206,6 +297,42 @@ test("service worker probe-log caps enforce local privacy bounds", () => {
   expect(Object.keys(latestWeek.vectorCounts)).toHaveLength(50);
   expect(Object.keys(latestWeek.pathKindCounts)).toHaveLength(50);
   expect(Object.keys(latestWeek.idCounts)).toHaveLength(1000);
+});
+
+test("bridge caps high-cardinality probe ID maps before service-worker flush", () => {
+  const knownId = "nngceckbapebfimnlniiiahkandclblb";
+  const harness = loadBridgeHarness();
+  const port = harness.portsByEvent.__static_noise_bridge_init__;
+  expect(port).toBeTruthy();
+
+  let sent = 0;
+  for (let i = 0; sent < 2105; i++) {
+    const id = extensionIdFor(i);
+    if (id === knownId) continue;
+    port.postMessage({
+      type: "probe_blocked",
+      url: `chrome-extension://${id}/manifest.json`,
+      where: "fetch",
+    });
+    sent++;
+  }
+  for (let i = 0; i < 2; i++) {
+    port.postMessage({
+      type: "probe_blocked",
+      url: `chrome-extension://${knownId}/manifest.json`,
+      where: "fetch",
+    });
+  }
+
+  harness.dispatchWindow("beforeunload");
+  harness.runTimers();
+  const message = harness.messages.find((msg) => msg.type === "static_probe_blocked");
+
+  expect(message.delta).toBe(2107);
+  expect(Object.keys(message.idCounts)).toHaveLength(2000);
+  expect(Object.keys(message.deltaIdCounts)).toHaveLength(2000);
+  expect(message.idCounts[knownId]).toBe(2);
+  expect(message.deltaIdCounts[knownId]).toBe(2);
 });
 
 test("DNR rulesets are well-formed and synchronized with metadata and popup IDs", () => {
