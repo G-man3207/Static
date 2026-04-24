@@ -830,6 +830,45 @@ test("popup shows replay blocking and poisoning indicators", async ({ extension 
   await expect(popupPage.getByText("Noise poisoning armed")).toBeVisible();
 });
 
+test("popup exposes local help text for privacy controls", async ({ extension }) => {
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+  await expect(popupPage.locator("#noise-toggle")).toHaveAttribute(
+    "aria-labelledby",
+    "noise-title-text"
+  );
+  await expect(popupPage.locator("#noise-toggle")).toHaveAttribute(
+    "aria-describedby",
+    "noise-desc"
+  );
+  await expect(popupPage.locator("#noise-help")).toHaveAttribute("title", /local probe history/);
+  await expect(popupPage.locator("#replay-mode")).toHaveAttribute(
+    "aria-labelledby",
+    "replay-title-text"
+  );
+  await expect(popupPage.locator("#replay-mode")).toHaveAttribute(
+    "aria-describedby",
+    "replay-desc"
+  );
+  await expect(popupPage.locator("#replay-help")).toHaveAttribute(
+    "title",
+    /likely recorder listeners/
+  );
+  await expect(popupPage.locator("#rulesets-help")).toHaveAttribute(
+    "title",
+    /declarative rulesets/
+  );
+  await expect(popupPage.locator("#rs_fingerprint_vendors")).toHaveAttribute(
+    "aria-describedby",
+    "rs_fingerprint_vendors_help_text"
+  );
+  await expect(popupPage.locator("#rs_fingerprint_vendors_help")).toHaveAttribute(
+    "title",
+    /fingerprinting and anti-bot vendor endpoints/
+  );
+});
+
 test("Adaptive observe-only logging records multi-signal collectors without adding DNR rules", async ({
   extension,
   server,

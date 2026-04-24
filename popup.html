@@ -233,6 +233,9 @@
         min-width: 0;
       }
       .toggle-row .ttl {
+        display: flex;
+        align-items: center;
+        gap: 5px;
         font-size: 12px;
         font-weight: 600;
         color: var(--text);
@@ -256,6 +259,9 @@
         min-width: 0;
       }
       .replay-row .ttl {
+        display: flex;
+        align-items: center;
+        gap: 5px;
         font-size: 12px;
         font-weight: 600;
         color: var(--text);
@@ -276,6 +282,75 @@
         border-radius: 6px;
         font: inherit;
         font-size: 11px;
+      }
+      .title-with-help {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin: 0 0 10px;
+      }
+      .title-with-help h2 {
+        margin: 0;
+      }
+      .help-tip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        padding: 0;
+        color: var(--text-subtle);
+        background: #f6f6f6;
+        border: 1px solid var(--border-strong);
+        border-radius: 50%;
+        font: inherit;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1;
+        cursor: help;
+      }
+      .help-tip:hover,
+      .help-tip:focus-visible {
+        color: var(--accent);
+        border-color: #ead0d0;
+        background: #fff5f5;
+        outline: none;
+      }
+      .help-tip::after {
+        position: absolute;
+        z-index: 2;
+        top: calc(100% + 6px);
+        left: 0;
+        width: 230px;
+        padding: 7px 8px;
+        color: var(--text);
+        background: #fff;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+        content: attr(data-tip);
+        font-size: 10px;
+        font-weight: 500;
+        line-height: 1.4;
+        text-align: left;
+        white-space: normal;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-2px);
+        transition:
+          opacity 0.12s,
+          transform 0.12s;
+      }
+      .help-tip:hover::after,
+      .help-tip:focus-visible::after {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .ruleset .help-tip::after {
+        right: 0;
+        left: auto;
       }
       .replay-detected {
         display: inline-flex;
@@ -425,10 +500,16 @@
         flex-shrink: 0;
       }
       .ruleset label {
-        flex: 1;
         font-size: 12px;
         cursor: pointer;
         user-select: none;
+      }
+      .ruleset-text {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        flex: 1;
+        gap: 5px;
       }
       .ruleset .rule-count {
         color: var(--text-subtle);
@@ -456,6 +537,17 @@
       }
       .footer a:hover {
         color: var(--accent);
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
       }
     </style>
   </head>
@@ -488,27 +580,61 @@
     <div class="section">
       <div class="toggle-row">
         <div class="col">
-          <div class="ttl">Noise mode</div>
-          <div class="desc">
+          <div class="ttl" id="noise-title">
+            <span id="noise-title-text">Noise mode</span>
+            <button
+              class="help-tip"
+              id="noise-help"
+              type="button"
+              data-tip="Uses only this site's local probe history. Eligible decoys stay stable for the current weekly bucket and first visits remain plain-blocked."
+              title="Uses only this site's local probe history. Eligible decoys stay stable for the current weekly bucket and first visits remain plain-blocked."
+              aria-label="Noise mode details"
+            >
+              ?
+            </button>
+          </div>
+          <div class="desc" id="noise-desc">
             Instead of just blocking, return plausible decoy responses for a stable 3–8 ID subset of
             what each site has probed for. Poisons their dataset with IDs they specifically cared
             about. First visit is always plain-blocked.
           </div>
         </div>
         <label class="switch">
-          <input type="checkbox" id="noise-toggle" />
+          <input
+            type="checkbox"
+            id="noise-toggle"
+            aria-labelledby="noise-title-text"
+            aria-describedby="noise-desc"
+          />
           <span class="switch-bg"></span>
         </label>
       </div>
       <div class="replay-row">
         <div class="col">
-          <div class="ttl">Replay poisoning</div>
-          <div class="desc">
+          <div class="ttl" id="replay-title">
+            <span id="replay-title-text">Replay poisoning</span>
+            <button
+              class="help-tip"
+              id="replay-help"
+              type="button"
+              data-tip="Scoped to likely recorder listeners. Normal page handlers still receive the real event values."
+              title="Scoped to likely recorder listeners. Normal page handlers still receive the real event values."
+              aria-label="Replay poisoning details"
+            >
+              ?
+            </button>
+          </div>
+          <div class="desc" id="replay-desc">
             When a replay SDK is detected, mask what its listeners see and optionally add local
             motion noise. No fake traffic is sent to replay vendors.
           </div>
         </div>
-        <select class="replay-select" id="replay-mode" aria-label="Replay poisoning mode">
+        <select
+          class="replay-select"
+          id="replay-mode"
+          aria-labelledby="replay-title-text"
+          aria-describedby="replay-desc"
+        >
           <option value="off">Off</option>
           <option value="mask">Mask</option>
           <option value="noise">Noise</option>
@@ -525,7 +651,19 @@
     </div>
 
     <div class="section">
-      <h2>Rulesets</h2>
+      <div class="title-with-help">
+        <h2>Rulesets</h2>
+        <button
+          class="help-tip"
+          id="rulesets-help"
+          type="button"
+          data-tip="Network-layer blocks use Chrome declarative rulesets. Toggling a ruleset changes local browser blocking only."
+          title="Network-layer blocks use Chrome declarative rulesets. Toggling a ruleset changes local browser blocking only."
+          aria-label="Ruleset details"
+        >
+          ?
+        </button>
+      </div>
       <div id="rulesets"></div>
     </div>
 
