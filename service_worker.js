@@ -10,9 +10,10 @@
 //      from a per-user secret so different users claim different sets).
 //   5. Record local session-replay detector sightings for Replay poisoning.
 //   6. Record observe-only adaptive behavior signals for local calibration.
-//   7. Answer popup queries (`static_get_details`, `static_export_log`,
-//      `static_set_noise`, `static_set_replay`) and bridge queries
-//      (`static_get_persona`).
+//   7. Generate stable per-origin device personas for opt-in fingerprint masking.
+//   8. Answer popup queries (`static_get_details`, `static_export_log`,
+//      `static_set_noise`, `static_set_replay`, `static_set_fingerprint`) and bridge
+//      queries (`static_get_persona`).
 
 importScripts("lists.js", "service_worker_utils.js");
 const CFG = globalThis.__static_config__ || {};
@@ -347,6 +348,96 @@ const personaFor = async (origin) => {
   return selectPersonaIds({ bySlot, rng, target: personaTargetSize(rng), unslotted });
 };
 
+const pick = (items, rng) => items[Math.floor(rng() * items.length)];
+
+const FINGERPRINT_PROFILES = [
+  {
+    architecture: "x86",
+    bitness: "64",
+    os: "windows",
+    platform: "Win32",
+    uaDataPlatform: "Windows",
+    uaOs: "Windows NT 10.0; Win64; x64",
+    webglRenderer: "ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    webglVendor: "Google Inc. (Intel)",
+  },
+  {
+    architecture: "x86",
+    bitness: "64",
+    os: "macos",
+    platform: "MacIntel",
+    uaDataPlatform: "macOS",
+    uaOs: "Macintosh; Intel Mac OS X 10_15_7",
+    webglRenderer: "ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)",
+    webglVendor: "Google Inc. (Apple)",
+  },
+  {
+    architecture: "x86",
+    bitness: "64",
+    os: "linux",
+    platform: "Linux x86_64",
+    uaDataPlatform: "Linux",
+    uaOs: "X11; Linux x86_64",
+    webglRenderer: "ANGLE (Intel, Mesa Intel(R) UHD Graphics 620, OpenGL 4.6)",
+    webglVendor: "Google Inc. (Intel)",
+  },
+];
+
+const FINGERPRINT_SCREENS = [
+  { width: 1366, height: 768, devicePixelRatio: 1 },
+  { width: 1440, height: 900, devicePixelRatio: 1 },
+  { width: 1536, height: 864, devicePixelRatio: 1.25 },
+  { width: 1920, height: 1080, devicePixelRatio: 1 },
+  { width: 2560, height: 1440, devicePixelRatio: 1 },
+];
+
+const FINGERPRINT_TIMEZONES = [
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Europe/London",
+  "Europe/Berlin",
+];
+
+const FINGERPRINT_CONNECTIONS = [
+  { downlink: 5, effectiveType: "4g", rtt: 75, saveData: false, type: "wifi" },
+  { downlink: 10, effectiveType: "4g", rtt: 50, saveData: false, type: "wifi" },
+  { downlink: 20, effectiveType: "4g", rtt: 25, saveData: false, type: "ethernet" },
+];
+
+const screenPersonaFor = (rng) => {
+  const screen = pick(FINGERPRINT_SCREENS, rng);
+  const taskbar = screen.height >= 900 ? 40 : 32;
+  return {
+    ...screen,
+    availHeight: screen.height - taskbar,
+    availWidth: screen.width,
+    colorDepth: 24,
+    pixelDepth: 24,
+  };
+};
+
+const fingerprintPersonaFor = async (origin) => {
+  const secret = await getUserSecret();
+  const seed = await seedFor(secret, origin || "global", "fingerprint-v1");
+  const rng = mulberry32(seed);
+  const profile = pick(FINGERPRINT_PROFILES, rng);
+  const hardwareConcurrency = pick([4, 8, 8, 12, 16], rng);
+  const deviceMemory = hardwareConcurrency >= 12 ? pick([8, 16], rng) : pick([4, 8], rng);
+  return {
+    ...profile,
+    canvasSeed: Math.floor(rng() * 0xffffffff),
+    connection: pick(FINGERPRINT_CONNECTIONS, rng),
+    deviceMemory,
+    hardwareConcurrency,
+    maxTouchPoints: 0,
+    screen: screenPersonaFor(rng),
+    storageQuota: pick([64, 128, 256], rng) * 1024 * 1024 * 1024,
+    timeZone: pick(FINGERPRINT_TIMEZONES, rng),
+  };
+};
+
 const originFromUrl = (url) => {
   try {
     return new URL(url).origin;
@@ -425,6 +516,7 @@ const detailsResponseFor = async (tabId, stored) => {
     total: sumTabTotal(tabId),
     topIds: topIdsForTab(tabId, 5),
     cumulative: stored.cumulative,
+    fingerprintMode: stored.fingerprint_mode,
     noiseEnabled: stored.noise_enabled,
     replayMode: stored.replay_mode,
     replayDetected: !!(origin && stored.replay_log[origin]),
@@ -446,6 +538,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
   (async () => {
     const stored = await chrome.storage.local.get({
       cumulative: 0,
+      fingerprint_mode: "off",
       noise_enabled: false,
       probe_log: {},
       replay_log: {},
@@ -459,17 +552,39 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
 
 const handleGetPersona = (_msg, sender, sendResponse) => {
   (async () => {
-    const { noise_enabled = false, replay_mode = "off" } = await chrome.storage.local.get({
+    const {
+      fingerprint_mode = "off",
+      noise_enabled = false,
+      replay_mode = "off",
+    } = await chrome.storage.local.get({
+      fingerprint_mode: "off",
       noise_enabled: false,
       replay_mode: "off",
     });
     const origin = originFromSender(sender);
+    const fingerprintMode = fingerprint_mode === "mask" ? "mask" : "off";
+    const fingerprintPersona =
+      fingerprintMode === "mask" ? await fingerprintPersonaFor(origin) : null;
     if (!noise_enabled || !origin) {
-      sendResponse({ ids: [], noiseEnabled: noise_enabled, replayMode: replay_mode, origin });
+      sendResponse({
+        fingerprintMode,
+        fingerprintPersona,
+        ids: [],
+        noiseEnabled: noise_enabled,
+        origin,
+        replayMode: replay_mode,
+      });
       return;
     }
     const ids = await personaFor(origin);
-    sendResponse({ ids, noiseEnabled: true, replayMode: replay_mode, origin });
+    sendResponse({
+      fingerprintMode,
+      fingerprintPersona,
+      ids,
+      noiseEnabled: true,
+      origin,
+      replayMode: replay_mode,
+    });
   })();
   return true;
 };
@@ -509,6 +624,17 @@ const handleSetReplay = (msg, _sender, sendResponse) => {
   return true;
 };
 
+const handleSetFingerprint = (msg, _sender, sendResponse) => {
+  (async () => {
+    const allowed = new Set(["off", "mask"]);
+    const mode = allowed.has(msg.mode) ? msg.mode : "off";
+    await chrome.storage.local.set({ fingerprint_mode: mode });
+    await broadcastConfigUpdate();
+    sendResponse({ ok: true, mode });
+  })();
+  return true;
+};
+
 const handleExportLog = (_msg, _sender, sendResponse) => {
   (async () => {
     const {
@@ -537,13 +663,15 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
 const handleClearLog = (_msg, _sender, sendResponse) => {
   (async () => {
     cachedSecretPromise = null;
-    await chrome.storage.local.remove([
-      "probe_log",
-      "replay_log",
-      "adaptive_log",
-      "cumulative",
-      "user_secret",
-    ]);
+    await serialize(() =>
+      chrome.storage.local.remove([
+        "probe_log",
+        "replay_log",
+        "adaptive_log",
+        "cumulative",
+        "user_secret",
+      ])
+    );
     await clearTabStateAndBadges();
     await broadcastConfigUpdate({ resetProbeState: true });
     sendResponse({ ok: true });
@@ -559,6 +687,7 @@ const messageHandlers = {
   static_get_persona: handleGetPersona,
   static_probe_blocked: handleProbeBlocked,
   static_replay_detected: handleReplayDetected,
+  static_set_fingerprint: handleSetFingerprint,
   static_set_noise: handleSetNoise,
   static_set_replay: handleSetReplay,
 };

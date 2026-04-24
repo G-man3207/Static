@@ -138,6 +138,7 @@ const expectedMainWorldScripts = [
   "block_vectors.js",
   "block_iframe_attrs.js",
   "block_style_vectors.js",
+  "block_fingerprint.js",
   "block_replay.js",
   "block_element_decoys.js",
   "block_globals.js",

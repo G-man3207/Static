@@ -5,6 +5,7 @@
   const MAX_CAPTURED_IDS = 2000;
   const CONFIG_EVENTS = [
     "__static_element_decoy_bridge_init__",
+    "__static_fingerprint_bridge_init__",
     "__static_noise_bridge_init__",
     "__static_replay_bridge_init__",
   ];
@@ -228,6 +229,12 @@
       port.postMessage({
         type: "config_update",
         persona: Array.isArray(response.ids) ? response.ids : [],
+        fingerprintMode:
+          typeof response.fingerprintMode === "string" ? response.fingerprintMode : "off",
+        fingerprintPersona:
+          response.fingerprintPersona && typeof response.fingerprintPersona === "object"
+            ? response.fingerprintPersona
+            : null,
         noiseEnabled: !!response.noiseEnabled,
         replayMode: typeof response.replayMode === "string" ? response.replayMode : "off",
       });

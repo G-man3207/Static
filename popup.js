@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- popup rendering and local control wiring are kept together */
 const RULESET_META = [
   {
     id: "linkedin",
@@ -45,6 +46,9 @@ const replayState = {
   replayDetected: false,
   replayMode: "off",
   sessionReplayBlocking: false,
+};
+const fingerprintState = {
+  fingerprintMode: "off",
 };
 const boundHelpTips = new WeakSet();
 let activeHelpTip = null;
@@ -304,6 +308,9 @@ const renderPowerDiagnostics = (resp) => {
       `score ${fmt(resp.adaptiveScore || 0)}${categories.length ? `; ${categories.join(", ")}` : ""}`
     );
   }
+  if (resp.fingerprintMode && resp.fingerprintMode !== "off") {
+    addDiagnosticRow(box, "Device mask", resp.fingerprintMode);
+  }
 };
 
 const renderDetails = (resp) => {
@@ -374,6 +381,37 @@ const renderReplaySection = (resp) => {
       console.error("[Static] replay mode update failed", e);
       setSelectValue(select, previous);
       setReplayMode(previous);
+    }
+  });
+};
+
+const setFingerprintMode = (mode) => {
+  fingerprintState.fingerprintMode = mode;
+};
+
+const renderFingerprintSection = (resp) => {
+  const select = document.getElementById("fingerprint-mode");
+  const allowed = new Set(["off", "mask"]);
+  fingerprintState.fingerprintMode =
+    resp && allowed.has(resp.fingerprintMode) ? resp.fingerprintMode : "off";
+  select.value = fingerprintState.fingerprintMode;
+
+  select.addEventListener("change", async () => {
+    const desired = allowed.has(select.value) ? select.value : "off";
+    const previous = fingerprintState.fingerprintMode;
+    try {
+      const saved = await chrome.runtime.sendMessage({
+        mode: desired,
+        type: "static_set_fingerprint",
+      });
+      const next = saved && allowed.has(saved.mode) ? saved.mode : desired;
+      setSelectValue(select, next);
+      setFingerprintMode(next);
+      await pushConfigUpdateToActiveTab();
+    } catch (e) {
+      console.error("[Static] fingerprint mode update failed", e);
+      setSelectValue(select, previous);
+      setFingerprintMode(previous);
     }
   });
 };
@@ -532,6 +570,7 @@ const renderRulesets = (enabledArr, counts) => {
 
   renderDetails(details);
   renderNoiseSection(details);
+  renderFingerprintSection(details);
   renderReplaySection(details);
   renderRulesets(enabledArr, counts);
   setupHelpTips();
