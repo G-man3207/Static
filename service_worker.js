@@ -30,6 +30,7 @@ const {
 // ─── In-memory per-tab state ──────────────────────────────────────────────
 const perTabState = new Map(); // tabId -> { origin, frames: Map<frameId, {total, idCounts}> }
 const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
+const MAX_CAPTURED_IDS = 2000;
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -104,7 +105,7 @@ const sanitizeExtensionIdCounts = (counts) => {
       sanitized[safeId] = (sanitized[safeId] || 0) + count;
     }
   }
-  return sanitized;
+  return trimCountMap(sanitized, MAX_CAPTURED_IDS);
 };
 
 const normalizedProbeBatch = (batch) => {
@@ -362,15 +363,7 @@ const originFromSender = (sender) => {
 };
 
 const mapIdCounts = (idCounts) => {
-  const idMap = new Map();
-  if (!idCounts || typeof idCounts !== "object") return idMap;
-  for (const [id, count] of Object.entries(idCounts)) {
-    const safeId = id.toLowerCase();
-    if (CHROME_EXT_ID_RE.test(safeId) && typeof count === "number" && count > 0) {
-      idMap.set(safeId, count);
-    }
-  }
-  return idMap;
+  return new Map(Object.entries(sanitizeExtensionIdCounts(idCounts)));
 };
 
 const rememberSenderOrigin = (sender) => {

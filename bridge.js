@@ -1,6 +1,8 @@
 // Static - MAIN-world modules to service-worker bridge (ISOLATED world).
 (() => {
+  const CFG = globalThis.__static_config__ || {};
   const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
+  const MAX_CAPTURED_IDS = 2000;
   const CONFIG_EVENTS = [
     "__static_element_decoy_bridge_init__",
     "__static_noise_bridge_init__",
@@ -19,10 +21,52 @@
   const pendingIdCounts = new Map();
   const pendingVectorCounts = new Map();
   const pendingPathKindCounts = new Map();
+  const knownExtensionIds = new Set();
+
+  for (const slotIds of Object.values(CFG.conflictSlots || {})) {
+    for (const id of slotIds || []) {
+      if (typeof id === "string") knownExtensionIds.add(id.toLowerCase());
+    }
+  }
 
   const bumpMap = (map, key, amount = 1) => {
     const safeKey = key || "unknown";
     map.set(safeKey, (map.get(safeKey) || 0) + amount);
+  };
+
+  const countPriorityFor = (id, count) => (knownExtensionIds.has(id) ? 1000000 : 0) + count;
+
+  const lowestPriorityIdFor = (map) => {
+    let lowestId = null;
+    let lowestPriority = Infinity;
+    for (const [id, count] of map) {
+      const priority = countPriorityFor(id, count);
+      if (
+        priority < lowestPriority ||
+        (priority === lowestPriority && lowestId !== null && id > lowestId)
+      ) {
+        lowestId = id;
+        lowestPriority = priority;
+      }
+    }
+    return lowestId;
+  };
+
+  const bumpCappedIdMap = (map, id) => {
+    if (map.has(id)) {
+      map.set(id, map.get(id) + 1);
+      return;
+    }
+    if (map.size < MAX_CAPTURED_IDS) {
+      map.set(id, 1);
+      return;
+    }
+    if (!knownExtensionIds.has(id)) return;
+    const lowestId = lowestPriorityIdFor(map);
+    if (lowestId && countPriorityFor(id, 1) > countPriorityFor(lowestId, map.get(lowestId))) {
+      map.delete(lowestId);
+      map.set(id, 1);
+    }
   };
 
   const mapToObject = (map) => {
@@ -112,8 +156,8 @@
     bumpMap(pendingPathKindCounts, pathKindFor(data.url));
     const id = extractProbeId(data.url);
     if (id) {
-      bumpMap(idCounts, id);
-      bumpMap(pendingIdCounts, id);
+      bumpCappedIdMap(idCounts, id);
+      bumpCappedIdMap(pendingIdCounts, id);
     }
     if (!flushTimer) flushTimer = setTimeout(flush, 150);
   };
