@@ -72,6 +72,19 @@ const collectFingerprint = (page) =>
             "wow64",
           ])
         : null;
+    const uaDataReflect =
+      navigator.userAgentData && navigator.userAgentData.getHighEntropyValues
+        ? (() => {
+            try {
+              return {
+                brands: Reflect.get(navigator.userAgentData, "brands", {}),
+                platform: Reflect.get(navigator.userAgentData, "platform", {}),
+              };
+            } catch (error) {
+              return { error: `${error.name}: ${error.message}` };
+            }
+          })()
+        : null;
     const storage =
       navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
 
@@ -114,6 +127,7 @@ const collectFingerprint = (page) =>
             platform: navigator.userAgentData.platform,
           }
         : null,
+      uaDataReflect,
       userAgent: navigator.userAgent,
       webdriver: navigator.webdriver,
       webgl: gl
@@ -151,6 +165,9 @@ const expectMaskedFingerprint = (fingerprint) => {
   if (fingerprint.uaData) {
     expect(fingerprint.uaData.mobile).toBe(false);
     expect(fingerprint.uaData.platform).toBe(fingerprint.highEntropy.platform);
+    expect(fingerprint.uaDataReflect.error).toBeUndefined();
+    expect(Array.isArray(fingerprint.uaDataReflect.brands)).toBe(true);
+    expect(fingerprint.uaDataReflect.platform).toBe(fingerprint.uaData.platform);
     expect(fingerprint.highEntropy.bitness).toBe("64");
     expect(fingerprint.highEntropy.model).toBe("");
     expect(fingerprint.highEntropy.wow64).toBe(false);

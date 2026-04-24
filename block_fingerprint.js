@@ -325,14 +325,15 @@
     if (!target || typeof target !== "object") return target;
     const cached = uaDataProxies.get(target);
     if (cached) return cached;
+    const nativeValue = (prop) => Reflect.get(target, prop, target);
     const proxy = new Proxy(target, {
-      get(t, prop, receiver) {
-        if (!isMasking()) return Reflect.get(t, prop, receiver);
-        if (prop === "brands") return maskedBrands(Reflect.get(t, prop, receiver));
+      get(t, prop) {
+        if (!isMasking()) return nativeValue(prop);
+        if (prop === "brands") return maskedBrands(nativeValue(prop));
         if (prop === "mobile") return false;
         if (prop === "platform") return persona().uaDataPlatform;
         if (prop === "toJSON") {
-          const orig = Reflect.get(t, prop, receiver);
+          const orig = nativeValue(prop);
           return stealth(
             function toJSON() {
               return maskedUaDataJson(t);
@@ -342,7 +343,7 @@
           );
         }
         if (prop === "getHighEntropyValues") {
-          const orig = Reflect.get(t, prop, receiver);
+          const orig = nativeValue(prop);
           return stealth(
             function getHighEntropyValues(hints) {
               return maskedHighEntropyValues(t, hints);
@@ -351,7 +352,7 @@
             { length: 1, source: nativeSourceFor(orig, "getHighEntropyValues") }
           );
         }
-        const value = Reflect.get(t, prop, receiver);
+        const value = nativeValue(prop);
         return typeof value === "function" ? value.bind(t) : value;
       },
     });
