@@ -84,6 +84,20 @@ async function probePassiveElements(page, urls) {
         return error.name;
       }
     };
+    const probeLink = async (rel, as, href) => {
+      const link = document.createElement("link");
+      link.rel = rel;
+      if (as) link.as = as;
+      const event = await waitForLoad(link, () => {
+        link.href = href;
+        document.head.appendChild(link);
+      });
+      return {
+        attr: link.getAttribute("href"),
+        event,
+        href: link.href,
+      };
+    };
 
     const img = new Image();
     const imgEvent = await waitForLoad(img, () => {
@@ -121,6 +135,9 @@ async function probePassiveElements(page, urls) {
         href: link.href,
         sheetHref: link.sheet && link.sheet.href,
       },
+      linkPreloadImage: await probeLink("preload", "image", imageUrl),
+      linkPreloadScript: await probeLink("preload", "script", scriptUrl),
+      modulePreloadScript: await probeLink("modulepreload", "", scriptUrl),
       script: {
         attr: script.getAttribute("src"),
         event: scriptEvent,
@@ -327,28 +344,33 @@ function checkNetwork(probe, urls) {
 }
 
 function checkPassive(probe, urls) {
-  const imageMatches =
-    probe.passive.image.attr === urls.imageUrl &&
-    probe.passive.image.currentSrc === urls.imageUrl &&
-    probe.passive.image.src === urls.imageUrl;
-  const linkMatches =
-    probe.passive.link.attr === urls.cssUrl &&
-    probe.passive.link.href === urls.cssUrl &&
-    probe.passive.link.sheetHref === urls.cssUrl;
-  const scriptMatches =
-    probe.passive.script.attr === urls.scriptUrl && probe.passive.script.src === urls.scriptUrl;
-  return (
-    imageMatches &&
-    linkMatches &&
-    scriptMatches &&
-    probe.passive.image.event === "load" &&
-    probe.passive.image.complete === true &&
-    probe.passive.image.naturalHeight === 1 &&
-    probe.passive.image.naturalWidth === 1 &&
-    probe.passive.link.event === "load" &&
-    probe.passive.link.cssRulesLength === 0 &&
-    probe.passive.script.event === "load"
-  );
+  const checks = [
+    probe.passive.image.attr === urls.imageUrl,
+    probe.passive.image.currentSrc === urls.imageUrl,
+    probe.passive.image.src === urls.imageUrl,
+    probe.passive.link.attr === urls.cssUrl,
+    probe.passive.link.href === urls.cssUrl,
+    probe.passive.link.sheetHref === urls.cssUrl,
+    probe.passive.script.attr === urls.scriptUrl,
+    probe.passive.script.src === urls.scriptUrl,
+    probe.passive.linkPreloadImage.attr === urls.imageUrl,
+    probe.passive.linkPreloadImage.href === urls.imageUrl,
+    probe.passive.linkPreloadImage.event === "load",
+    probe.passive.linkPreloadScript.attr === urls.scriptUrl,
+    probe.passive.linkPreloadScript.href === urls.scriptUrl,
+    probe.passive.linkPreloadScript.event === "load",
+    probe.passive.modulePreloadScript.attr === urls.scriptUrl,
+    probe.passive.modulePreloadScript.href === urls.scriptUrl,
+    probe.passive.modulePreloadScript.event === "load",
+    probe.passive.image.event === "load",
+    probe.passive.image.complete === true,
+    probe.passive.image.naturalHeight === 1,
+    probe.passive.image.naturalWidth === 1,
+    probe.passive.link.event === "load",
+    probe.passive.link.cssRulesLength === 0,
+    probe.passive.script.event === "load",
+  ];
+  return checks.every(Boolean);
 }
 
 function checkAttributes(probe, urls) {

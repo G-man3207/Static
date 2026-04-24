@@ -261,6 +261,22 @@ test("Noise passive element decoys reject suspicious supported-suffix path canar
         document.head.appendChild(link);
       });
 
+      const linkPreloads = {};
+      for (const { as, href, key, rel } of [
+        { as: "image", href: imageCanaryUrl, key: "linkPreloadImage", rel: "preload" },
+        { as: "script", href: scriptCanaryUrl, key: "linkPreloadScript", rel: "preload" },
+        { as: "", href: scriptCanaryUrl, key: "modulePreloadScript", rel: "modulepreload" },
+      ]) {
+        const preload = document.createElement("link");
+        preload.rel = rel;
+        if (as) preload.as = as;
+        const event = await waitForOutcome(preload, () => {
+          preload.href = href;
+          document.head.appendChild(preload);
+        });
+        linkPreloads[key] = { event, href: preload.href };
+      }
+
       return {
         img: {
           currentSrc: img.currentSrc,
@@ -273,6 +289,7 @@ test("Noise passive element decoys reject suspicious supported-suffix path canar
           href: link.href,
           sheetHref: link.sheet && link.sheet.href,
         },
+        ...linkPreloads,
         script: {
           event: scriptEvent,
           src: script.src,
@@ -298,6 +315,18 @@ test("Noise passive element decoys reject suspicious supported-suffix path canar
       href: probedUrl(PROBED_ID, "/canary-probe.css"),
       sheetHref: probedUrl(PROBED_ID, "/canary-probe.css"),
     },
+    linkPreloadImage: {
+      event: "error",
+      href: probedUrl(PROBED_ID, "/canary-probe.png"),
+    },
+    linkPreloadScript: {
+      event: "error",
+      href: probedUrl(PROBED_ID, "/canary-probe.js"),
+    },
+    modulePreloadScript: {
+      event: "error",
+      href: probedUrl(PROBED_ID, "/canary-probe.js"),
+    },
     script: {
       event: "error",
       src: probedUrl(PROBED_ID, "/canary-probe.js"),
@@ -306,7 +335,7 @@ test("Noise passive element decoys reject suspicious supported-suffix path canar
 
   await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
     "img.src": 1,
-    "link.href": 1,
+    "link.href": 4,
     "script.src": 1,
   });
 });

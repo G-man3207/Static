@@ -277,6 +277,7 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     "||fpjscdn.net^",
     "||fpnpmcdn.net^",
     "||fptls.com^",
+    "||openfpcdn.io^",
     "||perimeterx.net^",
     "||px-cdn.net^",
     "||px-cloud.net^",

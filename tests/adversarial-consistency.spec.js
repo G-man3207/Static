@@ -55,7 +55,7 @@ test("adversarial Noise harness finds no cross-vector contradictions", async ({
     fetch: 2,
     "iframe.src": 1,
     "img.src": 1,
-    "link.href": 1,
+    "link.href": 4,
     "object.data": 1,
     "script.src": 1,
     sendBeacon: 1,

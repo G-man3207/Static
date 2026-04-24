@@ -196,5 +196,14 @@
       "urlFilter": "||api.fpjs.pro^",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
+  },
+  {
+    "id": 23,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||openfpcdn.io^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
   }
 ]
