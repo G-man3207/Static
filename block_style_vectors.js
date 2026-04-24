@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- MAIN-world style shims are safer kept contiguous */
 // Static - MAIN-world blocking for CSS declaration extension URL probes.
 (() => {
   const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
@@ -5,7 +6,10 @@
   const BRIDGE_EVENT = "__static_style_probe_bridge_init__";
   const MAX_QUEUED_PROBES = 1000;
   const STYLE_MARKUP_RE = /<\s*style(?:\s|>|\/)/i;
+  const STYLE_ATTR_MARKUP_RE = /\sstyle\s*=/i;
   const queuedProbeEvents = [];
+  let nativeCssTextGetter = null;
+  let nativeCssTextSetter = null;
   let bridgePort = null;
 
   const stealthFns = new WeakMap();
@@ -152,6 +156,57 @@
     return true;
   };
 
+  const attrLocalName = (name) => {
+    const normalized = String(name || "").toLowerCase();
+    const colon = normalized.lastIndexOf(":");
+    return colon === -1 ? normalized : normalized.slice(colon + 1);
+  };
+
+  const removeBadStyleProperties = (style) => {
+    if (!style) return false;
+    let changed = false;
+    for (let index = style.length - 1; index >= 0; index--) {
+      const name = style.item(index);
+      const value = style.getPropertyValue(name);
+      if (!firstBadUrlIn(value)) continue;
+      try {
+        style.removeProperty(name);
+        changed = true;
+      } catch {}
+    }
+    return changed;
+  };
+
+  const safeCssTextFor = (style) => {
+    try {
+      if (nativeCssTextGetter) return nativeCssTextGetter.call(style);
+    } catch {}
+    try {
+      return style.cssText || "";
+    } catch {
+      return "";
+    }
+  };
+
+  const sanitizeStyleDeclarationValue = (value, label) => {
+    const url = firstBadUrlIn(value);
+    if (!url) return { changed: false, value };
+    bump(label, url);
+
+    if (!nativeCssTextSetter || typeof document.createElement !== "function") {
+      return { changed: true, value: "" };
+    }
+
+    try {
+      const scratch = document.createElement("div");
+      nativeCssTextSetter.call(scratch.style, String(value == null ? "" : value));
+      removeBadStyleProperties(scratch.style);
+      return { changed: true, value: safeCssTextFor(scratch.style) };
+    } catch {
+      return { changed: true, value: "" };
+    }
+  };
+
   const scrubStyleTextNode = (style, label) => {
     if (!isStyleElement(style)) return false;
     const text = style.textContent || "";
@@ -172,7 +227,12 @@
   };
 
   const sanitizeStyleMarkup = (value, label, innerHTMLDesc) => {
-    if (typeof value !== "string" || !STYLE_MARKUP_RE.test(value)) return value;
+    if (
+      typeof value !== "string" ||
+      (!STYLE_MARKUP_RE.test(value) && !STYLE_ATTR_MARKUP_RE.test(value))
+    ) {
+      return value;
+    }
     const template = document.createElement("template");
     try {
       innerHTMLDesc.set.call(template, value);
@@ -180,7 +240,10 @@
       return value;
     }
     const root = template.content || template;
-    if (!scrubStyleTextTree(root, label)) return value;
+    const textChanged = scrubStyleTextTree(root, label);
+    const attrChanged = scrubTree(root, label);
+    const changed = textChanged || attrChanged;
+    if (!changed) return value;
     try {
       return innerHTMLDesc.get.call(template);
     } catch {
@@ -214,14 +277,12 @@
   const patchCssText = (proto) => {
     const desc = Object.getOwnPropertyDescriptor(proto, "cssText");
     if (!desc || !desc.set) return;
+    nativeCssTextGetter = desc.get;
+    nativeCssTextSetter = desc.set;
     const wrapped = {
       set cssText(value) {
-        const url = firstBadUrlIn(value);
-        if (url) {
-          bump("style.cssText", url);
-          return;
-        }
-        desc.set.call(this, value);
+        const sanitized = sanitizeStyleDeclarationValue(value, "style.cssText");
+        desc.set.call(this, sanitized.changed ? sanitized.value : value);
       },
     };
     Object.defineProperty(proto, "cssText", {
@@ -233,6 +294,32 @@
         source: nativeSourceFor(desc.set, "set cssText"),
       }),
     });
+  };
+
+  const patchCssUrlPropertySetters = (proto) => {
+    for (const prop of Object.getOwnPropertyNames(proto || {})) {
+      if (prop === "cssText") continue;
+      const desc = Object.getOwnPropertyDescriptor(proto, prop);
+      if (!desc || !desc.set) continue;
+      const setterHolder = {
+        set [prop](value) {
+          const sanitized = sanitizeStyleDeclarationValue(value, "style.property");
+          desc.set.call(this, sanitized.changed ? sanitized.value : value);
+        },
+      };
+      const wrappedSet = Object.getOwnPropertyDescriptor(setterHolder, prop).set;
+      try {
+        Object.defineProperty(proto, prop, {
+          configurable: true,
+          enumerable: desc.enumerable,
+          get: desc.get,
+          set: stealth(wrappedSet, `set ${prop}`, {
+            length: desc.set.length,
+            source: nativeSourceFor(desc.set, `set ${prop}`),
+          }),
+        });
+      } catch {}
+    }
   };
 
   const patchTextContent = (proto) => {
@@ -280,6 +367,24 @@
     });
   };
 
+  const patchOuterHTML = (proto, outerHTMLDesc, innerHTMLDesc) => {
+    if (!outerHTMLDesc || !outerHTMLDesc.set || !innerHTMLDesc) return;
+    const wrapped = {
+      set outerHTML(value) {
+        outerHTMLDesc.set.call(this, sanitizeStyleMarkup(value, "style.outerHTML", innerHTMLDesc));
+      },
+    };
+    Object.defineProperty(proto, "outerHTML", {
+      configurable: true,
+      enumerable: outerHTMLDesc.enumerable,
+      get: outerHTMLDesc.get,
+      set: stealth(Object.getOwnPropertyDescriptor(wrapped, "outerHTML").set, "set outerHTML", {
+        length: outerHTMLDesc.set.length,
+        source: nativeSourceFor(outerHTMLDesc.set, "set outerHTML"),
+      }),
+    });
+  };
+
   const patchInsertAdjacentHTML = (proto, innerHTMLDesc) => {
     const desc = Object.getOwnPropertyDescriptor(proto, "insertAdjacentHTML");
     const orig = desc && desc.value;
@@ -308,7 +413,10 @@
       if (isStyleElement(target) && typeof arg === "string" && blockStyleText(label, arg)) {
         continue;
       }
-      if (arg && typeof arg === "object") scrubStyleTextTree(arg, label);
+      if (arg && typeof arg === "object") {
+        scrubTree(arg, label);
+        scrubStyleTextTree(arg, label);
+      }
       nextArgs.push(arg);
     }
     return nextArgs;
@@ -320,7 +428,10 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       [name](node, ...rest) {
-        if (node && typeof node === "object") scrubStyleTextTree(node, label);
+        if (node && typeof node === "object") {
+          scrubTree(node, label);
+          scrubStyleTextTree(node, label);
+        }
         return orig.call(this, node, ...rest);
       },
     }[name];
@@ -347,8 +458,10 @@
 
   const patchStyleTextInsertion = () => {
     const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    const outerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, "outerHTML");
     patchTextContent(Node.prototype);
     patchInnerHTML(Element.prototype, innerHTMLDesc);
+    patchOuterHTML(Element.prototype, outerHTMLDesc, innerHTMLDesc);
     patchInsertAdjacentHTML(Element.prototype, innerHTMLDesc);
     for (const name of ["appendChild", "insertBefore", "replaceChild"]) {
       patchNodeInsertionMethod(Node.prototype, name, "style.domInsertion");
@@ -359,8 +472,9 @@
   };
 
   const scrubElementStyle = (el, label) => {
-    if (!el || !el.style) return;
+    if (!el || !el.style) return false;
     const style = el.style;
+    let changed = false;
     for (let index = style.length - 1; index >= 0; index--) {
       const name = style.item(index);
       const value = style.getPropertyValue(name);
@@ -369,18 +483,52 @@
         bump(label, url);
         try {
           style.removeProperty(name);
+          changed = true;
         } catch {}
       }
     }
+    return changed;
   };
 
   const scrubTree = (node, label) => {
-    if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
-    scrubElementStyle(node, label);
-    if (typeof node.querySelectorAll !== "function") return;
+    if (!node) return false;
+    let changed = false;
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      changed = scrubElementStyle(node, label);
+    }
+    if (typeof node.querySelectorAll !== "function") return changed;
     try {
-      for (const el of node.querySelectorAll("[style]")) scrubElementStyle(el, label);
+      for (const el of node.querySelectorAll("[style]")) {
+        changed = scrubElementStyle(el, label) || changed;
+      }
     } catch {}
+    return changed;
+  };
+
+  const patchStyleAttributeSetters = () => {
+    if (typeof Element === "undefined" || !Element.prototype) return;
+    const origSetAttribute = Element.prototype.setAttribute;
+    const origSetAttributeNS = Element.prototype.setAttributeNS;
+    const wrapped = {
+      setAttribute(name, value) {
+        if (attrLocalName(name) === "style") {
+          const sanitized = sanitizeStyleDeclarationValue(value, "style.setAttribute");
+          return origSetAttribute.call(this, name, sanitized.changed ? sanitized.value : value);
+        }
+        return origSetAttribute.apply(this, arguments);
+      },
+      setAttributeNS(ns, name, value) {
+        if (attrLocalName(name) === "style") {
+          const sanitized = sanitizeStyleDeclarationValue(value, "style.setAttributeNS");
+          return origSetAttributeNS.call(this, ns, name, sanitized.changed ? sanitized.value : value);
+        }
+        return origSetAttributeNS.apply(this, arguments);
+      },
+    };
+    Element.prototype.setAttribute = stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
+    Element.prototype.setAttributeNS = stealth(wrapped.setAttributeNS, "setAttributeNS", {
+      length: 3,
+    });
   };
 
   const observeStyleAttributes = () => {
@@ -416,7 +564,9 @@
   if (typeof CSSStyleDeclaration !== "undefined" && CSSStyleDeclaration.prototype) {
     patchSetProperty(CSSStyleDeclaration.prototype);
     patchCssText(CSSStyleDeclaration.prototype);
+    patchCssUrlPropertySetters(CSSStyleDeclaration.prototype);
   }
+  patchStyleAttributeSetters();
   patchStyleTextInsertion();
   if (!observeStyleAttributes()) {
     document.addEventListener("DOMContentLoaded", observeStyleAttributes, { once: true });

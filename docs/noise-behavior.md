@@ -30,7 +30,7 @@ persona with fake two-hit canaries.
 | `form.action`, `button.formAction`, `input.formAction` | Fail-closed without storing extension submission targets                               | Fail-closed                     |
 | CSSOM `insertRule`, `replace`, `replaceSync` | Fail-closed without inserting extension-URL rules                                                 | Fail-closed                     |
 | `<style>` text / `innerHTML` / DOM insertion | Fail-closed before extension `@import` URLs can persist in style text                            | Fail-closed                     |
-| CSS declaration and style-attribute URLs    | Fail-closed or scrubbed before resource load                                                     | Fail-closed                     |
+| CSS declaration and style-attribute URLs    | Fail-closed synchronously for CSSOM setters, style attributes, HTML sinks, and parsed-node insertion | Fail-closed |
 | `Worker`, `SharedWorker`                    | Fail-closed                                                                                      | Fail-closed                     |
 | `EventSource`                               | Fail-closed with EventSource-shaped error behavior                                               | Fail-closed                     |
 | `serviceWorker.register`                    | Fail-closed                                                                                      | Fail-closed                     |

@@ -46,7 +46,7 @@ Websites quietly probe your browser to figure out **which extensions you have in
 3. **`window` global fingerprinting.** Devtools bridges and extension-presence markers (`__REACT_DEVTOOLS_GLOBAL_HOOK__`, `__GRAMMARLY_DESKTOP_INTEGRATION__`, etc.) are locked to `undefined` before page scripts run.
 4. **Network-layer blocklists (togglable).** Declarative-Net-Request rulesets block known:
    - **Fingerprinting / anti-bot vendors** — Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
-   - **CAPTCHA / device-check vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA and DataDome response pages.
+   - **CAPTCHA / device-check vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA, DataDome response pages, and Cloudflare Turnstile / Challenge Platform.
    - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, PostHog, and Sentry Replay CDN bundles.
    - **Datadog RUM** _(off by default, also used for legitimate monitoring)_.
    - **LinkedIn** — sensor/metrics collection, conversion tracking, ad pixel, adblock detection, internal Piwik, marketing tag system, LMS analytics.
@@ -265,7 +265,7 @@ static/
 - JS-layer patches run only where content scripts run. Pages served from `chrome://`, `about:`, the Chrome Web Store, and a handful of other restricted schemes are not covered.
 - The DOM scrubber ships with a default list of extensions whose markers are stripped. If one of those is an extension you use, its in-page UI (autofill icons, inline suggestions, etc.) may not render. Remove that extension's patterns from `lists.js` to keep it working.
 - Some sites use anti-bot vendors (PerimeterX, DataDome) as part of their login / checkout flow. If a site breaks, try disabling `fingerprint_vendors` first from the popup.
-- `captcha_vendors` is disabled by default because Arkose/FunCAPTCHA is served as a CAPTCHA on some login flows (X signup, Roblox, some crypto exchanges); enabling it will break sign-in there.
+- `captcha_vendors` is disabled by default because Arkose/FunCAPTCHA, DataDome, and Cloudflare Turnstile / Challenge Platform are served as CAPTCHA or device-check flows on some logins and protected forms (X signup, Roblox, some crypto exchanges, Cloudflare-protected forms); enabling it will break sign-in there.
 - `datadog_rum` is disabled by default because Datadog RUM is also widely used for legitimate performance and error monitoring that site owners and users may want.
 - Does not cover the entire browser-fingerprinting surface (canvas, WebGL, audio, fonts, font enumeration, WebRTC IP leak, etc.). Complements, doesn't replace, a dedicated anti-fingerprint extension.
 
