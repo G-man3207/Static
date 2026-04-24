@@ -240,7 +240,6 @@
   }
   refreshPersona();
 
-  addEventListener("beforeunload", flush, { capture: true });
   addEventListener("pagehide", flush, { capture: true });
   document.addEventListener("visibilitychange", flushOnHidden, { capture: true });
 

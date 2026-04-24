@@ -151,6 +151,170 @@ test("filters unsupported iframe allow tokens without browser console warnings",
   }
 });
 
+test("normalizes iframe sandbox and legacy permission attributes without console noise", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(100);
+
+  const messages = [];
+  const onConsole = (msg) => messages.push({ type: msg.type(), text: msg.text() });
+  page.on("console", onConsole);
+
+  try {
+    const result = await page.evaluate(() => {
+      const supported = new Set(
+        typeof document.featurePolicy?.allowedFeatures === "function"
+          ? document.featurePolicy.allowedFeatures()
+          : []
+      );
+      const expectedAllow = ["fullscreen", "payment"]
+        .filter((token) => supported.has(token))
+        .join("; ");
+
+      const sandbox = document.createElement("iframe");
+      sandbox.setAttribute(
+        "sandbox",
+        "allow-scripts allow-downloads-without-user-activation allow-downloads"
+      );
+
+      const sandboxProp = document.createElement("iframe");
+      sandboxProp.sandbox = "allow-scripts allow-downloads-without-user-activation";
+
+      const sandboxTokenAdd = document.createElement("iframe");
+      sandboxTokenAdd.sandbox.add("allow-downloads-without-user-activation", "allow-scripts");
+
+      const sandboxTokenValue = document.createElement("iframe");
+      sandboxTokenValue.sandbox.value = "allow-scripts allow-downloads-without-user-activation";
+
+      const legacy = document.createElement("iframe");
+      legacy.setAttribute("allowfullscreen", "");
+      legacy.setAttribute("allowpaymentrequest", "");
+      legacy.setAttribute("allow", "fullscreen; payment; totally-made-up-feature");
+      document.body.appendChild(legacy);
+
+      const host = document.createElement("div");
+      host.innerHTML = `<iframe sandbox="allow-scripts allow-downloads-without-user-activation" allowfullscreen allowpaymentrequest allow="fullscreen; payment; fake-feature"></iframe>`;
+      document.body.appendChild(host);
+      const markup = host.querySelector("iframe");
+
+      return {
+        expectedAllow,
+        legacy: {
+          allow: legacy.getAttribute("allow"),
+          allowFullscreen: legacy.hasAttribute("allowfullscreen"),
+          allowPaymentRequest: legacy.hasAttribute("allowpaymentrequest"),
+        },
+        markup: {
+          allow: markup.getAttribute("allow"),
+          allowFullscreen: markup.hasAttribute("allowfullscreen"),
+          allowPaymentRequest: markup.hasAttribute("allowpaymentrequest"),
+          sandbox: markup.getAttribute("sandbox"),
+        },
+        sandbox: sandbox.getAttribute("sandbox"),
+        sandboxProp: sandboxProp.getAttribute("sandbox"),
+        sandboxTokenAdd: sandboxTokenAdd.getAttribute("sandbox"),
+        sandboxTokenValue: sandboxTokenValue.getAttribute("sandbox"),
+      };
+    });
+    await page.waitForTimeout(100);
+
+    expect(result).toEqual({
+      expectedAllow: result.expectedAllow,
+      legacy: {
+        allow: result.expectedAllow,
+        allowFullscreen: false,
+        allowPaymentRequest: false,
+      },
+      markup: {
+        allow: result.expectedAllow,
+        allowFullscreen: false,
+        allowPaymentRequest: false,
+        sandbox: "allow-scripts",
+      },
+      sandbox: "allow-scripts allow-downloads",
+      sandboxProp: "allow-scripts",
+      sandboxTokenAdd: "allow-scripts",
+      sandboxTokenValue: "allow-scripts",
+    });
+    expect(
+      messages.filter((message) =>
+        /invalid sandbox flag|allowfullscreen|allowpaymentrequest|Unrecognized feature/i.test(
+          message.text
+        )
+      )
+    ).toEqual([]);
+  } finally {
+    page.off("console", onConsole);
+  }
+});
+
+test("uses TrustedScriptURL-compatible script decoys on Trusted Types pages", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  const messages = [];
+  const onConsole = (msg) => messages.push({ type: msg.type(), text: msg.text() });
+  page.on("console", onConsole);
+
+  try {
+    await page.goto(server.url("/trusted-types.html"));
+    await page.waitForTimeout(100);
+
+    const result = await page.evaluate((url) => {
+      const assignProperty = document.createElement("script");
+      const setAttribute = document.createElement("script");
+      const outcomes = {};
+
+      try {
+        assignProperty.src = url;
+        outcomes.property = {
+          attr: assignProperty.getAttribute("src"),
+          ok: true,
+          src: assignProperty.src,
+        };
+      } catch (error) {
+        outcomes.property = { message: error.message, name: error.name, ok: false };
+      }
+
+      try {
+        setAttribute.setAttribute("src", url);
+        outcomes.attribute = {
+          attr: setAttribute.getAttribute("src"),
+          ok: true,
+          src: setAttribute.src,
+        };
+      } catch (error) {
+        outcomes.attribute = { message: error.message, name: error.name, ok: false };
+      }
+
+      return outcomes;
+    }, probedUrl(PROBED_ID, "/content.js"));
+    await page.waitForTimeout(100);
+
+    expect(result).toEqual({
+      attribute: {
+        attr: probedUrl(PROBED_ID, "/content.js"),
+        ok: true,
+        src: probedUrl(PROBED_ID, "/content.js"),
+      },
+      property: {
+        attr: probedUrl(PROBED_ID, "/content.js"),
+        ok: true,
+        src: probedUrl(PROBED_ID, "/content.js"),
+      },
+    });
+    expect(messages.filter((message) => /TrustedScriptURL assignment/i.test(message.text))).toEqual(
+      []
+    );
+  } finally {
+    page.off("console", onConsole);
+  }
+});
+
 test("suppresses unsafe-header console errors while preserving exposed XHR headers", async ({
   extension,
   server,
