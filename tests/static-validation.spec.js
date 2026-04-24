@@ -270,6 +270,7 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
   const replayFilters = new Set(urlFiltersFor("rules/session_replay.json"));
 
   for (const filter of [
+    "||api.fpjs.pro^",
     "||datadome.co^",
     "||fpcdn.io^",
     "||fpjs.io^",

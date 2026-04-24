@@ -34,7 +34,7 @@ collectors toward behavior that looks more like legitimate app code.
 Adaptive UI or blocking is not meaningful without calibration. Before any blocking stage ships, the
 scorer needs three local test sets:
 
-- Positive set: FingerprintJS demo patterns, DataDome/HUMAN/PerimeterX/Arkose-style collectors,
+- Positive set: Fingerprint demo patterns, DataDome/HUMAN/PerimeterX/Arkose-style collectors,
   LinkedIn Spectroscopy-style collect/encrypt/POST flows, and known replay SDKs such as FullStory,
   LogRocket, Clarity, Sentry Replay, and rrweb.
 - Validation-only references: EasyPrivacy, Disconnect, and Static's known-vendor rules. These can
@@ -79,7 +79,8 @@ Stage 1: Observe-only adaptive log.
   `/vX.Y.Z/tags.js` routes with the documented `/js/` collector inference, or explicit
   `window.ddoptions.endpoint` deployments even when the tag is served from a custom path,
   `window._pxAppId`,
-  `window._sift.push(["_setAccount", ...])`, or `window.FingerprintJS.load(...)`.
+  `window._sift.push(["_setAccount", ...])`, current `window.Fingerprint.start(...)`, or legacy
+  `window.FingerprintJS.load(...)`.
 - When documented globals are absent, attribute behavior-only findings to the executing external
   script source when it can be derived locally, and redact high-entropy path segments or query
   tokens before persisting the source label.

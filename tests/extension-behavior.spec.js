@@ -755,7 +755,7 @@ test("Adaptive runtime detection logs proxied vendor signatures without behavior
       }),
       reasons: expect.objectContaining({
         "vendor:DataDome": 1,
-        "vendor:FingerprintJS": 1,
+        "vendor:Fingerprint": 1,
         "vendor:HUMAN": 1,
         "vendor:Sift": 1,
       }),
@@ -770,6 +770,41 @@ test("Adaptive runtime detection logs proxied vendor signatures without behavior
   );
   expect(dynamicRules).toEqual([]);
   expect(sessionRules).toEqual([]);
+});
+
+test("Adaptive runtime detection recognizes Fingerprint v4 start endpoints", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-runtime-signatures-fingerprint-v4.html"));
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveVendorFingerprintV4Done === true))
+    .toBe(true);
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => adaptive_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: {
+        fingerprinting: 1,
+      },
+      endpoints: expect.objectContaining({
+        [`${server.origin}/fp/v4`]: 1,
+      }),
+      reasons: expect.objectContaining({
+        "api:start": 1,
+        "config:apiKey": 1,
+        "config:endpoints": 1,
+        "vendor:Fingerprint": 1,
+      }),
+      scoreMax: 9,
+    });
 });
 
 test("Adaptive runtime detection recognizes versioned first-party DataDome routes", async ({
