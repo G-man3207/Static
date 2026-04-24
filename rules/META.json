@@ -7,9 +7,9 @@
       "enabled_by_default": true
     },
     "fingerprint_vendors": {
-      "version": "1.0.4",
+      "version": "1.0.5",
       "last_verified": "2026-04-24",
-      "description": "Commercial client-side fingerprinting and anti-bot vendors: Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5. Includes current Fingerprint CDN/API domains, api.fpjs.pro, npm loader CDN, HUMAN sensor/connect hosts, and Sift JS/CSP plus api.sift.com hosts.",
+      "description": "Client-side fingerprinting and anti-bot vendors: Fingerprint Pro, open-source FingerprintJS CDN, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5. Includes current Fingerprint CDN/API domains, api.fpjs.pro, npm loader CDN, HUMAN sensor/connect hosts, and Sift JS/CSP plus api.sift.com hosts.",
       "enabled_by_default": true
     },
     "captcha_vendors": {

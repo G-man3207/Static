@@ -18,7 +18,8 @@ persona with fake two-hit canaries.
 | `input.src` for image inputs                | Loads a 1x1 transparent PNG; page-visible getters return the original extension URL              | Blocked                         |
 | `video.poster` / `video.setAttribute`       | Loads a 1x1 transparent PNG; page-visible getters return the original extension URL              | Blocked                         |
 | `script.src` / `script.setAttribute("src")` | Loads an empty inert JavaScript resource; page-visible getters return the original extension URL | Blocked                         |
-| `link.href` / `link.setAttribute("href")`   | Loads an empty inert stylesheet; page-visible getters return the original extension URL          | Blocked                         |
+| `link.href` / `link.setAttribute("href")`   | Loads an inert data URL matched to plausible stylesheet, image, script, or HTML paths; page-visible getters return the original extension URL | Blocked |
+| `link rel=preload/modulepreload`            | Plausible image, script, and stylesheet paths receive matched inert preload resources            | Blocked                         |
 | SVG `use/image href` / `href.baseVal`       | Loads an inert image decoy for plausible image paths; page-visible getters return the original URL | Blocked                       |
 | `iframe.src`                                | Fail-closed                                                                                      | Fail-closed                     |
 | `object.data`, `embed.src`, `source.src`    | Receives an inert data URL matched to the path kind where possible                               | Blocked                         |

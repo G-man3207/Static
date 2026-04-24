@@ -226,7 +226,13 @@
   const styleDecoyPath = (pathname) => matchesPathPattern(pathname, STYLE_DECOY_PATHS);
 
   const passiveHrefDecoyKind = (tag, pathname) => {
-    if (tag === "link") return styleDecoyPath(pathname) ? "style" : null;
+    if (tag === "link") {
+      if (styleDecoyPath(pathname)) return "style";
+      if (imageDecoyPath(pathname)) return "image";
+      if (scriptDecoyPath(pathname)) return "script";
+      if (htmlDecoyPath(pathname)) return "html";
+      return null;
+    }
     if (tag === "use" || tag === "image") return imageDecoyPath(pathname) ? "image" : null;
     return null;
   };
