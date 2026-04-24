@@ -103,6 +103,64 @@ test("Noise decoys srcset probes without exposing the replacement URL", async ({
   });
 });
 
+test("Noise passive decoys preserve original URLs through attribute nodes and serialization", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await seedNoisePersona(extension, server.origin);
+
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const imageUrl = probedUrl(PROBED_ID, "/icon.png");
+  const result = await page.evaluate((srcUrl) => {
+    const image = new Image();
+    image.src = srcUrl;
+    document.body.appendChild(image);
+
+    const attr = image.getAttributeNode("src");
+    const clone = image.cloneNode(false);
+    const cloneAttr = clone.getAttributeNode("src");
+    const serializer = new XMLSerializer();
+
+    const nodeImage = document.createElement("img");
+    const nodeAttr = document.createAttribute("src");
+    nodeAttr.value = srcUrl;
+    nodeImage.setAttributeNode(nodeAttr);
+
+    attr.value = srcUrl;
+
+    return {
+      attrNodeValue: attr.value,
+      attrNodeNodeValue: attr.nodeValue,
+      attrNodeTextContent: attr.textContent,
+      attributesValue: image.attributes.src.value,
+      bodyInnerHTML: document.body.innerHTML,
+      cloneAttrValue: cloneAttr.value,
+      cloneGetAttribute: clone.getAttribute("src"),
+      cloneOuterHTML: clone.outerHTML,
+      getAttribute: image.getAttribute("src"),
+      nodeImageAttrValue: nodeImage.getAttributeNode("src").value,
+      nodeImageGetAttribute: nodeImage.getAttribute("src"),
+      nodeImageOuterHTML: nodeImage.outerHTML,
+      outerHTML: image.outerHTML,
+      serialized: serializer.serializeToString(image),
+    };
+  }, imageUrl);
+
+  for (const value of Object.values(result)) {
+    expect(value).toContain(imageUrl);
+    expect(value).not.toContain("data:image");
+  }
+
+  await expect.poll(() => vectorCountsFor(extension, server.origin)).toMatchObject({
+    "attr.value-src": 1,
+    "img.src": 1,
+    "setAttributeNode-src": 1,
+  });
+});
+
 test("Noise mode fails closed for non-GET method canaries", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await seedNoisePersona(extension, server.origin);

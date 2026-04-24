@@ -283,19 +283,28 @@ async function probeSurface(page) {
         ...fnSurface(Function.prototype.toString),
         constructResult: constructFunctionToString(),
       },
+      attrValueGetter:
+        typeof Attr !== "undefined" ? accessorSource(Attr.prototype, "value", "get") : null,
+      elementOuterHTMLGetter: accessorSource(Element.prototype, "outerHTML", "get"),
       getAttribute: fnSurface(Element.prototype.getAttribute),
       iframeSrcSetter: accessorSource(HTMLIFrameElement.prototype, "src", "set"),
       imageCurrentSrcGetter: accessorSource(HTMLImageElement.prototype, "currentSrc", "get"),
       imageSrcSetter: accessorSource(HTMLImageElement.prototype, "src", "set"),
       linkHrefSetter: accessorSource(HTMLLinkElement.prototype, "href", "set"),
+      nodeCloneNode: fnSurface(Node.prototype.cloneNode),
       scriptSrcSetter: accessorSource(HTMLScriptElement.prototype, "src", "set"),
       serviceWorkerRegister: navigator.serviceWorker
         ? fnSurface(navigator.serviceWorker.register)
         : null,
       setAttribute: fnSurface(Element.prototype.setAttribute),
+      setAttributeNode: fnSurface(Element.prototype.setAttributeNode),
       setAttributeNS: fnSurface(Element.prototype.setAttributeNS),
       styleSheetHref,
       worker: fnSurface(Worker),
+      xmlSerializeToString:
+        typeof XMLSerializer !== "undefined"
+          ? fnSurface(XMLSerializer.prototype.serializeToString)
+          : null,
       xhrSend: fnSurface(XMLHttpRequest.prototype.send),
     };
   });
@@ -422,8 +431,10 @@ function checkSurface(probe) {
     probe.surface.getAttribute.ownPrototype === false &&
     probe.surface.imageSrcSetter.ownPrototype === false &&
     probe.surface.linkHrefSetter.ownPrototype === false &&
+    probe.surface.nodeCloneNode.ownPrototype === false &&
     probe.surface.scriptSrcSetter.ownPrototype === false &&
     probe.surface.setAttribute.ownPrototype === false &&
+    probe.surface.setAttributeNode.ownPrototype === false &&
     probe.surface.setAttributeNS.ownPrototype === false &&
     probe.surface.xhrSend.ownPrototype === false
   );
