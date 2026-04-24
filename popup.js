@@ -1,28 +1,33 @@
 const RULESET_META = [
   {
     id: "linkedin",
+    group: "Site telemetry",
     label: "LinkedIn telemetry",
     help: "Blocks LinkedIn probe, sensor, metrics, conversion, ad, and marketing collection endpoints.",
   },
   {
     id: "fingerprint_vendors",
-    label: "Fingerprinting / anti-bot",
+    group: "Fingerprinting and access checks",
+    label: "Fingerprinting and anti-bot",
     help: "Blocks known client-side fingerprinting and anti-bot vendor endpoints at the network layer.",
   },
   {
     id: "captcha_vendors",
-    label: "CAPTCHA vendors",
+    group: "Fingerprinting and access checks",
+    label: "CAPTCHA and device checks",
     help: "Blocks Arkose/FunCAPTCHA endpoints. Leave this off unless you accept login and challenge breakage.",
     warn: "Off by default. Breaks logins on sites using Arkose/FunCAPTCHA (X signup, Roblox, some crypto).",
   },
   {
     id: "session_replay",
-    label: "Session replay",
+    group: "Replay and monitoring",
+    label: "Session replay recorders",
     help: "Blocks known session-replay vendor assets and ingest hosts before page scripts can use them.",
   },
   {
     id: "datadog_rum",
-    label: "Datadog RUM",
+    group: "Replay and monitoring",
+    label: "Datadog browser monitoring",
     help: "Blocks Datadog browser RUM collection. Keep off if you want legitimate site monitoring to work.",
     warn: "Off by default. Also used for legitimate performance/error monitoring.",
   },
@@ -400,6 +405,17 @@ const addHelpTip = (container, id, text) => {
   return textId;
 };
 
+const addRulesetGroup = (container, title) => {
+  const group = document.createElement("div");
+  group.className = "ruleset-group";
+  const heading = document.createElement("div");
+  heading.className = "ruleset-group-title";
+  heading.textContent = title;
+  group.appendChild(heading);
+  container.appendChild(group);
+  return group;
+};
+
 const replayModeLabel = (mode) => {
   if (mode === "mask") return "Mask";
   if (mode === "noise") return "Noise";
@@ -432,7 +448,15 @@ const renderRulesets = (enabledArr, counts) => {
   replayState.sessionReplayBlocking = enabled.has("session_replay");
   renderReplayIndicators();
   const container = document.getElementById("rulesets");
+  container.innerHTML = "";
+  let currentGroup = null;
+  let groupContainer = container;
   RULESET_META.forEach((meta, i) => {
+    if (meta.group !== currentGroup) {
+      currentGroup = meta.group;
+      groupContainer = addRulesetGroup(container, currentGroup);
+    }
+
     const row = document.createElement("div");
     row.className = "ruleset";
 
@@ -481,13 +505,13 @@ const renderRulesets = (enabledArr, counts) => {
 
     row.appendChild(input);
     row.appendChild(textWrap);
-    container.appendChild(row);
+    groupContainer.appendChild(row);
 
     if (meta.warn) {
       const warnEl = document.createElement("div");
       warnEl.className = "ruleset-warn";
       warnEl.textContent = meta.warn;
-      container.appendChild(warnEl);
+      groupContainer.appendChild(warnEl);
     }
   });
 };

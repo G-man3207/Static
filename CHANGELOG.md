@@ -11,6 +11,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - GitHub Actions now run only for new `v*.*.*` version tag pushes; formatting is checked on the tagged commit instead of auto-committed after release.
 - Adaptive observe-only logging now treats environment snapshots (screen, timezone, storage, and high-entropy navigator reads) as corroborating signals for crypto-plus-network collector flows.
 - The disabled CAPTCHA ruleset now covers DataDome response-page hosts under `captcha-delivery.com`.
+- Popup framing now separates always-on defenses from grouped network protections, so vendor-specific toggles do not understate Static's core protection layers.
 
 ### Fixed
 
