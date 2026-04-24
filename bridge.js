@@ -200,7 +200,13 @@
   addEventListener("pagehide", flush, { capture: true });
   document.addEventListener("visibilitychange", flushOnHidden, { capture: true });
 
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.type === "static_persona_update") refreshPersona();
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg && msg.type === "static_persona_update") {
+      refreshPersona()
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+    }
+    return undefined;
   });
 })();

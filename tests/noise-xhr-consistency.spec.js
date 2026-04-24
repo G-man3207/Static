@@ -115,6 +115,16 @@ const probeFetch = (page) =>
     }
   }, manifestUrl());
 
+const clearLogFromExtensionPage = async (extension) => {
+  const extensionPage = await extension.context.newPage();
+  try {
+    await extensionPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+    await extensionPage.evaluate(() => chrome.runtime.sendMessage({ type: "static_clear_log" }));
+  } finally {
+    await extensionPage.close();
+  }
+};
+
 test("Noise decoys expose coherent fetch and XHR response details", async ({
   extension,
   server,
@@ -196,4 +206,54 @@ test("Noise setting changes refresh existing pages without reload", async ({ ext
   await expect
     .poll(async () => [await probeFetch(pageOne), await probeFetch(pageTwo)])
     .toEqual([{ error: "TypeError" }, { error: "TypeError" }]);
+});
+
+test("clearing logs disarms existing-page Noise personas without reload", async ({
+  extension,
+  server,
+}) => {
+  await seedNoisePersona(extension, server.origin);
+  const page = await extension.context.newPage();
+
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+  await expect(probeFetch(page)).resolves.toEqual({ status: 200 });
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get(["probe_log", "user_secret"]).then((stored) => ({
+            hasOriginLog: !!(stored.probe_log && stored.probe_log[origin]),
+            hasSecret: typeof stored.user_secret === "string",
+          })),
+        server.origin
+      )
+    )
+    .toEqual({ hasOriginLog: true, hasSecret: true });
+
+  await clearLogFromExtensionPage(extension);
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(() =>
+        chrome.storage.local.get(["cumulative", "probe_log", "user_secret"])
+      )
+    )
+    .toEqual({});
+  await expect.poll(() => probeFetch(page)).toEqual({ error: "TypeError" });
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        ({ id, origin }) =>
+          chrome.storage.local.get(["probe_log", "user_secret"]).then((stored) => ({
+            blockedProbeCount:
+              (stored.probe_log && stored.probe_log[origin]?.idCounts?.[id]) || 0,
+            hasSecret: typeof stored.user_secret === "string",
+          })),
+        { id: PROBED_ID, origin: server.origin }
+      )
+    )
+    .toEqual({ blockedProbeCount: 1, hasSecret: false });
 });
