@@ -19,9 +19,9 @@
       "enabled_by_default": false
     },
     "session_replay": {
-      "version": "1.0.2",
-      "last_verified": "2026-04-23",
-      "description": "Session-replay, heatmap, and product-analytics vendors that record user interaction: FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, and Sentry Replay CDN bundles. Includes current LogRocket CSP host family, Clarity c.bing.com, and Heap heap-api/heapanalytics plus classic replay auryc hosts.",
+      "version": "1.0.3",
+      "last_verified": "2026-04-24",
+      "description": "Session-replay, heatmap, and product-analytics vendors that record user interaction: FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, PostHog, and Sentry Replay CDN bundles. Includes current LogRocket CSP host family, Clarity c.bing.com, Heap heap-api/heapanalytics plus classic replay auryc hosts, and PostHog cloud ingest/assets under i.posthog.com.",
       "enabled_by_default": true
     },
     "datadog_rum": {
