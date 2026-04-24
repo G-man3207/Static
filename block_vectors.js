@@ -544,6 +544,32 @@
     } catch {}
   };
 
+  const patchWorkletAddModule = () => {
+    if (typeof Worklet === "undefined" || !Worklet.prototype) return;
+    const desc = Object.getOwnPropertyDescriptor(Worklet.prototype, "addModule");
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrappedAddModule = {
+      addModule(moduleURL) {
+        if (isBad(moduleURL)) {
+          const url = getUrl(moduleURL);
+          bump("Worklet.addModule", url);
+          return Promise.reject(
+            new DOMException("Unable to load a worklet's module.", "AbortError")
+          );
+        }
+        return orig.apply(this, arguments);
+      },
+    }.addModule;
+    Object.defineProperty(Worklet.prototype, "addModule", {
+      ...desc,
+      value: stealth(wrappedAddModule, "addModule", {
+        length: orig.length,
+        source: nativeSourceFor(orig, "addModule"),
+      }),
+    });
+  };
+
   const patchCssMethod = (proto, name, label, onBlocked) => {
     if (!proto) return;
     const desc = Object.getOwnPropertyDescriptor(proto, name);
@@ -590,5 +616,6 @@
   patchAudioCtor();
   patchEventSource();
   patchServiceWorkerRegister();
+  patchWorkletAddModule();
   patchCssRules();
 })();

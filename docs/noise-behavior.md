@@ -31,13 +31,13 @@ persona with fake two-hit canaries.
 | CSSOM `insertRule`, `replace`, `replaceSync` | Fail-closed without inserting extension-URL rules                                                 | Fail-closed                     |
 | `<style>` text / `innerHTML` / DOM insertion | Fail-closed before extension `@import` URLs can persist in style text                            | Fail-closed                     |
 | CSS declaration and style-attribute URLs    | Fail-closed synchronously for CSSOM setters, style attributes, HTML sinks, and parsed-node insertion | Fail-closed |
-| `Worker`, `SharedWorker`                    | Fail-closed                                                                                      | Fail-closed                     |
+| `Worker`, `SharedWorker`, worklet `addModule` | Fail-closed                                                                                    | Fail-closed                     |
 | `EventSource`                               | Fail-closed with EventSource-shaped error behavior                                               | Fail-closed                     |
 | `serviceWorker.register`                    | Fail-closed                                                                                      | Fail-closed                     |
 
 ## Why Active Surfaces Stay Blocked
 
-Frames, workers, service workers, and event streams expose enough behavior that a shallow fake is
+Frames, workers, worklets, service workers, and event streams expose enough behavior that a shallow fake is
 easier to detect than a consistent failure. They need separate contracts before being decoyed:
 origin access, constructor errors, lifecycle events, message channels, script execution timing,
 scope semantics, stream state, and cleanup behavior all have to line up.
