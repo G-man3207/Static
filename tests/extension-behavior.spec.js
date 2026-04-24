@@ -1970,6 +1970,7 @@ test("Clear log removes probe state and Noise identity while preserving preferen
     ({ id }) =>
       chrome.storage.local.set({
         cumulative: 42,
+        fingerprint_mode: "mask",
         noise_enabled: true,
         replay_mode: "chaos",
         replay_log: {
@@ -2011,6 +2012,7 @@ test("Clear log removes probe state and Noise identity while preserving preferen
       extension.serviceWorker.evaluate(() =>
         chrome.storage.local.get([
           "cumulative",
+          "fingerprint_mode",
           "noise_enabled",
           "replay_mode",
           "probe_log",
@@ -2020,5 +2022,5 @@ test("Clear log removes probe state and Noise identity while preserving preferen
         ])
       )
     )
-    .toEqual({ noise_enabled: true, replay_mode: "chaos" });
+    .toEqual({ fingerprint_mode: "mask", noise_enabled: true, replay_mode: "chaos" });
 });

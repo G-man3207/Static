@@ -285,6 +285,7 @@
         margin-top: 3px;
         line-height: 1.4;
       }
+      .fingerprint-row,
       .replay-row {
         display: flex;
         align-items: flex-start;
@@ -293,10 +294,12 @@
         padding-top: 12px;
         border-top: 1px solid var(--border);
       }
+      .fingerprint-row .col,
       .replay-row .col {
         flex: 1;
         min-width: 0;
       }
+      .fingerprint-row .ttl,
       .replay-row .ttl {
         display: flex;
         align-items: center;
@@ -305,6 +308,7 @@
         font-weight: 600;
         color: var(--text);
       }
+      .fingerprint-row .desc,
       .replay-row .desc {
         font-size: 10px;
         color: var(--text-muted);
@@ -683,6 +687,41 @@
           />
           <span class="switch-bg"></span>
         </label>
+      </div>
+      <div class="fingerprint-row">
+        <div class="col">
+          <div class="ttl" id="fingerprint-title">
+            <span id="fingerprint-title-text">Device masking</span>
+            <button
+              class="help-tip"
+              id="fingerprint-help"
+              type="button"
+              data-tip="Returns a stable per-site device profile for high-entropy browser surfaces such as OS, CPU/RAM buckets, screen, timezone, WebGL, canvas readback, storage, battery, and network hints."
+              aria-label="Device masking details"
+              aria-describedby="fingerprint-help-text"
+            >
+              ?
+            </button>
+            <span class="sr-only" id="fingerprint-help-text"
+              >Returns a stable per-site device profile for high-entropy browser surfaces such as
+              OS, CPU/RAM buckets, screen, timezone, WebGL, canvas readback, storage, battery, and
+              network hints.</span
+            >
+          </div>
+          <div class="desc" id="fingerprint-desc">
+            Hide your real OS and machine profile behind a plausible per-site persona. Stable for
+            each origin, different across origins.
+          </div>
+        </div>
+        <select
+          class="replay-select"
+          id="fingerprint-mode"
+          aria-labelledby="fingerprint-title-text"
+          aria-describedby="fingerprint-desc"
+        >
+          <option value="off">Off</option>
+          <option value="mask">Mask</option>
+        </select>
       </div>
       <div class="replay-row">
         <div class="col">
