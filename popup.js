@@ -1,15 +1,29 @@
 const RULESET_META = [
-  { id: "linkedin", label: "LinkedIn telemetry" },
-  { id: "fingerprint_vendors", label: "Fingerprinting / anti-bot" },
+  {
+    id: "linkedin",
+    label: "LinkedIn telemetry",
+    help: "Blocks LinkedIn probe, sensor, metrics, conversion, ad, and marketing collection endpoints.",
+  },
+  {
+    id: "fingerprint_vendors",
+    label: "Fingerprinting / anti-bot",
+    help: "Blocks known client-side fingerprinting and anti-bot vendor endpoints at the network layer.",
+  },
   {
     id: "captcha_vendors",
     label: "CAPTCHA vendors",
+    help: "Blocks Arkose/FunCAPTCHA endpoints. Leave this off unless you accept login and challenge breakage.",
     warn: "Off by default. Breaks logins on sites using Arkose/FunCAPTCHA (X signup, Roblox, some crypto).",
   },
-  { id: "session_replay", label: "Session replay" },
+  {
+    id: "session_replay",
+    label: "Session replay",
+    help: "Blocks known session-replay vendor assets and ingest hosts before page scripts can use them.",
+  },
   {
     id: "datadog_rum",
     label: "Datadog RUM",
+    help: "Blocks Datadog browser RUM collection. Keep off if you want legitimate site monitoring to work.",
     warn: "Off by default. Also used for legitimate performance/error monitoring.",
   },
 ];
@@ -275,6 +289,27 @@ const addReplayPill = (container, text, kind) => {
   container.appendChild(pill);
 };
 
+const addHelpTip = (container, id, text) => {
+  if (!text) return null;
+  const textId = `${id}_text`;
+  const tip = document.createElement("button");
+  tip.className = "help-tip";
+  tip.type = "button";
+  tip.id = id;
+  tip.dataset.tip = text;
+  tip.title = text;
+  tip.setAttribute("aria-label", "Details");
+  tip.setAttribute("aria-describedby", textId);
+  tip.textContent = "?";
+  const hiddenText = document.createElement("span");
+  hiddenText.className = "sr-only";
+  hiddenText.id = textId;
+  hiddenText.textContent = text;
+  container.appendChild(tip);
+  container.appendChild(hiddenText);
+  return textId;
+};
+
 const replayModeLabel = (mode) => {
   if (mode === "mask") return "Mask";
   if (mode === "noise") return "Noise";
@@ -319,12 +354,21 @@ const renderRulesets = (enabledArr, counts) => {
     const label = document.createElement("label");
     label.htmlFor = input.id;
     label.textContent = meta.label;
+    label.title = meta.help || meta.label;
     const c = counts[i];
     if (typeof c === "number") {
       const countSpan = document.createElement("span");
       countSpan.className = "rule-count";
       countSpan.textContent = `(${c})`;
       label.appendChild(countSpan);
+    }
+    const textWrap = document.createElement("div");
+    textWrap.className = "ruleset-text";
+    textWrap.appendChild(label);
+    const helpTextId = addHelpTip(textWrap, `${input.id}_help`, meta.help);
+    if (helpTextId) {
+      input.setAttribute("aria-describedby", helpTextId);
+      input.title = meta.help;
     }
 
     input.addEventListener("change", async () => {
@@ -348,7 +392,7 @@ const renderRulesets = (enabledArr, counts) => {
     });
 
     row.appendChild(input);
-    row.appendChild(label);
+    row.appendChild(textWrap);
     container.appendChild(row);
 
     if (meta.warn) {
