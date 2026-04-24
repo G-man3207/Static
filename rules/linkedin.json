@@ -58,7 +58,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||platform.linkedin.com/litms/",
+      "regexFilter": "^https?://platform(?:-akam|-ecst|-azur)?\\.linkedin\\.com/litms/(?:utag|vendor)/",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
   },

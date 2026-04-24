@@ -501,3 +501,17 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     expect(replayFilters.has(filter), `session_replay missing ${filter}`).toBe(true);
   }
 });
+
+test("LinkedIn DNR rules avoid blocking app allowlist profiles", () => {
+  const linkedinRules = readJson("rules/linkedin.json");
+  const serializedRules = JSON.stringify(linkedinRules);
+  const linkedinConditions = linkedinRules.map((rule) => rule.condition || {});
+
+  expect(serializedRules).not.toContain("||platform.linkedin.com/litms/");
+  expect(serializedRules).not.toContain("/litms/allowlist/");
+  expect(
+    linkedinConditions.some((condition) =>
+      String(condition.regexFilter || "").includes("/litms/(?:utag|vendor)/")
+    )
+  ).toBe(true);
+});

@@ -1,9 +1,9 @@
 {
   "rulesets": {
     "linkedin": {
-      "version": "1.0.0",
-      "last_verified": "2026-04-18",
-      "description": "LinkedIn telemetry: sensor/metrics collection, conversion tracking, ad pixel, adblock-detection script, internal Piwik, marketing tag system, LMS analytics, and lnkd.in redirector.",
+      "version": "1.0.1",
+      "last_verified": "2026-04-24",
+      "description": "LinkedIn telemetry: sensor/metrics collection, conversion tracking, ad pixel, adblock-detection script, internal Piwik, marketing tag utag/vendor paths, LMS analytics, Merchant Pool fingerprinting, and lnkd.in redirector.",
       "enabled_by_default": true
     },
     "fingerprint_vendors": {
