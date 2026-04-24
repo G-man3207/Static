@@ -930,6 +930,62 @@ test("Adaptive observe-only logging ignores canvas-heavy apps without corroborat
   expect(storage.adaptive_log).toBeUndefined();
 });
 
+test("Adaptive observe-only logging records environment snapshot telemetry with crypto and network", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-environment-fingerprint.html"));
+  await expect.poll(() => page.evaluate(() => window.__adaptiveEnvironmentDone === true)).toBe(
+    true
+  );
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => {
+            const entry = adaptive_log && adaptive_log[origin];
+            return entry
+              ? {
+                  categories: entry.categories,
+                  reasons: entry.reasons,
+                  scoreMax: entry.scoreMax,
+                }
+              : null;
+          }),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: { "anti-bot": 1 },
+      reasons: expect.objectContaining({
+        crypto: expect.any(Number),
+        environment: expect.any(Number),
+        navigator: expect.any(Number),
+        network: expect.any(Number),
+      }),
+      scoreMax: expect.any(Number),
+    });
+});
+
+test("Adaptive observe-only logging ignores ordinary environment reads with network only", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-environment-app.html"));
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveEnvironmentAppDone === true))
+    .toBe(true);
+  await page.waitForTimeout(400);
+
+  const storage = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get("adaptive_log")
+  );
+  expect(storage.adaptive_log).toBeUndefined();
+});
+
 test("Adaptive runtime detection logs proxied vendor signatures without behavior scoring", async ({
   extension,
   server,

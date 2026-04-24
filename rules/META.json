@@ -13,9 +13,9 @@
       "enabled_by_default": true
     },
     "captcha_vendors": {
-      "version": "1.0.0",
-      "last_verified": "2026-04-18",
-      "description": "CAPTCHA / device-attestation vendors (Arkose Labs, FunCAPTCHA). DISABLED BY DEFAULT — blocking these will break logins on sites that use them as CAPTCHA challenges (X signup, Roblox, several crypto exchanges, some enterprise SSO flows).",
+      "version": "1.0.1",
+      "last_verified": "2026-04-24",
+      "description": "CAPTCHA / device-attestation vendors (Arkose Labs, FunCAPTCHA, and DataDome response pages under captcha-delivery.com). DISABLED BY DEFAULT — blocking these will break logins on sites that use them as CAPTCHA or device-check challenges (X signup, Roblox, several crypto exchanges, some enterprise SSO flows).",
       "enabled_by_default": false
     },
     "session_replay": {
