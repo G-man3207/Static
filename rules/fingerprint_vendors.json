@@ -187,5 +187,14 @@
       "urlFilter": "||api.sift.com^",
       "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
     }
+  },
+  {
+    "id": 22,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||api.fpjs.pro^",
+      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+    }
   }
 ]

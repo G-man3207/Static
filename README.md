@@ -45,7 +45,7 @@ Websites quietly probe your browser to figure out **which extensions you have in
 2. **DOM-marker fingerprinting.** A MutationObserver strips attributes, classes, and custom-element tags that browser extensions leave on the DOM to announce their presence.
 3. **`window` global fingerprinting.** Devtools bridges and extension-presence markers (`__REACT_DEVTOOLS_GLOBAL_HOOK__`, `__GRAMMARLY_DESKTOP_INTEGRATION__`, etc.) are locked to `undefined` before page scripts run.
 4. **Network-layer blocklists (togglable).** Declarative-Net-Request rulesets block known:
-   - **Fingerprinting / anti-bot vendors** — FingerprintJS, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
+   - **Fingerprinting / anti-bot vendors** — Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
    - **CAPTCHA vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA.
    - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, and Sentry Replay CDN bundles.
    - **Datadog RUM** _(off by default, also used for legitimate monitoring)_.
@@ -85,7 +85,8 @@ served through first-party or proxied routes, such as `window.ddjskey` + `/tags.
 `/vX.Y.Z/tags.js` routes with the documented `/js/` collector inference, plus explicit
 `window.ddoptions.endpoint` deployments even when the DataDome tag is served from a custom path,
 `window._pxAppId` / `window._pxHostUrl` (HUMAN/PerimeterX), `window._sift.push(["_setAccount", ...])`
-(Sift), and `window.FingerprintJS.load(...)` (FingerprintJS).
+(Sift), and current `window.Fingerprint.start(...)` / legacy `window.FingerprintJS.load(...)`
+(Fingerprint).
 
 For behavior-only collectors that never expose a stable global, Static now also attributes the local
 adaptive finding to the external script source when possible, while still redacting high-entropy

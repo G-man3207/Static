@@ -54,9 +54,11 @@
   const vendorState = {
     datadome: { ddjskey: false, ddoptions: false, endpoint: "", scriptUrl: "", source: "" },
     fingerprint: {
+      apiCall: "",
       apiKey: false,
       endpoint: "",
-      loadCalled: false,
+      endpointReason: "",
+      initialized: false,
       scriptUrlPattern: "",
       source: "",
     },
@@ -594,14 +596,14 @@
 
   const maybeEmitFingerprintSignal = () => {
     const state = vendorState.fingerprint;
-    if (!state.loadCalled) return;
-    emitVendorSignal("FingerprintJS", "fingerprinting", {
+    if (!state.initialized) return;
+    emitVendorSignal("Fingerprint", "fingerprinting", {
       source: state.source || "inline-or-runtime",
       endpoint: state.endpoint || state.scriptUrlPattern,
       reasons: [
-        "api:load",
+        state.apiCall ? `api:${state.apiCall}` : "api:init",
         state.apiKey ? "config:apiKey" : "",
-        state.endpoint ? "config:endpoint" : "",
+        state.endpoint ? state.endpointReason || "config:endpoint" : "",
         state.scriptUrlPattern ? "config:scriptUrlPattern" : "",
       ],
     });
@@ -688,28 +690,51 @@
     return queue;
   };
 
+  const observeFingerprintCall = (apiCall, options, source) => {
+    const state = vendorState.fingerprint;
+    rememberVendorSource(state, source);
+    state.initialized = true;
+    state.apiCall = apiCall;
+    state.apiKey ||= !!(
+      options &&
+      typeof options === "object" &&
+      Object.prototype.hasOwnProperty.call(options, "apiKey")
+    );
+    const endpoint = firstStringEntry(options && (options.endpoints || options.endpoint));
+    const scriptUrlPattern = firstStringEntry(options && options.scriptUrlPattern);
+    if (endpoint) {
+      state.endpoint = endpoint;
+      state.endpointReason =
+        options && Object.prototype.hasOwnProperty.call(options, "endpoints")
+          ? "config:endpoints"
+          : "config:endpoint";
+    }
+    if (scriptUrlPattern) state.scriptUrlPattern = scriptUrlPattern;
+    maybeEmitFingerprintSignal();
+  };
+
   const instrumentFingerprintGlobal = (value, source = currentAdaptiveSource()) => {
     if (!value || (typeof value !== "object" && typeof value !== "function")) return value;
-    if (typeof value.load !== "function" || instrumentedFingerprintGlobals.has(value)) return value;
+    const hasLoad = typeof value.load === "function";
+    const hasStart = typeof value.start === "function";
+    if ((!hasLoad && !hasStart) || instrumentedFingerprintGlobals.has(value)) return value;
     instrumentedFingerprintGlobals.add(value);
-    patchObjectMethod(value, "load", (origLoad) =>
-      function load(options) {
-        const state = vendorState.fingerprint;
-        rememberVendorSource(state, source);
-        state.loadCalled = true;
-        state.apiKey ||= !!(
-          options &&
-          typeof options === "object" &&
-          Object.prototype.hasOwnProperty.call(options, "apiKey")
-        );
-        const endpoint = firstStringEntry(options && options.endpoint);
-        const scriptUrlPattern = firstStringEntry(options && options.scriptUrlPattern);
-        if (endpoint) state.endpoint = endpoint;
-        if (scriptUrlPattern) state.scriptUrlPattern = scriptUrlPattern;
-        maybeEmitFingerprintSignal();
-        return origLoad.apply(this, arguments);
-      }
-    );
+    if (hasLoad) {
+      patchObjectMethod(value, "load", (origLoad) =>
+        function load(options) {
+          observeFingerprintCall("load", options, source);
+          return origLoad.apply(this, arguments);
+        }
+      );
+    }
+    if (hasStart) {
+      patchObjectMethod(value, "start", (origStart) =>
+        function start(options) {
+          observeFingerprintCall("start", options, source);
+          return origStart.apply(this, arguments);
+        }
+      );
+    }
     return value;
   };
 
@@ -785,6 +810,7 @@
       return value;
     });
     patchWindowValue("_sift", (value, source) => instrumentSiftQueue(value, source));
+    patchWindowValue("Fingerprint", (value, source) => instrumentFingerprintGlobal(value, source));
     patchWindowValue("FingerprintJS", (value, source) => instrumentFingerprintGlobal(value, source));
   };
 
@@ -900,6 +926,9 @@
         );
         maybeEmitHumanSignal();
       }
+    } catch {}
+    try {
+      instrumentFingerprintGlobal(window.Fingerprint);
     } catch {}
     try {
       instrumentFingerprintGlobal(window.FingerprintJS);

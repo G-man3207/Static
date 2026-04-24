@@ -282,6 +282,30 @@ const fixtureFiles = {
       })();
     </script>
   `,
+  "/adaptive-runtime-signatures-fingerprint-v4.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        window.Fingerprint = {
+          start(options) {
+            window.__fpStartOptions = options;
+            return {
+              get() {
+                return Promise.resolve({ event_id: "event", visitor_id: "visitor" });
+              },
+            };
+          },
+        };
+        const agent = window.Fingerprint.start({
+          apiKey: "public-key",
+          endpoints: ["/fp/v4?region=us"],
+        });
+        await agent.get();
+        window.__adaptiveVendorFingerprintV4Done = true;
+      })();
+    </script>
+  `,
   "/adaptive-runtime-signatures-versioned-datadome.html": `
     <!doctype html>
     <meta charset="utf-8">
