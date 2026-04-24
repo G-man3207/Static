@@ -21,6 +21,7 @@ persona with fake two-hit canaries.
 | `link.href` / `link.setAttribute("href")`   | Loads an inert data URL matched to plausible stylesheet, image, script, or HTML paths; page-visible getters return the original extension URL | Blocked |
 | `link rel=preload/modulepreload`            | Plausible image, script, and stylesheet paths receive matched inert preload resources            | Blocked                         |
 | SVG `use/image href` / `href.baseVal`       | Loads an inert image decoy for plausible image paths; page-visible getters return the original URL | Blocked                       |
+| Attribute-node APIs / serialization          | `Attr.value`, `attributes[...]`, `setAttributeNode`, `cloneNode`, `innerHTML` / `outerHTML`, and `XMLSerializer` preserve the same page-visible original URL | Blocked |
 | `iframe.src`                                | Fail-closed                                                                                      | Fail-closed                     |
 | `object.data`, `embed.src`, `source.src`    | Receives an inert data URL matched to the path kind where possible                               | Blocked                         |
 | `audio.src`, `video.src`, `track.src`       | Fail-closed                                                                                      | Fail-closed                     |

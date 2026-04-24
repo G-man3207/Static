@@ -28,6 +28,9 @@
   let bridgePort = null;
   let noiseEnabled = false;
   let persona = new Set();
+  let nativeAttrValueGetter = null;
+  let nativeAttrValueSetter = null;
+  let nativeGetAttribute = null;
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
@@ -63,6 +66,16 @@
     } catch {
       return `function ${fallbackName}() { [native code] }`;
     }
+  };
+
+  const descriptorOwnerFor = (proto, prop) => {
+    let cursor = proto;
+    while (cursor) {
+      const desc = Object.getOwnPropertyDescriptor(cursor, prop);
+      if (desc) return { desc, owner: cursor };
+      cursor = Object.getPrototypeOf(cursor);
+    }
+    return null;
   };
 
   const applyConfigUpdate = (data) => {
@@ -362,6 +375,298 @@
     return null;
   };
 
+  const isAttrNode = (value) => typeof Attr !== "undefined" && value instanceof Attr;
+
+  const nativeAttrValueFor = (attr) => {
+    try {
+      if (nativeAttrValueGetter) return nativeAttrValueGetter.call(attr);
+      return attr.value;
+    } catch {
+      return "";
+    }
+  };
+
+  const setNativeAttrValue = (attr, value) => {
+    try {
+      if (nativeAttrValueSetter) {
+        nativeAttrValueSetter.call(attr, value);
+        return;
+      }
+      attr.value = value;
+    } catch {}
+  };
+
+  const attrOriginalFor = (attr) => {
+    if (!isAttrNode(attr) || !attr.ownerElement) return "";
+    const name = attr.name || attr.localName;
+    const ns = attr.namespaceURI;
+    if (ns) {
+      const nsOriginal = rememberedOriginal(attr.ownerElement, attrNsKeyFor(ns, name));
+      if (nsOriginal) return nsOriginal;
+    }
+    const attrOriginal = rememberedOriginal(attr.ownerElement, attrKeyFor(name));
+    if (attrOriginal) return attrOriginal;
+    const prop = attrPropFor(name);
+    return prop ? rememberedOriginal(attr.ownerElement, prop) || "" : "";
+  };
+
+  const rememberAttrProbe = ({
+    attr,
+    el,
+    label,
+    probe,
+    prop,
+    value = nativeAttrValueFor(attr),
+  }) => {
+    const original = prop === "srcset" ? String(value) : probe.url;
+    rememberOriginal(el, prop, original);
+    rememberAttributeOriginal(el, attr.name || attr.localName, original);
+    if (attr.namespaceURI) {
+      rememberNamespacedAttributeOriginal(
+        el,
+        attr.namespaceURI,
+        attr.name || attr.localName,
+        original
+      );
+    }
+    if (prop === "srcset") rememberOriginal(el, "currentSrc", probe.url);
+    postProbe(probe.url, probe.mode === "decoy" ? `${label}-${prop}-decoy` : label);
+    setNativeAttrValue(attr, replacementUrlFor(probe.mode, probe.kind, prop));
+  };
+
+  const applyAttrValueProbe = (attr, value, label) => {
+    if (!isAttrNode(attr) || !attr.ownerElement) return false;
+    const prop = attrPropFor(attr.name || attr.localName);
+    const probe = prop && elementProbe(attr.ownerElement, prop, value);
+    if (!probe) {
+      if (prop) {
+        forgetOriginal(attr.ownerElement, prop);
+        forgetAttributeOriginal(attr.ownerElement, attr.name || attr.localName);
+        if (attr.namespaceURI) {
+          forgetNamespacedAttributeOriginal(attr.ownerElement, attr.namespaceURI, attr.name);
+        }
+      }
+      return false;
+    }
+    rememberAttrProbe({ attr, el: attr.ownerElement, label, probe, prop, value });
+    return true;
+  };
+
+  const attributeNodeProbe = (el, attr) => {
+    if (!isAttrNode(attr)) return null;
+    const prop = attrPropFor(attr.name || attr.localName);
+    const probe = prop && elementProbe(el, prop, nativeAttrValueFor(attr));
+    return probe ? { probe, prop } : null;
+  };
+
+  const patchAttrValueProperty = (proto, prop) => {
+    const found = descriptorOwnerFor(proto, prop);
+    const desc = found && found.desc;
+    if (!desc || !desc.get) return;
+    if (prop === "value") {
+      nativeAttrValueGetter = desc.get;
+      nativeAttrValueSetter = desc.set;
+    }
+    const getterHolder = {
+      get [prop]() {
+        return attrOriginalFor(this) || desc.get.call(this);
+      },
+    };
+    const wrappedGet = Object.getOwnPropertyDescriptor(getterHolder, prop).get;
+    const setterHolder = {
+      set [prop](value) {
+        if (applyAttrValueProbe(this, value, `attr.${prop}`)) return;
+        desc.set.call(this, value);
+      },
+    };
+    const wrappedSet = desc.set ? Object.getOwnPropertyDescriptor(setterHolder, prop).set : desc.set;
+    Object.defineProperty(proto, prop, {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get: stealth(wrappedGet, `get ${prop}`, {
+        length: 0,
+        source: nativeSourceFor(desc.get, `get ${prop}`),
+      }),
+      set: desc.set
+        ? stealth(wrappedSet, `set ${prop}`, {
+            length: 1,
+            source: nativeSourceFor(desc.set, `set ${prop}`),
+          })
+        : desc.set,
+    });
+  };
+
+  const patchAttrValues = () => {
+    if (typeof Attr === "undefined" || !Attr.prototype) return;
+    for (const prop of ["value", "nodeValue", "textContent"]) {
+      patchAttrValueProperty(Attr.prototype, prop);
+    }
+  };
+
+  const copyOriginalsForClone = (source, clone) => {
+    const entry = elementOriginals.get(source);
+    if (entry && clone) elementOriginals.set(clone, { ...entry });
+  };
+
+  const copyOriginalTreeForClone = (source, clone) => {
+    if (!source || !clone) return;
+    if (source.nodeType === Node.ELEMENT_NODE) copyOriginalsForClone(source, clone);
+    let sourceChild = source.firstChild;
+    let cloneChild = clone.firstChild;
+    while (sourceChild && cloneChild) {
+      copyOriginalTreeForClone(sourceChild, cloneChild);
+      sourceChild = sourceChild.nextSibling;
+      cloneChild = cloneChild.nextSibling;
+    }
+  };
+
+  const patchCloneNode = () => {
+    const desc = Object.getOwnPropertyDescriptor(Node.prototype, "cloneNode");
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      cloneNode() {
+        const clone = orig.apply(this, arguments);
+        copyOriginalTreeForClone(this, clone);
+        return clone;
+      },
+    }.cloneNode;
+    Object.defineProperty(Node.prototype, "cloneNode", {
+      ...desc,
+      value: stealth(wrapped, "cloneNode", {
+        length: orig.length,
+        source: nativeSourceFor(orig, "cloneNode"),
+      }),
+    });
+  };
+
+  const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const escapeSerializedAttr = (value) =>
+    String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/\u00a0/g, "&nbsp;")
+      .replace(/"/g, "&quot;");
+
+  const replaceSerializedAttrOnce = (html, name, nativeValue, originalValue) => {
+    const nativeEscaped = escapeSerializedAttr(nativeValue);
+    if (!nativeEscaped || !html.includes(nativeEscaped)) return html;
+    const pattern = new RegExp(
+      `(\\s${escapeRegExp(String(name).toLowerCase())}\\s*=\\s*")${escapeRegExp(
+        nativeEscaped
+      )}(")`,
+      "i"
+    );
+    return html.replace(pattern, `$1${escapeSerializedAttr(originalValue)}$2`);
+  };
+
+  const serializedAttrEntriesFor = (el) => {
+    const entry = elementOriginals.get(el);
+    if (!entry || !nativeGetAttribute) return [];
+    const entries = [];
+    const seen = new Set();
+    const push = (name, original) => {
+      const safeName = String(name || "").toLowerCase();
+      if (!safeName || seen.has(safeName)) return;
+      const nativeValue = nativeGetAttribute.call(el, safeName);
+      if (nativeValue == null || String(nativeValue) === String(original)) return;
+      seen.add(safeName);
+      entries.push({ name: safeName, nativeValue, original });
+    };
+
+    for (const [key, original] of Object.entries(entry)) {
+      if (key.startsWith("attr:")) push(key.slice("attr:".length), original);
+    }
+    for (const prop of ["src", "srcset", "href", "data", "poster"]) {
+      if (entry[prop]) push(prop, entry[prop]);
+    }
+    return entries;
+  };
+
+  const applySerializedOriginalsFor = (el, html) => {
+    let nextHtml = html;
+    for (const entry of serializedAttrEntriesFor(el)) {
+      nextHtml = replaceSerializedAttrOnce(
+        nextHtml,
+        entry.name,
+        entry.nativeValue,
+        entry.original
+      );
+    }
+    return nextHtml;
+  };
+
+  const serializeWithOriginals = (root, html, includeRoot = true) => {
+    let nextHtml = String(html);
+    const visit = (node, includeNode) => {
+      if (!node) return;
+      if (includeNode && node.nodeType === Node.ELEMENT_NODE) {
+        nextHtml = applySerializedOriginalsFor(node, nextHtml);
+      }
+      for (let child = node.firstElementChild; child; child = child.nextElementSibling) {
+        visit(child, true);
+      }
+    };
+    visit(root, includeRoot);
+    return nextHtml;
+  };
+
+  const patchHtmlSerialization = () => {
+    const innerDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    const outerDesc = Object.getOwnPropertyDescriptor(Element.prototype, "outerHTML");
+    if (innerDesc && innerDesc.get) {
+      const innerGetterHolder = {
+        get innerHTML() {
+          return serializeWithOriginals(this, innerDesc.get.call(this), false);
+        },
+      };
+      Object.defineProperty(Element.prototype, "innerHTML", {
+        configurable: true,
+        enumerable: innerDesc.enumerable,
+        get: stealth(Object.getOwnPropertyDescriptor(innerGetterHolder, "innerHTML").get, "get innerHTML", {
+          length: 0,
+          source: nativeSourceFor(innerDesc.get, "get innerHTML"),
+        }),
+        set: innerDesc.set,
+      });
+    }
+    if (outerDesc && outerDesc.get) {
+      const outerGetterHolder = {
+        get outerHTML() {
+          return serializeWithOriginals(this, outerDesc.get.call(this), true);
+        },
+      };
+      Object.defineProperty(Element.prototype, "outerHTML", {
+        configurable: true,
+        enumerable: outerDesc.enumerable,
+        get: stealth(Object.getOwnPropertyDescriptor(outerGetterHolder, "outerHTML").get, "get outerHTML", {
+          length: 0,
+          source: nativeSourceFor(outerDesc.get, "get outerHTML"),
+        }),
+        set: outerDesc.set,
+      });
+    }
+  };
+
+  const patchXmlSerializer = () => {
+    if (typeof XMLSerializer === "undefined" || !XMLSerializer.prototype) return;
+    const desc = Object.getOwnPropertyDescriptor(XMLSerializer.prototype, "serializeToString");
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      serializeToString(node) {
+        return serializeWithOriginals(node, orig.apply(this, arguments), true);
+      },
+    }.serializeToString;
+    Object.defineProperty(XMLSerializer.prototype, "serializeToString", {
+      ...desc,
+      value: stealth(wrapped, "serializeToString", {
+        length: orig.length,
+        source: nativeSourceFor(orig, "serializeToString"),
+      }),
+    });
+  };
+
   const patchAttributes = () => {
     const origSetAttribute = Element.prototype.setAttribute;
     const origSetAttributeNS = Element.prototype.setAttributeNS;
@@ -369,6 +674,7 @@
     const origGetAttributeNS = Element.prototype.getAttributeNS;
     const origRemoveAttribute = Element.prototype.removeAttribute;
     const origRemoveAttributeNS = Element.prototype.removeAttributeNS;
+    nativeGetAttribute = origGetAttribute;
     const wrapped = {
       setAttribute(name, value) {
         const prop = attrPropFor(name);
@@ -462,6 +768,51 @@
     Element.prototype.removeAttributeNS = stealth(wrapped.removeAttributeNS, "removeAttributeNS", {
       length: 2,
     });
+  };
+
+  const patchAttributeNodes = () => {
+    const origSetAttributeNode = Element.prototype.setAttributeNode;
+    const origSetAttributeNodeNS = Element.prototype.setAttributeNodeNS;
+    const wrapped = {
+      setAttributeNode(attr) {
+        const found = attributeNodeProbe(this, attr);
+        if (found) {
+          rememberAttrProbe({
+            attr,
+            el: this,
+            label: "setAttributeNode",
+            probe: found.probe,
+            prop: found.prop,
+          });
+        }
+        return origSetAttributeNode.apply(this, arguments);
+      },
+      setAttributeNodeNS(attr) {
+        const found = attributeNodeProbe(this, attr);
+        if (found) {
+          rememberAttrProbe({
+            attr,
+            el: this,
+            label: "setAttributeNodeNS",
+            probe: found.probe,
+            prop: found.prop,
+          });
+        }
+        return origSetAttributeNodeNS.apply(this, arguments);
+      },
+    };
+    if (typeof origSetAttributeNode === "function") {
+      Element.prototype.setAttributeNode = stealth(wrapped.setAttributeNode, "setAttributeNode", {
+        length: 1,
+      });
+    }
+    if (typeof origSetAttributeNodeNS === "function") {
+      Element.prototype.setAttributeNodeNS = stealth(
+        wrapped.setAttributeNodeNS,
+        "setAttributeNodeNS",
+        { length: 1 }
+      );
+    }
   };
 
   const patchCurrentSrc = () => {
@@ -566,6 +917,8 @@
     });
   };
 
+  patchAttrValues();
+  patchCloneNode();
   guardProp(HTMLImageElement.prototype, "src", "img.src");
   guardProp(HTMLImageElement.prototype, "srcset", "img.srcset");
   if (typeof HTMLInputElement !== "undefined") {
@@ -587,6 +940,9 @@
     guardProp(HTMLObjectElement.prototype, "data", "object.data");
   }
   patchAttributes();
+  patchAttributeNodes();
+  patchHtmlSerialization();
+  patchXmlSerializer();
   patchCurrentSrc();
   patchStyleSheetHref();
   if (typeof SVGUseElement !== "undefined") patchSvgHref(SVGUseElement, "svg.use.href");
