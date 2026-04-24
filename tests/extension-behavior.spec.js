@@ -1728,6 +1728,88 @@ test("scrubs extension DOM markers on initial parse and later mutations", async 
   expect(later.classes).toEqual(["keep"]);
 });
 
+test("DOM marker scrubber hides transient markers from page MutationObservers", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(async () => {
+    const records = [];
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        records.push({
+          added: [...(mutation.addedNodes || [])]
+            .filter((node) => node.nodeType === Node.ELEMENT_NODE)
+            .map((node) => ({
+              attr: node.getAttribute("data-grammarly-extension"),
+              className: node.className,
+              id: node.id,
+              tag: node.tagName,
+            })),
+          attributeName: mutation.attributeName,
+          oldValue: mutation.oldValue,
+          targetClass: mutation.target && mutation.target.className,
+          targetId: mutation.target && mutation.target.id,
+          targetTag: mutation.target && mutation.target.tagName,
+          type: mutation.type,
+        });
+      }
+    });
+    observer.observe(document.documentElement, {
+      attributeOldValue: true,
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+
+    const marker = document.createElement("grammarly-card");
+    marker.id = "direct-marker";
+    marker.setAttribute("data-grammarly-extension", "1");
+    marker.className = "grammarly-card keep";
+    document.body.appendChild(marker);
+
+    const markedAttr = document.createElement("div");
+    markedAttr.id = "marked-attr";
+    document.body.appendChild(markedAttr);
+    markedAttr.setAttribute("data-dashlanecreated", "1");
+    markedAttr.className = "keep onepassword-pill";
+
+    const safe = document.createElement("div");
+    safe.id = "safe-observed";
+    document.body.appendChild(safe);
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 80);
+    });
+    observer.disconnect();
+
+    return {
+      markedAttrClasses: [...markedAttr.classList],
+      markedAttrHasData: markedAttr.hasAttribute("data-dashlanecreated"),
+      markerConnected: marker.isConnected,
+      records,
+      safeSeen: records.some((record) =>
+        record.added.some((node) => node.id === "safe-observed")
+      ),
+    };
+  });
+
+  expect(result.markerConnected).toBe(false);
+  expect(result.markedAttrHasData).toBe(false);
+  expect(result.markedAttrClasses).toEqual(["keep"]);
+  expect(result.safeSeen).toBe(true);
+
+  const serialized = JSON.stringify(result.records);
+  expect(serialized).not.toContain("GRAMMARLY-CARD");
+  expect(serialized).not.toContain("data-grammarly-extension");
+  expect(serialized).not.toContain("data-dashlanecreated");
+  expect(serialized).not.toContain("grammarly-card");
+  expect(serialized).not.toContain("onepassword-pill");
+});
+
 test("Clear log removes probe state and Noise identity while preserving preferences", async ({
   extension,
 }) => {
