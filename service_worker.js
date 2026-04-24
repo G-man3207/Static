@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- service-worker routing and storage coordination are kept together */
 // Static — background service worker.
 //
 // Responsibilities:
@@ -61,6 +62,19 @@ const updateBadge = (tabId, total) => {
   const text = total === 0 ? "" : total > 99 ? "99+" : String(total);
   chrome.action.setBadgeText({ tabId, text }).catch(() => {});
   chrome.action.setBadgeBackgroundColor({ tabId, color: "#c93131" }).catch(() => {});
+};
+
+const clearTabStateAndBadges = async () => {
+  perTabState.clear();
+  try {
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) => {
+        if (tab.id == null) return null;
+        return chrome.action.setBadgeText({ tabId: tab.id, text: "" }).catch(() => {});
+      })
+    );
+  } catch {}
 };
 
 // ─── Persistent storage (serialized writes) ───────────────────────────────
@@ -534,6 +548,8 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
       "cumulative",
       "user_secret",
     ]);
+    await clearTabStateAndBadges();
+    await broadcastConfigUpdate();
     sendResponse({ ok: true });
   })();
   return true;
