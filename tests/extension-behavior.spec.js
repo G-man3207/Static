@@ -827,6 +827,36 @@ test("popup shows replay blocking and poisoning indicators", async ({ extension 
   await expect(popupPage.getByText("Noise poisoning armed")).toBeVisible();
 });
 
+test("popup frames core defenses and groups network protections", async ({ extension }) => {
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+  await expect(popupPage.getByRole("heading", { name: "Always on" })).toBeVisible();
+  await expect(popupPage.getByText("Extension probes")).toBeVisible();
+  await expect(popupPage.getByText("DOM markers")).toBeVisible();
+  await expect(popupPage.getByText("Extension globals")).toBeVisible();
+
+  await expect(popupPage.getByRole("heading", { name: "Network protections" })).toBeVisible();
+  await expect(popupPage.locator(".ruleset-group-title")).toHaveText([
+    "Site telemetry",
+    "Fingerprinting and access checks",
+    "Replay and monitoring",
+  ]);
+  await expect(popupPage.locator(".ruleset-group").nth(0)).toContainText("LinkedIn telemetry");
+  await expect(popupPage.locator(".ruleset-group").nth(1)).toContainText(
+    "Fingerprinting and anti-bot"
+  );
+  await expect(popupPage.locator(".ruleset-group").nth(1)).toContainText(
+    "CAPTCHA and device checks"
+  );
+  await expect(popupPage.locator(".ruleset-group").nth(2)).toContainText(
+    "Session replay recorders"
+  );
+  await expect(popupPage.locator(".ruleset-group").nth(2)).toContainText(
+    "Datadog browser monitoring"
+  );
+});
+
 test("popup exposes local help text for privacy controls", async ({ extension }) => {
   const popupPage = await extension.context.newPage();
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);

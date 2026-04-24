@@ -222,6 +222,45 @@
         letter-spacing: 0.8px;
         margin: 0 0 10px;
       }
+      .core-defenses {
+        display: grid;
+        gap: 0;
+      }
+      .core-defense {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 26px;
+        padding: 4px 0;
+        border-top: 1px solid var(--border);
+      }
+      .core-defense:first-child {
+        border-top: none;
+      }
+      .core-defense-name {
+        min-width: 0;
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .core-defense-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        flex-shrink: 0;
+        color: #246236;
+        font-size: 10px;
+        font-weight: 700;
+      }
+      .core-defense-state::before {
+        content: "";
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #246236;
+      }
       /* Toggle row used for Noise mode */
       .toggle-row {
         display: flex;
@@ -519,6 +558,18 @@
         margin-left: 5px;
         font-variant-numeric: tabular-nums;
       }
+      .ruleset-group {
+        margin-top: 10px;
+      }
+      .ruleset-group:first-child {
+        margin-top: 0;
+      }
+      .ruleset-group-title {
+        margin: 0 0 4px;
+        color: var(--text-subtle);
+        font-size: 10px;
+        font-weight: 700;
+      }
       .ruleset-warn {
         font-size: 10px;
         color: var(--accent);
@@ -577,6 +628,24 @@
         <summary>Power diagnostics</summary>
         <div class="power-diagnostics" id="power-diagnostics"></div>
       </details>
+    </div>
+
+    <div class="section">
+      <h2>Always on</h2>
+      <div class="core-defenses" aria-label="Always-on protection layers">
+        <div class="core-defense">
+          <span class="core-defense-name">Extension probes</span>
+          <span class="core-defense-state">Blocked</span>
+        </div>
+        <div class="core-defense">
+          <span class="core-defense-name">DOM markers</span>
+          <span class="core-defense-state">Scrubbed</span>
+        </div>
+        <div class="core-defense">
+          <span class="core-defense-name">Extension globals</span>
+          <span class="core-defense-state">Hidden</span>
+        </div>
+      </div>
     </div>
 
     <div class="section">
@@ -662,20 +731,20 @@
 
     <div class="section">
       <div class="title-with-help">
-        <h2>Rulesets</h2>
+        <h2>Network protections</h2>
         <button
           class="help-tip"
           id="rulesets-help"
           type="button"
-          data-tip="Network-layer blocks use Chrome declarative rulesets. Toggling a ruleset changes local browser blocking only."
+          data-tip="Network-layer protections use Chrome declarative rulesets. Toggling a protection changes local browser blocking only."
           aria-label="Ruleset details"
           aria-describedby="rulesets-help-text"
         >
           ?
         </button>
         <span class="sr-only" id="rulesets-help-text"
-          >Network-layer blocks use Chrome declarative rulesets. Toggling a ruleset changes local
-          browser blocking only.</span
+          >Network-layer protections use Chrome declarative rulesets. Toggling a protection changes
+          local browser blocking only.</span
         >
       </div>
       <div id="rulesets"></div>
