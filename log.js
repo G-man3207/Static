@@ -1,15 +1,164 @@
+/* eslint-disable max-lines -- this extension page keeps viewer helpers and export handlers together */
 // Probe-log viewer. Loads the full log from the service worker and renders a
 // searchable table of origins; each row expands to show per-ID probe counts
 // for that origin. Also handles Export / Clear.
 const fmt = (n) => n.toLocaleString();
 const fmtDate = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
 const LOG_DIAGNOSTICS = globalThis.__static_log_diagnostics__ || {};
+const SEVERITY_LEVELS = {
+  high: { label: "High", rank: 3 },
+  medium: { label: "Medium", rank: 2 },
+  low: { label: "Low", rank: 1 },
+  info: { label: "Info", rank: 0 },
+};
+const ADAPTIVE_REASON_INFO = {
+  audio: {
+    label: "Audio fingerprinting",
+    description:
+      "The site touched offline audio APIs that can reveal device and browser differences.",
+  },
+  canvas: {
+    label: "Canvas readback",
+    description: "The site read pixels from a canvas, a common browser fingerprinting surface.",
+  },
+  crypto: {
+    label: "Crypto timing or setup",
+    description:
+      "The site used Web Crypto near other collection signals, often as part of bot or device checks.",
+  },
+  dom_observer: {
+    label: "DOM observer",
+    description:
+      "The site watched broad page changes. Session replay and anti-bot scripts use this to reconstruct activity.",
+  },
+  environment: {
+    label: "Environment snapshot",
+    description:
+      "The site read device, locale, screen, storage, or time-zone details that help identify the browser.",
+  },
+  input_hooks: {
+    label: "Input hooks",
+    description:
+      "The site registered broad input, keyboard, pointer, or scroll listeners that can collect interaction patterns.",
+  },
+  "mutation.subtree": {
+    label: "Whole-page mutation watch",
+    description:
+      "A MutationObserver watched a large page subtree, which can capture page content and UI changes.",
+  },
+  navigator: {
+    label: "Navigator reads",
+    description:
+      "The site read browser and device properties exposed through navigator, used in fingerprinting profiles.",
+  },
+  "navigator.deviceMemory": {
+    label: "Device memory read",
+    description:
+      "The site read approximate device memory, a coarse hardware signal used in browser fingerprinting.",
+  },
+  network: {
+    label: "Network collection",
+    description:
+      "A collection endpoint was contacted near other fingerprinting or replay behavior.",
+  },
+  webgl: {
+    label: "WebGL fingerprinting",
+    description: "The site queried graphics APIs that can reveal GPU and driver characteristics.",
+  },
+};
+const ADAPTIVE_REASON_PREFIXES = [
+  {
+    prefix: "listener.",
+    label: (suffix) => `Global ${suffix} listener`,
+    description: (suffix) =>
+      `A page-wide ${suffix} listener was installed, which can observe user interaction timing or content changes.`,
+  },
+  {
+    prefix: "navigator.",
+    label: (suffix) => `Navigator ${suffix} read`,
+    description: (suffix) =>
+      `The site read navigator.${suffix}, a browser or device property used in fingerprinting profiles.`,
+  },
+  {
+    prefix: "canvas.",
+    label: () => "Canvas readback",
+    description: () =>
+      "The site used canvas readback APIs that can expose rendering differences between devices.",
+  },
+  {
+    prefix: "webgl.",
+    label: () => "WebGL query",
+    description: () => "The site queried graphics state that can identify GPU and driver behavior.",
+  },
+  {
+    prefix: "webgl2.",
+    label: () => "WebGL 2 query",
+    description: () => "The site queried graphics state that can identify GPU and driver behavior.",
+  },
+  {
+    prefix: "audio.",
+    label: () => "Audio fingerprinting",
+    description: () =>
+      "The site used audio APIs that can expose subtle hardware and browser differences.",
+  },
+  {
+    prefix: "crypto.",
+    label: (suffix) => `Crypto ${suffix}`,
+    description: (suffix) =>
+      `The site used crypto.${suffix} near other collection signals, often as part of bot or device checks.`,
+  },
+  {
+    prefix: "screen.",
+    label: (suffix) => `Screen ${suffix} read`,
+    description: (suffix) =>
+      `The site read screen.${suffix}, a display property that can contribute to a fingerprint.`,
+  },
+  {
+    prefix: "vendor:",
+    label: (suffix) => `${suffix} vendor signature`,
+    description: (suffix) =>
+      `Static recognized a client-side ${suffix} integration associated with anti-bot, replay, or fingerprinting workflows.`,
+  },
+  {
+    prefix: "global:",
+    label: (suffix) => `${suffix} global`,
+    description: (suffix) =>
+      `A page global named ${suffix} matched a known collector or anti-bot integration signal.`,
+  },
+  {
+    prefix: "config:",
+    label: (suffix) => `${suffix} configuration`,
+    description: (suffix) =>
+      `A configuration value named ${suffix} helped identify the local collector integration.`,
+  },
+  {
+    prefix: "api:",
+    label: (suffix) => `${suffix} API call`,
+    description: (suffix) =>
+      `A known collector API call named ${suffix} was observed in the page runtime.`,
+  },
+  {
+    prefix: "queue:",
+    label: (suffix) => `${suffix} queue call`,
+    description: (suffix) =>
+      `A queued collector command named ${suffix} was observed before the library fully loaded.`,
+  },
+  {
+    prefix: "script:",
+    label: (suffix) => `${suffix} script`,
+    description: (suffix) =>
+      `A script route or filename matched a known collector integration pattern for ${suffix}.`,
+  },
+];
 
 const totalProbesFor = (entry) => {
   let sum = 0;
   for (const c of Object.values(entry.idCounts || {})) sum += c;
   return sum;
 };
+
+const sortedCountEntries = (counts) =>
+  Object.entries(counts || {}).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
 const sumCounts = (counts) => {
   let total = 0;
@@ -191,6 +340,75 @@ const buildDriftPill = (drift) => {
   return span;
 };
 
+const severityLevelForScore = (score) => {
+  if (score >= 7) return "high";
+  if (score >= 4) return "medium";
+  if (score >= 1) return "low";
+  return "info";
+};
+
+const addSeverityReason = (state, points, reason) => {
+  state.score += points;
+  state.reasons.push(reason);
+};
+
+const addAdaptiveSeveritySignals = (state, adaptive) => {
+  const scoreMax = adaptive && adaptive.scoreMax ? adaptive.scoreMax : 0;
+  if (scoreMax >= 9) {
+    addSeverityReason(state, 7, `Strong adaptive data-collection signal score ${fmt(scoreMax)}.`);
+  } else if (scoreMax >= 7) {
+    addSeverityReason(state, 4, `Adaptive signal threshold crossed with score ${fmt(scoreMax)}.`);
+  }
+};
+
+const addProbeSeveritySignals = (state, entry, drift) => {
+  const total = totalProbesFor(entry);
+  const unique = Object.keys(entry.idCounts || {}).length;
+  if (drift.level === "high") {
+    addSeverityReason(state, 7, "Probe behavior changed sharply from the previous baseline.");
+  } else if (drift.level === "changed") {
+    addSeverityReason(state, 4, "Probe behavior changed from the previous baseline.");
+  }
+  if (unique >= 20) {
+    addSeverityReason(state, 2, `${fmt(unique)} unique extension IDs were probed.`);
+  } else if (unique >= 5) {
+    addSeverityReason(state, 1, `${fmt(unique)} unique extension IDs were probed.`);
+  }
+  if (total >= 100) {
+    addSeverityReason(state, 2, `${fmt(total)} total extension probes were recorded.`);
+  } else if (total > 0) {
+    addSeverityReason(
+      state,
+      1,
+      `${fmt(total)} total extension probe${total === 1 ? "" : "s"} recorded.`
+    );
+  }
+};
+
+const severityForEntry = (entry, drift) => {
+  const state = { score: 0, reasons: [] };
+  addAdaptiveSeveritySignals(state, entry.__adaptive);
+  addProbeSeveritySignals(state, entry, drift);
+  const level = severityLevelForScore(state.score);
+  return {
+    ...SEVERITY_LEVELS[level],
+    level,
+    reasons:
+      state.reasons.length > 0
+        ? state.reasons
+        : ["No elevated probe or adaptive behavior signals were recorded."],
+    score: state.score,
+  };
+};
+
+const buildSeverityPill = (severity) => {
+  const span = document.createElement("span");
+  span.className = `severity-pill ${severity.level}`;
+  span.textContent = severity.label;
+  span.title = `Severity score ${fmt(severity.score)}`;
+  return span;
+};
+
 const buildAdaptivePill = (adaptive) => {
   if (!adaptive) return null;
   const span = document.createElement("span");
@@ -217,6 +435,84 @@ const buildDriftDetail = (drift) => {
   return box;
 };
 
+const buildSeverityDetail = (severity, rank) => {
+  const box = document.createElement("div");
+  box.className = "drift-detail";
+  const title = document.createElement("div");
+  title.className = "drift-detail-title";
+  title.textContent = `Severity rank: #${fmt(rank)} (${severity.label})`;
+  box.appendChild(title);
+  const list = document.createElement("ul");
+  list.className = "drift-reasons";
+  for (const reason of severity.reasons || []) {
+    const li = document.createElement("li");
+    li.textContent = reason;
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  return box;
+};
+
+const humanizeReason = (reason) =>
+  String(reason || "unknown")
+    .replace(/[._:-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const reasonInfoFor = (reason) => {
+  if (ADAPTIVE_REASON_INFO[reason]) return ADAPTIVE_REASON_INFO[reason];
+  for (const info of ADAPTIVE_REASON_PREFIXES) {
+    if (reason.startsWith(info.prefix)) {
+      const suffix = reason.slice(info.prefix.length) || "signal";
+      return {
+        label: info.label(suffix),
+        description: info.description(suffix),
+      };
+    }
+  }
+  if (/^(fetch|xhr|sendBeacon):/.test(reason)) {
+    return {
+      label: "Network API call",
+      description:
+        "A network API was used near other collection signals; the suffix is a coarse request-size bucket.",
+    };
+  }
+  return {
+    label: humanizeReason(reason) || "Observed signal",
+    description: "This token was observed as part of the local adaptive signal bundle.",
+  };
+};
+
+const buildAdaptiveReasonGuide = (reasons) => {
+  if (reasons.length === 0) return null;
+  const guide = document.createElement("div");
+  guide.className = "reason-guide";
+  const title = document.createElement("div");
+  title.className = "drift-detail-title";
+  title.textContent = "Signal guide";
+  guide.appendChild(title);
+  const list = document.createElement("dl");
+  list.className = "reason-list";
+  for (const [reason, count] of reasons.slice(0, 10)) {
+    const info = reasonInfoFor(reason);
+    const item = document.createElement("div");
+    item.className = "reason-item";
+    const term = document.createElement("dt");
+    term.textContent = info.label;
+    const token = document.createElement("span");
+    token.className = "reason-token";
+    token.textContent = reason;
+    term.appendChild(token);
+    const description = document.createElement("dd");
+    description.textContent = `${info.description} Seen ${fmt(count)} time${count === 1 ? "" : "s"}.`;
+    item.appendChild(term);
+    item.appendChild(description);
+    list.appendChild(item);
+  }
+  guide.appendChild(list);
+  return guide;
+};
+
 const buildAdaptiveDetail = (adaptive) => {
   if (!adaptive) return null;
   const box = document.createElement("div");
@@ -227,9 +523,9 @@ const buildAdaptiveDetail = (adaptive) => {
   box.appendChild(title);
   const list = document.createElement("ul");
   list.className = "drift-reasons";
-  const categories = Object.entries(adaptive.categories || {}).sort((a, b) => b[1] - a[1]);
-  const endpoints = Object.entries(adaptive.endpoints || {}).sort((a, b) => b[1] - a[1]);
-  const reasons = Object.entries(adaptive.reasons || {}).sort((a, b) => b[1] - a[1]);
+  const categories = sortedCountEntries(adaptive.categories);
+  const endpoints = sortedCountEntries(adaptive.endpoints);
+  const reasons = sortedCountEntries(adaptive.reasons);
   const lines = [
     `Max local score: ${fmt(adaptive.scoreMax || 0)}.`,
     categories.length
@@ -239,8 +535,8 @@ const buildAdaptiveDetail = (adaptive) => {
           .join(", ")}.`
       : "",
     reasons.length
-      ? `Reasons: ${reasons
-          .map(([reason]) => reason)
+      ? `Top signals: ${reasons
+          .map(([reason, count]) => `${reason} (${fmt(count)})`)
           .slice(0, 8)
           .join(", ")}.`
       : "",
@@ -254,13 +550,15 @@ const buildAdaptiveDetail = (adaptive) => {
     list.appendChild(li);
   }
   box.appendChild(list);
+  const reasonGuide = buildAdaptiveReasonGuide(reasons);
+  if (reasonGuide) box.appendChild(reasonGuide);
   return box;
 };
 
 const buildIdList = (entry) => {
   const box = document.createElement("div");
   box.className = "id-list";
-  const ids = Object.entries(entry.idCounts || {}).sort((a, b) => b[1] - a[1]);
+  const ids = sortedCountEntries(entry.idCounts);
   for (const [id, count] of ids) {
     const row = document.createElement("div");
     row.className = "id-entry";
@@ -276,9 +574,10 @@ const buildIdList = (entry) => {
   return box;
 };
 
-const buildOriginDetail = (entry, drift) => {
+const buildOriginDetail = (entry, drift, severity, rank) => {
   const box = document.createElement("div");
   box.className = "id-list";
+  box.appendChild(buildSeverityDetail(severity, rank));
   box.appendChild(buildDriftDetail(drift));
   const playbook = LOG_DIAGNOSTICS.buildPlaybookDetail
     ? LOG_DIAGNOSTICS.buildPlaybookDetail(entry, latestPlaybookComparison(entry))
@@ -310,6 +609,19 @@ const originMatches = (origin, entry, filter) => {
 
 let fullData = null;
 
+const rankedEntryFor = (origin, entry) => {
+  const drift = playbookDriftForEntry(entry);
+  const severity = severityForEntry(entry, drift);
+  return { drift, entry, origin, severity };
+};
+
+const compareRankedEntries = (a, b) =>
+  b.severity.rank - a.severity.rank ||
+  b.severity.score - a.severity.score ||
+  totalProbesFor(b.entry) - totalProbesFor(a.entry) ||
+  (b.entry.lastUpdated || 0) - (a.entry.lastUpdated || 0) ||
+  a.origin.localeCompare(b.origin);
+
 const render = (filter) => {
   const content = document.getElementById("content");
   content.innerHTML = "";
@@ -321,14 +633,11 @@ const render = (filter) => {
   const allEntries = [...originNames].map((origin) => {
     const entry = origins[origin] || { idCounts: {}, lastUpdated: 0 };
     const adaptive = adaptiveSignals[origin];
-    return [
-      origin,
-      {
-        ...entry,
-        lastUpdated: entry.lastUpdated || (adaptive && adaptive.lastUpdated) || 0,
-        __adaptive: adaptive,
-      },
-    ];
+    return rankedEntryFor(origin, {
+      ...entry,
+      lastUpdated: entry.lastUpdated || (adaptive && adaptive.lastUpdated) || 0,
+      __adaptive: adaptive,
+    });
   });
 
   if (allEntries.length === 0) {
@@ -344,20 +653,20 @@ const render = (filter) => {
   }
 
   const filtered = allEntries
-    .filter(([origin, entry]) => originMatches(origin, entry, filter))
-    .sort((a, b) => totalProbesFor(b[1]) - totalProbesFor(a[1]));
+    .filter(({ entry, origin }) => originMatches(origin, entry, filter))
+    .sort(compareRankedEntries);
 
   let grand = 0;
-  for (const [, entry] of allEntries) grand += totalProbesFor(entry);
+  for (const { entry } of allEntries) grand += totalProbesFor(entry);
   const adaptiveCount = Object.keys(adaptiveSignals).length;
 
   document.getElementById("summary").textContent = `${fmt(filtered.length)} of ${fmt(
     allEntries.length
-  )} origin${allEntries.length === 1 ? "" : "s"}  ·  ${fmt(grand)} total probes recorded  ·  ${fmt(
-    adaptiveCount
-  )} adaptive origin${adaptiveCount === 1 ? "" : "s"} observed  ·  ${fmt(
-    fullData.cumulative || 0
-  )} probes blocked since install`;
+  )} origin${allEntries.length === 1 ? "" : "s"} ranked by severity  ·  ${fmt(
+    grand
+  )} total probes recorded  ·  ${fmt(adaptiveCount)} adaptive origin${
+    adaptiveCount === 1 ? "" : "s"
+  } observed  ·  ${fmt(fullData.cumulative || 0)} probes blocked since install`;
 
   if (filtered.length === 0) {
     const empty = document.createElement("div");
@@ -371,7 +680,9 @@ const render = (filter) => {
   table.className = "log-table";
   table.innerHTML =
     "<thead><tr>" +
+    "<th class='num'>Rank</th>" +
     "<th>Origin</th>" +
+    "<th>Severity</th>" +
     "<th class='num'>Unique IDs</th>" +
     "<th class='num'>Total probes</th>" +
     "<th>Probe behavior</th>" +
@@ -380,21 +691,24 @@ const render = (filter) => {
   const tbody = document.createElement("tbody");
   table.appendChild(tbody);
 
-  for (const [origin, entry] of filtered) {
+  for (const [index, { drift, entry, origin, severity }] of filtered.entries()) {
+    const rank = index + 1;
     const unique = Object.keys(entry.idCounts || {}).length;
     const total = totalProbesFor(entry);
-    const drift = playbookDriftForEntry(entry);
     const adaptivePill = buildAdaptivePill(entry.__adaptive);
 
     const tr = document.createElement("tr");
     tr.className = "origin-row";
     const caret = '<span class="caret">›</span> ';
     tr.innerHTML =
+      `<td class='num rank-cell'>${fmt(rank)}</td>` +
       `<td>${caret}${origin.replace(/</g, "&lt;")}</td>` +
+      `<td class='severity-cell'></td>` +
       `<td class='num'>${fmt(unique)}</td>` +
       `<td class='num'>${fmt(total)}</td>` +
       `<td class='drift-cell'></td>` +
       `<td>${fmtDate(entry.lastUpdated)}</td>`;
+    tr.querySelector(".severity-cell").appendChild(buildSeverityPill(severity));
     tr.querySelector(".drift-cell").appendChild(buildDriftPill(drift));
     if (adaptivePill) {
       tr.querySelector(".drift-cell").appendChild(document.createTextNode(" "));
@@ -405,12 +719,14 @@ const render = (filter) => {
     const detailTr = document.createElement("tr");
     detailTr.className = "detail-row";
     const detailTd = document.createElement("td");
-    detailTd.colSpan = 5;
+    detailTd.colSpan = 7;
     detailTr.appendChild(detailTd);
     tbody.appendChild(detailTr);
 
     tr.addEventListener("click", () => {
-      if (!detailTd.firstChild) detailTd.appendChild(buildOriginDetail(entry, drift));
+      if (!detailTd.firstChild) {
+        detailTd.appendChild(buildOriginDetail(entry, drift, severity, rank));
+      }
       const list = detailTd.firstChild;
       const open = list.classList.toggle("open");
       tr.classList.toggle("open", open);

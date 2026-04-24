@@ -1756,6 +1756,61 @@ test("log viewer shows playbook drift indicators and reasons", async ({ extensio
   await expect(logPage.getByText("image 30, script 30")).toBeVisible();
 });
 
+test("log viewer ranks origins by severity and explains adaptive reason tokens", async ({
+  extension,
+}) => {
+  const now = Date.now();
+  await extension.serviceWorker.evaluate(
+    ({ now, otherId, probedId }) =>
+      chrome.storage.local.set({
+        adaptive_log: {
+          "https://severe.test": {
+            total: 2,
+            scoreMax: 9,
+            categories: { "session-replay": 2 },
+            reasons: {
+              dom_observer: 2,
+              input_hooks: 2,
+              "listener.keydown": 1,
+              "listener.mousemove": 1,
+              "mutation.subtree": 1,
+              navigator: 1,
+              "navigator.deviceMemory": 1,
+            },
+            endpoints: {},
+            sources: { "inline-or-runtime": 2 },
+            lastUpdated: now,
+          },
+        },
+        probe_log: {
+          "https://low.test": {
+            idCounts: { [probedId]: 1, [otherId]: 1 },
+            lastUpdated: now - 1000,
+          },
+        },
+      }),
+    { now, otherId: OTHER_ID, probedId: PROBED_ID }
+  );
+
+  const logPage = await extension.context.newPage();
+  await logPage.goto(`chrome-extension://${extension.extensionId}/log.html`);
+
+  await expect(logPage.getByText("ranked by severity")).toBeVisible();
+  const rows = logPage.locator("tr.origin-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("https://severe.test");
+  await expect(rows.nth(0)).toContainText("High");
+  await expect(rows.nth(1)).toContainText("https://low.test");
+
+  await logPage.getByText("https://severe.test").click();
+  await expect(logPage.getByText("Signal guide")).toBeVisible();
+  await expect(logPage.getByText(/DOM observer/)).toBeVisible();
+  await expect(logPage.getByText(/Input hooks/)).toBeVisible();
+  await expect(logPage.getByText(/Global keydown listener/)).toBeVisible();
+  await expect(logPage.getByText(/Device memory read/)).toBeVisible();
+  await expect(logPage.getByText(/Whole-page mutation watch/)).toBeVisible();
+});
+
 test("log viewer shows local Noise readiness diagnostics", async ({ extension }) => {
   const knownOne = "nngceckbapebfimnlniiiahkandclblb";
   const knownTwo = "cjpalhdlnbpafiamejdnhcphjbkeiagm";

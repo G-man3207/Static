@@ -59,14 +59,18 @@ The toolbar badge and popup show a live count of extension-enumeration probes bl
 
 Static keeps a local, weekly summary of how each origin probes for extensions: probe vector mix (`fetch`, XHR, element setters, workers, EventSource, etc.), extension-resource path kinds (`manifest`, image, script, HTML, CSS, other), repeated ID dictionary changes, and one-shot ID pressure.
 
-The probe log viewer shows a **Probe behavior** indicator per origin:
+The probe log viewer ranks origins by **Severity** first, then shows a **Probe behavior** indicator per origin:
+
+- **High** — strong adaptive data-collection signals or sharply changed probe behavior.
+- **Medium** — changed probe behavior, threshold-level adaptive signals, or broad probing volume.
+- **Low** — limited probe activity without stronger drift or adaptive signals.
 
 - **Learning** — not enough baseline data yet.
 - **Stable** — no meaningful change from that origin's previous probe behavior.
 - **Changed** — the origin changed how it checks for extensions.
 - **High drift** — multiple signals shifted at once, such as new probe vectors plus path strategy or ID dictionary changes.
 
-Expanding an origin shows the concrete reasons. The popup also shows a compact warning when the active site has recent `Changed` or `High drift` behavior.
+Expanding an origin shows the concrete ranking reasons. Adaptive reason tokens such as `dom_observer`, `listener.keydown`, or `navigator.deviceMemory` include a local explanation of what browser surface was observed. The popup also shows a compact warning when the active site has recent `Changed` or `High drift` behavior.
 
 This is an early-warning system, not attribution. It means "this origin changed how it checks for extensions," not necessarily "this origin adapted to Static."
 
