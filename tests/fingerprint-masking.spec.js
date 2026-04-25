@@ -16,6 +16,7 @@ const ALLOWED_TIMEZONES = new Set([
   "Europe/Berlin",
   "Europe/London",
 ]);
+const ALLOWED_LANGUAGE_SETS = new Set(["de-DE,de,en-US,en", "en-GB,en", "en-US,en"]);
 const OS_SEGMENT_BY_PLATFORM = {
   "Linux x86_64": "X11; Linux x86_64",
   MacIntel: "Macintosh; Intel Mac OS X 10_15_7",
@@ -91,7 +92,6 @@ const collectFingerprint = (page) =>
     return {
       appVersion: navigator.appVersion,
       canvas: {
-        dataUrl: canvas.toDataURL(),
         pixel: Array.from(ctx.getImageData(0, 0, 1, 1).data),
       },
       connection: navigator.connection
@@ -107,7 +107,10 @@ const collectFingerprint = (page) =>
       devicePixelRatio,
       hardwareConcurrency: navigator.hardwareConcurrency,
       highEntropy,
+      language: navigator.language,
+      languages: Array.from(navigator.languages || []),
       maxTouchPoints: navigator.maxTouchPoints,
+      pdfViewerEnabled: navigator.pdfViewerEnabled,
       platform: navigator.platform,
       screen: {
         availHeight: screen.availHeight,
@@ -129,6 +132,7 @@ const collectFingerprint = (page) =>
         : null,
       uaDataReflect,
       userAgent: navigator.userAgent,
+      vendor: navigator.vendor,
       webdriver: navigator.webdriver,
       webgl: gl
         ? {
@@ -158,6 +162,11 @@ const expectMaskedFingerprint = (fingerprint) => {
   expect(fingerprint.screen.availHeight).toBeLessThan(fingerprint.screen.height);
   expect(fingerprint.screen.colorDepth).toBe(24);
   expect(fingerprint.screen.pixelDepth).toBe(24);
+
+  expect(ALLOWED_LANGUAGE_SETS.has(fingerprint.languages.join(","))).toBe(true);
+  expect(fingerprint.language).toBe(fingerprint.languages[0]);
+  expect(fingerprint.pdfViewerEnabled).toBe(true);
+  expect(fingerprint.vendor).toBe("Google Inc.");
 
   expect(ALLOWED_TIMEZONES.has(fingerprint.timeZone)).toBe(true);
   expect(fingerprint.timezoneOffset).toBe(fingerprint.timezoneOffsetExpected);
@@ -189,6 +198,29 @@ const expectMaskedFingerprint = (fingerprint) => {
     expect(fingerprint.webgl.unmaskedRenderer).toContain("ANGLE");
   }
 };
+
+const collectAudioFingerprint = (page) =>
+  page.evaluate(async () => {
+    if (typeof OfflineAudioContext === "undefined") return null;
+    const context = new OfflineAudioContext(1, 512, 44100);
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "triangle";
+    oscillator.frequency.value = 440;
+    gain.gain.value = 0.2;
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(0);
+    oscillator.stop(0.01);
+    const buffer = await context.startRendering();
+    const data = buffer.getChannelData(0);
+    let signature = 2166136261;
+    for (const value of data) {
+      const quantized = Math.round(value * 100000000);
+      signature = Math.imul(signature ^ quantized, 16777619) >>> 0;
+    }
+    return { length: data.length, signature: signature.toString(16) };
+  });
 
 test("Fingerprint masking returns a stable plausible per-origin device persona", async ({
   extension,
@@ -240,4 +272,40 @@ test("Fingerprint masking can be enabled live through the extension bridge", asy
       return ALLOWED_TIMEZONES.has(fingerprint.timeZone) && ALLOWED_SCREEN_KEYS.has(screenKey);
     })
     .toBe(true);
+});
+
+test("Fingerprint masking perturbs offline audio fingerprints without blocking rendering", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const plain = await collectAudioFingerprint(page);
+  test.skip(!plain, "OfflineAudioContext is unavailable in this browser");
+  expect(await collectAudioFingerprint(page)).toEqual(plain);
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  await expect
+    .poll(async () => {
+      const poisoned = await collectAudioFingerprint(page);
+      return poisoned && poisoned.signature !== plain.signature;
+    })
+    .toBe(true);
+
+  const firstPoisoned = await collectAudioFingerprint(page);
+  const secondPoisoned = await collectAudioFingerprint(page);
+  expect(firstPoisoned).toEqual(secondPoisoned);
+  expect(firstPoisoned.length).toBe(plain.length);
 });

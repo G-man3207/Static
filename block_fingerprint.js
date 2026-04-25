@@ -1,17 +1,20 @@
 /* eslint-disable max-lines -- MAIN-world fingerprint shims are safer kept contiguous */
-// Static - MAIN-world opt-in device and browser fingerprint masking.
+// Static - MAIN-world opt-in device and browser signal poisoning.
 (() => {
   const BRIDGE_EVENT = "__static_fingerprint_bridge_init__";
   const MODE_MASK = "mask";
   const DEFAULT_PERSONA = {
     architecture: "x86",
+    audioSeed: 0x4a17d10,
     bitness: "64",
     canvasSeed: 0x51a7c0de,
     connection: { downlink: 10, effectiveType: "4g", rtt: 50, saveData: false, type: "wifi" },
     deviceMemory: 8,
     hardwareConcurrency: 8,
+    languages: ["en-US", "en"],
     maxTouchPoints: 0,
     os: "windows",
+    pdfViewerEnabled: true,
     platform: "Win32",
     screen: {
       availHeight: 1040,
@@ -26,6 +29,7 @@
     timeZone: "America/New_York",
     uaDataPlatform: "Windows",
     uaOs: "Windows NT 10.0; Win64; x64",
+    vendor: "Google Inc.",
     webglRenderer: "ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)",
     webglVendor: "Google Inc. (Intel)",
   };
@@ -35,6 +39,7 @@
   const UNMASKED_RENDERER_WEBGL = 0x9246;
   const allowedModes = new Set(["off", MODE_MASK]);
   const uaDataProxies = new WeakMap();
+  const poisonedAudioBuffers = new WeakSet();
   const nativeDateGetTimezoneOffset = Date.prototype.getTimezoneOffset;
   let bridgePort = null;
   let fingerprintMode = "off";
@@ -123,11 +128,21 @@
     };
   };
 
+  const sanitizedLanguages = (languages) => {
+    if (!Array.isArray(languages)) return DEFAULT_PERSONA.languages.slice();
+    const clean = languages
+      .map((language) => String(language || "").trim())
+      .filter(Boolean)
+      .slice(0, 5);
+    return clean.length ? clean : DEFAULT_PERSONA.languages.slice();
+  };
+
   const sanitizePersona = (persona) => {
     const source = safeObject(persona);
     return {
       ...DEFAULT_PERSONA,
       architecture: String(source.architecture || DEFAULT_PERSONA.architecture),
+      audioSeed: finitePositiveInteger(source.audioSeed, DEFAULT_PERSONA.audioSeed),
       bitness: String(source.bitness || DEFAULT_PERSONA.bitness),
       canvasSeed: finitePositiveInteger(source.canvasSeed, DEFAULT_PERSONA.canvasSeed),
       connection: sanitizedConnection(source.connection),
@@ -136,14 +151,20 @@
         source.hardwareConcurrency,
         DEFAULT_PERSONA.hardwareConcurrency
       ),
+      languages: sanitizedLanguages(source.languages),
       maxTouchPoints: finitePositiveInteger(source.maxTouchPoints, DEFAULT_PERSONA.maxTouchPoints),
       os: String(source.os || DEFAULT_PERSONA.os),
+      pdfViewerEnabled:
+        typeof source.pdfViewerEnabled === "boolean"
+          ? source.pdfViewerEnabled
+          : DEFAULT_PERSONA.pdfViewerEnabled,
       platform: String(source.platform || DEFAULT_PERSONA.platform),
       screen: sanitizedScreen(source.screen),
       storageQuota: finitePositiveInteger(source.storageQuota, DEFAULT_PERSONA.storageQuota),
       timeZone: String(source.timeZone || DEFAULT_PERSONA.timeZone),
       uaDataPlatform: String(source.uaDataPlatform || DEFAULT_PERSONA.uaDataPlatform),
       uaOs: String(source.uaOs || DEFAULT_PERSONA.uaOs),
+      vendor: String(source.vendor || DEFAULT_PERSONA.vendor),
       webglRenderer: String(source.webglRenderer || DEFAULT_PERSONA.webglRenderer),
       webglVendor: String(source.webglVendor || DEFAULT_PERSONA.webglVendor),
     };
@@ -203,9 +224,13 @@
       appVersion: maskedAppVersion(original),
       deviceMemory: p.deviceMemory,
       hardwareConcurrency: p.hardwareConcurrency,
+      language: p.languages[0] || original,
+      languages: p.languages.slice(),
       maxTouchPoints: p.maxTouchPoints,
+      pdfViewerEnabled: p.pdfViewerEnabled,
       platform: p.platform,
       userAgent: maskedUa(original),
+      vendor: p.vendor,
       webdriver: false,
     };
     return Object.prototype.hasOwnProperty.call(navValues, prop) ? navValues[prop] : original;
@@ -237,9 +262,13 @@
       "appVersion",
       "deviceMemory",
       "hardwareConcurrency",
+      "language",
+      "languages",
       "maxTouchPoints",
+      "pdfViewerEnabled",
       "platform",
       "userAgent",
+      "vendor",
       "webdriver",
     ]) {
       patchGetter(Navigator.prototype, prop, `get ${prop}`, (original) =>
@@ -645,6 +674,65 @@
     });
   };
 
+  const clampAudioSample = (value) => Math.max(-1, Math.min(1, value));
+
+  const poisonAudioChannel = (buffer, channel, seed) => {
+    const length = Math.max(0, Math.floor(buffer.length || 0));
+    if (!length) return;
+    const sample = seed % length;
+    const delta = (seed & 1 ? 1 : -1) * (0.00005 + ((seed >>> 8) % 50) / 1000000);
+    if (
+      typeof buffer.copyFromChannel === "function" &&
+      typeof buffer.copyToChannel === "function"
+    ) {
+      const data = new Float32Array(length);
+      buffer.copyFromChannel(data, channel);
+      data[sample] = clampAudioSample((Number(data[sample]) || 0) + delta);
+      buffer.copyToChannel(data, channel);
+      return;
+    }
+    const data = buffer.getChannelData(channel);
+    data[sample] = clampAudioSample((Number(data[sample]) || 0) + delta);
+  };
+
+  const poisonAudioBuffer = (buffer) => {
+    if (!buffer || (typeof buffer !== "object" && typeof buffer !== "function")) return buffer;
+    if (poisonedAudioBuffers.has(buffer)) return buffer;
+    poisonedAudioBuffers.add(buffer);
+    try {
+      const channelCount = Math.min(Math.max(0, Math.floor(buffer.numberOfChannels || 0)), 2);
+      for (let channel = 0; channel < channelCount; channel++) {
+        const seed = (persona().audioSeed + Math.imul(channel + 1, 0x9e3779b9)) >>> 0;
+        poisonAudioChannel(buffer, channel, seed);
+      }
+    } catch {}
+    return buffer;
+  };
+
+  const patchAudioRendering = () => {
+    if (typeof OfflineAudioContext === "undefined" || !OfflineAudioContext.prototype) return;
+    const desc = Object.getOwnPropertyDescriptor(OfflineAudioContext.prototype, "startRendering");
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      startRendering() {
+        const result = orig.apply(this, arguments);
+        if (!isMasking()) return result;
+        if (result && typeof result.then === "function") {
+          return result.then((buffer) => poisonAudioBuffer(buffer));
+        }
+        return poisonAudioBuffer(result);
+      },
+    }.startRendering;
+    Object.defineProperty(OfflineAudioContext.prototype, "startRendering", {
+      ...desc,
+      value: stealth(wrapped, "startRendering", {
+        length: orig.length,
+        source: nativeSourceFor(orig, "startRendering"),
+      }),
+    });
+  };
+
   try {
     patchNavigatorGetters();
     patchScreenGetters();
@@ -655,5 +743,6 @@
     patchStorageEstimate();
     patchWebgl();
     patchCanvas();
+    patchAudioRendering();
   } catch {}
 })();

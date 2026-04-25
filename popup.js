@@ -309,7 +309,7 @@ const renderPowerDiagnostics = (resp) => {
     );
   }
   if (resp.fingerprintMode && resp.fingerprintMode !== "off") {
-    addDiagnosticRow(box, "Device mask", resp.fingerprintMode);
+    addDiagnosticRow(box, "Signal poison", resp.fingerprintMode);
   }
 };
 

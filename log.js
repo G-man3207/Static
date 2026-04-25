@@ -501,6 +501,35 @@ const reasonInfoFor = (reason) => {
   };
 };
 
+const isDeviceSignalReason = (reason) =>
+  ["audio", "canvas", "environment", "navigator", "webgl"].includes(reason) ||
+  /^(audio|canvas|screen|webgl|webgl2|navigator)\./.test(reason) ||
+  ["date.getTimezoneOffset", "intl.resolvedOptions", "storage.estimate"].includes(reason);
+
+const isReplaySurfaceReason = (reason) =>
+  ["dom_observer", "input_hooks", "mutation.subtree"].includes(reason) ||
+  reason.startsWith("listener.");
+
+const isNetworkReason = (reason) => reason === "network" || /^(fetch|xhr|sendBeacon):/.test(reason);
+
+const protectionTextForReason = (reason) => {
+  if (isDeviceSignalReason(reason)) {
+    return fullData && fullData.fingerprintMode === "mask"
+      ? "Device signal poisoning is on for this browser surface."
+      : "Device signal poisoning can weaken this surface without blocking the read.";
+  }
+  if (isReplaySurfaceReason(reason)) {
+    return "Replay poisoning can mask detected recorder listeners; generic page listeners stay unblocked for compatibility.";
+  }
+  if (isNetworkReason(reason)) {
+    return "Known vendor traffic is handled by rulesets; generic adaptive network blocking remains observe-only.";
+  }
+  if (reason === "crypto" || reason.startsWith("crypto.")) {
+    return "Crypto output stays unmodified because poisoning it would break normal site behavior.";
+  }
+  return "";
+};
+
 const buildAdaptiveReasonGuide = (reasons) => {
   if (reasons.length === 0) return null;
   const guide = document.createElement("div");
@@ -522,7 +551,10 @@ const buildAdaptiveReasonGuide = (reasons) => {
     token.textContent = reason;
     term.appendChild(token);
     const description = document.createElement("dd");
-    description.textContent = `${info.description} Seen ${fmt(count)} time${count === 1 ? "" : "s"}.`;
+    const protectionText = protectionTextForReason(reason);
+    description.textContent = `${info.description} Seen ${fmt(count)} time${
+      count === 1 ? "" : "s"
+    }.${protectionText ? ` ${protectionText}` : ""}`;
     item.appendChild(term);
     item.appendChild(description);
     list.appendChild(item);

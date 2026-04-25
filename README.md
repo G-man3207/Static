@@ -50,7 +50,7 @@ Websites quietly probe your browser to figure out **which extensions you have in
    - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, PostHog, and Sentry Replay CDN bundles.
    - **Datadog RUM** _(off by default, also used for legitimate monitoring)_.
    - **LinkedIn** — sensor/metrics collection, conversion tracking, ad pixel, adblock detection, internal Piwik, marketing tag system, LMS analytics.
-5. **Device fingerprint masking _(opt-in)._** Static can return a stable per-site machine persona for high-entropy surfaces documented in BrowserGate-style collectors: OS/user-agent platform, CPU/RAM buckets, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, storage quota, battery, and network hints.
+5. **Device signal poisoning _(opt-in)._** Static can return a stable per-site machine persona for high-entropy Signal guide surfaces documented in BrowserGate-style collectors: OS/user-agent platform, CPU/RAM buckets, language, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, offline-audio render output, storage quota, battery, and network hints.
 6. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` of wrapped functions → native-looking strings, so the blocker's API overrides are indistinguishable from natives under any `toString` check.
 7. **Replay poisoning _(opt-in)._** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
 
@@ -149,16 +149,17 @@ in the popup):
 
 Noise mode is **off by default** — turning it on is an active choice to shift Static from pure defense to counter-intelligence. Toggle it from the popup.
 
-## Device masking _(opt-in)_
+## Device signal poisoning _(opt-in)_
 
-BrowserGate documents fingerprint collection beyond extension scans: user-agent and platform strings, CPU and memory buckets, screen values, timezone, WebGL, canvas, storage, battery, and network hints. Device masking makes those reads return a plausible persona instead of the real machine profile.
+BrowserGate documents fingerprint collection beyond extension scans: user-agent and platform strings, CPU and memory buckets, language, screen values, timezone, WebGL, canvas, offline audio, storage, battery, and network hints. Device signal poisoning makes those reads return a plausible persona instead of the real machine profile.
 
 - **Stable per origin.** The persona is deterministic from `hash(user_secret + origin)`, so a site does not see a different computer every pageview.
 - **Different across origins.** Two unrelated sites get different personas, reducing cross-site correlation.
 - **Plausible, not random.** Values are internally aligned: the user-agent OS segment matches `navigator.platform`, Client Hints platform, desktop touch profile, screen bucket, and generic WebGL renderer.
+- **Weakening instead of blocking.** Reads still complete, but high-entropy values are decoyed or subtly perturbed so collectors cannot rely on the raw machine profile as confidently.
 - **Opt-in.** It is off by default because some sites use these APIs for legitimate compatibility decisions.
 
-Toggle Device masking from the popup.
+Toggle Device signal poisoning from the popup.
 
 ## Replay poisoning _(opt-in)_
 

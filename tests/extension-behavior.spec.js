@@ -944,6 +944,23 @@ test("popup exposes local help text for privacy controls", async ({ extension })
     "diagnostics-help-text"
   );
   await expect(popupPage.locator("#diagnostics-help")).not.toHaveAttribute("title", /.*/);
+  await expect(popupPage.locator("#fingerprint-mode")).toHaveAttribute(
+    "aria-labelledby",
+    "fingerprint-title-text"
+  );
+  await expect(popupPage.locator("#fingerprint-mode")).toHaveAttribute(
+    "aria-describedby",
+    "fingerprint-desc"
+  );
+  await expect(popupPage.locator("#fingerprint-help")).toHaveAttribute(
+    "data-tip",
+    /Signal guide surfaces/
+  );
+  await expect(popupPage.locator("#fingerprint-help")).toHaveAttribute(
+    "aria-describedby",
+    "fingerprint-help-text"
+  );
+  await expect(popupPage.locator("#fingerprint-help")).not.toHaveAttribute("title", /.*/);
   await expect(popupPage.locator("#replay-mode")).toHaveAttribute(
     "aria-labelledby",
     "replay-title-text"
@@ -1879,6 +1896,14 @@ test("log viewer ranks origins by severity and explains adaptive reason tokens",
   await expect(logPage.getByText(/Global keydown listener/)).toBeVisible();
   await expect(logPage.getByText(/Device memory read/)).toBeVisible();
   await expect(logPage.getByText(/Whole-page mutation watch/)).toBeVisible();
+  await expect(
+    logPage
+      .getByText(/Device signal poisoning can weaken this surface without blocking the read/)
+      .first()
+  ).toBeVisible();
+  await expect(
+    logPage.getByText(/Replay poisoning can mask detected recorder listeners/).first()
+  ).toBeVisible();
 });
 
 test("log viewer shows local Noise readiness diagnostics", async ({ extension }) => {
