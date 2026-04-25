@@ -119,6 +119,74 @@ const fixtureFiles = {
     <meta charset="utf-8">
     <body>ordinary widget</body>
   `,
+  "/ad-score-iframe-only.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div id="widget"></div>
+      <script>
+        const iframe = document.createElement("iframe");
+        iframe.width = "300";
+        iframe.height = "250";
+        iframe.src = "/ordinary-widget.html";
+        document.getElementById("widget").appendChild(iframe);
+        setTimeout(() => {
+          window.__adIframeOnlyDone = true;
+        }, 50);
+      </script>
+    </body>
+  `,
+  "/ad-score-sponsored-dom-only.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div id="sponsored-card" class="sponsored-card">Sponsored placement label</div>
+      <script>
+        setTimeout(() => {
+          window.__adSponsoredOnlyDone = true;
+        }, 50);
+      </script>
+    </body>
+  `,
+  "/ad-score-intersection-only.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div id="content-card" class="content-card">Ordinary content card</div>
+      <script>
+        const observer = new IntersectionObserver((entries) => {
+          window.__intersectionOnlyCount = entries.length;
+        });
+        observer.observe(document.getElementById("content-card"));
+        setTimeout(() => {
+          window.__adIntersectionOnlyDone = true;
+        }, 50);
+      </script>
+    </body>
+  `,
+  "/ad-score-repeated-weak.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div id="placements"></div>
+      <script>
+        const placements = document.getElementById("placements");
+        for (let i = 0; i < 12; i++) {
+          const slot = document.createElement("div");
+          slot.className = "sponsored-card";
+          const iframe = document.createElement("iframe");
+          iframe.width = "300";
+          iframe.height = "250";
+          iframe.src = "/ordinary-widget.html?slot=" + i;
+          slot.appendChild(iframe);
+          placements.appendChild(slot);
+        }
+        setTimeout(() => {
+          window.__adRepeatedWeakDone = true;
+        }, 50);
+      </script>
+    </body>
+  `,
   "/replay.html": `
     <!doctype html>
     <meta charset="utf-8">

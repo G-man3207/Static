@@ -330,6 +330,25 @@ test("ad signal scoring keeps weak DOM signals below high confidence", () => {
 
   expect(adSignals.confidenceForReasons({ [reasons.AD_IFRAME_SIZE]: 1 })).toBe("low");
   expect(adSignals.confidenceForReasons({ [reasons.SPONSORED_DOM]: 1 })).toBe("low");
+  expect(adSignals.confidenceForReasons({ [reasons.VIEWABILITY_PING]: 1 })).toBe("low");
+  expect(
+    adSignals.confidenceForReasons({
+      [reasons.AD_IFRAME_SIZE]: 40,
+      [reasons.SPONSORED_DOM]: 40,
+    })
+  ).toBe("low");
+  expect(
+    adSignals.scoreForReasons({
+      [reasons.AD_IFRAME_SIZE]: 40,
+      [reasons.SPONSORED_DOM]: 40,
+    })
+  ).toBeLessThan(adSignals.thresholds.likely);
+  expect(
+    adSignals.confidenceForReasons({
+      [reasons.AD_IFRAME_SIZE]: 1,
+      [reasons.GPT_SLOT]: 1,
+    })
+  ).toBe("likely");
   expect(
     adSignals.confidenceForReasons({
       [reasons.AD_IFRAME_SIZE]: 1,
@@ -337,6 +356,20 @@ test("ad signal scoring keeps weak DOM signals below high confidence", () => {
       [reasons.IMPRESSION_BEACON]: 1,
     })
   ).toBe("high");
+  expect(
+    adSignals.classifyReasons({
+      [reasons.AD_IFRAME_SIZE]: 1,
+      [reasons.GPT_SLOT]: 1,
+      [reasons.IMPRESSION_BEACON]: 1,
+    }).scoreReasons
+  ).toEqual(
+    expect.arrayContaining([
+      "adApi:gpt.slot",
+      "render:ad_iframe.size",
+      "delivery:impression_beacon",
+      "correlation:ad_api+render+delivery",
+    ])
+  );
 });
 
 test("bridge caps high-cardinality probe ID maps before service-worker flush", () => {
