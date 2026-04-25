@@ -1,6 +1,6 @@
 # Static — Privacy Policy
 
-**Last updated:** April 18, 2026
+**Last updated:** April 25, 2026
 
 Static is a Chrome extension that blocks websites from fingerprinting which browser extensions you have installed, and blocks known client-side fingerprinting / session-replay / anti-bot vendor endpoints at the network layer.
 
@@ -11,6 +11,7 @@ This policy describes exactly what information Static processes on your machine,
 - Static has **no remote server**. There is no account to create; there is nothing to log into.
 - Static **never transmits any data anywhere.** No telemetry, no analytics, no crash reporting, no usage stats.
 - Static stores a small local record of which extension IDs each website has probed you for. This record lives only in `chrome.storage.local` on your own machine and can be cleared at any time.
+- Static has an opt-in QA diagnostics mode for compatibility testing. It stores a bounded local record of recent Static actions and can copy a GitHub issue report with site, extension, and replay-signal labels hashed.
 - If Replay poisoning is enabled, Static can redact or perturb event data only for detected session-replay listeners. It does not store form contents and does not send fake traffic.
 - If you manually export the log through the log viewer, the file is saved to your computer. Static does not send the export anywhere.
 
@@ -25,8 +26,9 @@ Static stores this local state in your browser profile and never writes to `chro
 5. **Playbook summaries** — weekly, per-origin aggregates describing how a site probed for extensions: probe vectors (for example `fetch`, XHR, Worker, EventSource), coarse extension-resource path kinds (for example manifest, image, script, HTML, CSS, other), per-week ID counts, and first/last-seen times for the weekly bucket. These summaries power local "probe behavior changed" indicators and are capped to the latest 10 weekly buckets per origin.
 6. **Replay detection log** — a per-origin summary of likely session-replay SDK signals, such as matching script URLs, known replay globals, Sentry Replay-specific markers, or replay-looking listener sources. Capped at 100 origins × 50 signals per origin. It records signal names/counts and last-seen timestamps, not form values or page content.
 7. **Adaptive behavior log** — observe-only, per-origin summaries of correlated local behavior signals that may indicate fingerprinting, replay, or anti-bot collection. It stores category counts, max local score, reason counts, source labels, endpoint origin/path strings, and timestamps. It does not store request bodies, form values, cookies, local storage, or full URLs, and it does not create blocking rules yet.
+8. **QA diagnostic log** — only when QA diagnostics mode is enabled, a bounded per-origin trace of recent Static actions for compatibility testing. Capped at 25 origins × 120 events per origin. Probe events store the blocked probe vector, extension-resource path kind/path, and probed extension ID; replay/adaptive events store the same compact metadata Static already uses for local detection. It does not store page content, request bodies, form values, cookies, local storage, or website URL paths.
 
-You can erase the probe log, playbook summaries, replay detection log, adaptive behavior log, since-install counter, and Noise-mode user secret at any time via the **Clear log** button in Static's log viewer. Ruleset, Noise-mode, and Replay-poisoning preferences can be changed in the popup; uninstalling Static removes all extension-managed data.
+You can erase the probe log, playbook summaries, replay detection log, adaptive behavior log, QA diagnostic log, since-install counter, and Noise-mode user secret at any time via the **Clear log** button in Static's log viewer. Ruleset, Noise-mode, Replay-poisoning, and QA diagnostics preferences can be changed in the popup; uninstalling Static removes all extension-managed data.
 
 ## What Static does NOT store or access
 
@@ -54,12 +56,13 @@ Static's only network-related action is **blocking** certain outbound requests i
 
 ## User-initiated data export
 
-The log viewer offers two export options. Both save a JSON file to your computer via the browser's native download mechanism; nothing is transmitted.
+The log viewer offers two export options and one clipboard copy option. Downloads are saved to your computer via the browser's native download mechanism; clipboard copies stay local until you paste them somewhere. Nothing is transmitted by Static.
 
 - **Export raw log** — full fidelity, including per-origin `lastUpdated` timestamps, exact per-ID probe counts, weekly playbook summaries, replay detection summaries, adaptive behavior summaries, and the since-install cumulative counter. Intended for private archival. If you choose to share this file, be aware that timestamps plus exact counts can be correlated with similar dumps from other users to partially re-identify individual browsing patterns.
 - **Export for research** — anonymized. Replaces the precise `exportedAt` timestamp with a coarse `exportMonth` (`"YYYY-MM"`), drops per-origin `lastUpdated` timestamps, drops the since-install cumulative counter, coarsens per-ID counts into log-scale buckets (`2-5`, `6-20`, `21-100`, `101-1000`, `1000+`), drops IDs probed fewer than 2 times (canary filter), drops origins with fewer than 3 surviving IDs (low-signal noise filter), and replaces origin/extension-ID labels with per-export salted hashes. The salt is not retained in the file, so labels are not stable across exports.
+- **Copy issue report** — anonymized and bounded for GitHub issues. Replaces site origins, extension IDs, and replay-signal labels with per-copy salted hashes, keeps coarse probe vectors/path kinds and recent diagnostic event types, omits local timestamps, omits full site URLs, and does not retain the salt.
 
-Static does not retain a copy of any export. Once the file is downloaded, only you have it.
+Static does not retain a copy of any export or copied issue report. Once the file is downloaded or text is copied, only you have it.
 
 ## Third parties
 
@@ -71,7 +74,7 @@ Because Static stores data only on your own machine, your rights of access, port
 
 - **Access**: everything Static has ever recorded about probes against you is visible in the log viewer.
 - **Portability**: downloadable as JSON at any time via the **Export** buttons in the log viewer.
-- **Erasure**: the **Clear log** button wipes the probe log, replay detection log, and adaptive behavior log, resets the since-install counter, and resets the Noise-mode user secret. Uninstalling Static removes all stored data, including preferences.
+- **Erasure**: the **Clear log** button wipes the probe log, replay detection log, adaptive behavior log, and QA diagnostic log, resets the since-install counter, and resets the Noise-mode user secret. Uninstalling Static removes all stored data, including preferences.
 
 No request to the author is required to exercise any of these rights.
 

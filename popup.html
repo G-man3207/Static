@@ -334,6 +334,7 @@
         margin-top: 3px;
         line-height: 1.4;
       }
+      .diagnostics-row,
       .fingerprint-row,
       .replay-row {
         display: flex;
@@ -343,11 +344,13 @@
         padding-top: 12px;
         border-top: 1px solid var(--border);
       }
+      .diagnostics-row .col,
       .fingerprint-row .col,
       .replay-row .col {
         flex: 1;
         min-width: 0;
       }
+      .diagnostics-row .ttl,
       .fingerprint-row .ttl,
       .replay-row .ttl {
         display: flex;
@@ -357,6 +360,7 @@
         font-weight: 600;
         color: var(--text);
       }
+      .diagnostics-row .desc,
       .fingerprint-row .desc,
       .replay-row .desc {
         font-size: 10px;
@@ -820,6 +824,40 @@
         </div>
         <div class="replay-status-list" id="replay-status-list" hidden></div>
         <div class="replay-detected" id="replay-detected" hidden>Replay SDK detected here</div>
+        <div class="diagnostics-row">
+          <div class="col">
+            <div class="ttl" id="diagnostics-title">
+              <span id="diagnostics-title-text">QA diagnostics</span>
+              <button
+                class="help-tip"
+                id="diagnostics-help"
+                type="button"
+                data-tip="Captures recent Static actions for local compatibility testing. Issue reports copied from the probe log hash site and extension labels."
+                aria-label="QA diagnostics details"
+                aria-describedby="diagnostics-help-text"
+              >
+                ?
+              </button>
+              <span class="sr-only" id="diagnostics-help-text"
+                >Captures recent Static actions for local compatibility testing. Issue reports
+                copied from the probe log hash site and extension labels.</span
+              >
+            </div>
+            <div class="desc" id="diagnostics-desc">
+              Record recent blocked probes, replay detections, and adaptive signals while testing a
+              site. Clear or copy the anonymized issue report from the probe log.
+            </div>
+          </div>
+          <label class="switch">
+            <input
+              type="checkbox"
+              id="diagnostics-toggle"
+              aria-labelledby="diagnostics-title-text"
+              aria-describedby="diagnostics-desc"
+            />
+            <span class="switch-bg"></span>
+          </label>
+        </div>
         <button class="log-link" id="view-log" hidden>
           <span class="log-link-text">View probe log</span>
           <span class="log-link-stats" id="noise-stats"></span>

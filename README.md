@@ -81,6 +81,13 @@ Noise-mode eligibility thresholds, and the IDs currently eligible for an origin'
 views derive only from the existing local probe and adaptive logs; they do not collect or transmit
 anything new.
 
+QA diagnostics mode is available from the popup for compatibility testing. When enabled, Static keeps
+a bounded local trace of recent Static actions on visited sites: blocked probe vectors, coarse
+extension-resource path kinds, replay detections, and adaptive signal tokens. The log viewer can copy
+an issue-ready JSON report that hashes site origins, extension IDs, and replay-signal labels with a
+per-copy salt, so users can attach useful evidence to GitHub issues without publishing raw browsing
+or extension-label data.
+
 ## Adaptive behavior log _(observe-only)_
 
 Static also has a local-only adaptive behavior logger for future dynamic blocking work. It watches for correlated behavior windows such as canvas/WebGL/audio readback plus navigator reads and network transmission, environment snapshots plus crypto and network transmission, or document-wide mutation observation plus aggressive input hooks.
@@ -133,10 +140,12 @@ The cross-vector behavior contract is documented in `docs/noise-behavior.md`.
 
 **Privacy:** Probe logs are kept locally in `chrome.storage.local`. Capped at 100 origins × 2,000 IDs each, with weekly playbook summaries capped to the latest 10 weeks. Nothing leaves your machine unless you explicitly export.
 
-Two export formats are available in the log viewer (click **View probe log** in the popup):
+Two export formats and one clipboard report are available in the log viewer (click **View probe log**
+in the popup):
 
 - **Export raw log** — full detail. Contains per-origin timestamps (`lastUpdated`), exact probe counts, weekly playbook summaries, your since-install cumulative counter, and the precise `exportedAt` moment. This is fine for your own archive but **should not be published** — timestamp + count patterns can cross-correlate users across sites if multiple raw dumps from different users ever end up in the same hands.
 - **Export for research** — anonymized. Replaces precise `exportedAt` with a coarse `"exportMonth": "YYYY-MM"` bucket, drops per-origin `lastUpdated`, drops the `cumulative` counter, coarsens per-ID counts into log-scale buckets (`"2-5"`, `"6-20"`, `"21-100"`, `"101-1000"`, `"1000+"`), drops any ID that was probed fewer than 2 times (canary filter), drops any origin with fewer than 3 surviving IDs (low-signal noise), and replaces origin/extension-ID labels with per-export salted hashes. Safer to publish, but intentionally less useful for cross-user correlation than the raw log.
+- **Copy issue report** — anonymized and bounded for GitHub issues. It hashes site origins, extension IDs, and replay-signal labels, omits local timestamps and full site URLs, and keeps the coarse vectors/path kinds needed to debug protection gaps or compatibility reports.
 
 Noise mode is **off by default** — turning it on is an active choice to shift Static from pure defense to counter-intelligence. Toggle it from the popup.
 

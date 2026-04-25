@@ -15,7 +15,9 @@
     "__static_style_probe_bridge_init__",
   ];
   const configPorts = new Set();
+  const pendingDiagnosticEvents = [];
   let pendingDelta = 0;
+  let diagnosticsMode = false;
   let frameTotal = 0;
   let flushTimer = null;
   const idCounts = new Map();
@@ -106,6 +108,21 @@
     }
   };
 
+  const extensionPathFor = (url) => {
+    try {
+      const parsed = new URL(String(url || ""));
+      const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+      const id = parsed.hostname.toLowerCase();
+      if (
+        (scheme === "chrome-extension" || scheme === "edge-extension") &&
+        CHROME_EXT_ID_RE.test(id)
+      ) {
+        return parsed.pathname.slice(0, 96);
+      }
+    } catch {}
+    return "";
+  };
+
   const extractProbeId = (url) => {
     try {
       const parsed = new URL(String(url || ""));
@@ -121,6 +138,17 @@
     return null;
   };
 
+  const queueDiagnosticProbe = (data) => {
+    if (!diagnosticsMode || pendingDiagnosticEvents.length >= 80) return;
+    pendingDiagnosticEvents.push({
+      type: "probe",
+      extensionId: extractProbeId(data.url),
+      extensionPath: extensionPathFor(data.url),
+      pathKind: pathKindFor(data.url),
+      vector: normalizeVector(data.where),
+    });
+  };
+
   const flush = () => {
     flushTimer = null;
     if (pendingDelta === 0) return;
@@ -131,11 +159,12 @@
     const deltaSnapshot = mapToObject(pendingIdCounts);
     const vectorSnapshot = mapToObject(pendingVectorCounts);
     const pathKindSnapshot = mapToObject(pendingPathKindCounts);
+    const diagnosticSnapshot = pendingDiagnosticEvents.splice(0);
     pendingIdCounts.clear();
     pendingVectorCounts.clear();
     pendingPathKindCounts.clear();
     try {
-      chrome.runtime.sendMessage({
+      const message = {
         type: "static_probe_blocked",
         delta,
         frameTotal,
@@ -143,7 +172,9 @@
         deltaIdCounts: deltaSnapshot,
         deltaVectorCounts: vectorSnapshot,
         deltaPathKindCounts: pathKindSnapshot,
-      });
+      };
+      if (diagnosticSnapshot.length > 0) message.diagnosticEvents = diagnosticSnapshot;
+      chrome.runtime.sendMessage(message);
     } catch {}
   };
 
@@ -156,6 +187,7 @@
     }
     idCounts.clear();
     pendingIdCounts.clear();
+    pendingDiagnosticEvents.length = 0;
     pendingVectorCounts.clear();
     pendingPathKindCounts.clear();
   };
@@ -168,6 +200,7 @@
     pendingDelta++;
     bumpMap(pendingVectorCounts, normalizeVector(data.where));
     bumpMap(pendingPathKindCounts, pathKindFor(data.url));
+    queueDiagnosticProbe(data);
     const id = extractProbeId(data.url);
     if (id) {
       bumpCappedIdMap(idCounts, id);
@@ -235,6 +268,7 @@
           response.fingerprintPersona && typeof response.fingerprintPersona === "object"
             ? response.fingerprintPersona
             : null,
+        diagnosticsMode: !!response.diagnosticsMode,
         noiseEnabled: !!response.noiseEnabled,
         replayMode: typeof response.replayMode === "string" ? response.replayMode : "off",
       });
@@ -247,6 +281,7 @@
     try {
       const response = await chrome.runtime.sendMessage({ type: "static_get_persona" });
       if (!response) return;
+      diagnosticsMode = !!response.diagnosticsMode;
       for (const port of [...configPorts]) postConfig(port, response);
     } catch {}
   };
