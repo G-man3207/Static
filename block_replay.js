@@ -2,10 +2,12 @@
 // Static - MAIN-world opt-in session-replay poisoning.
 (() => {
   const BRIDGE_EVENT = "__static_replay_bridge_init__";
+  const OPENREPLAY_SCRIPT_RE =
+    /(?:^|[/@.-])openreplay(?:[/_.-]|$)|@openreplay\/tracker|tracker-assist/i;
   const REPLAY_RE =
     /(fullstory|fs\.js|logrocket|mouseflow|smartlook|clarity|heap|pendo|luckyorange|inspectlet|browsee|contentsquare|quantummetric|session[-_]?replay|posthog-recorder|lazy-recorder|recorder-v2|(?:^|\/|\.)recorder\.js|startSessionRecording|stopSessionRecording|sessionRecordingStarted|@sentry\/replay|sentry.*(?:replay|rrweb)|browser\.sentry-cdn\.com\/.*replay|replayIntegration|replayCanvasIntegration|replaysSessionSampleRate|replaysOnErrorSampleRate|beforeAddRecordingEvent|ReplayCanvas|rrweb|sessionReplaySampleRate|replaySampleRate|premiumSampleRate|startSessionReplayRecording(?:Manually)?|stopSessionReplayRecording|@datadog\/browser-rum)/i;
   const REPLAY_GLOBALS =
-    `FS _fs_org _fs_host LogRocket Mouseflow mouseflow smartlook clarity heap pendo __lo_site_id __insp Inspectlet Browsee QuantumMetricAPI`.split(
+    `FS _fs_org _fs_host LogRocket Mouseflow mouseflow smartlook clarity heap pendo __lo_site_id __insp Inspectlet Browsee QuantumMetricAPI OpenReplay`.split(
       " "
     );
   const REPLAY_EVENT_TYPES = new Set(
@@ -21,6 +23,7 @@
   const activeReplayListeners = [];
   const replayRegistrationStack = [];
   const datadogGlobals = new WeakSet();
+  const openReplayGlobals = new WeakSet();
   const sentryGlobals = new WeakSet();
   const sentryReplayIntegrations = new WeakSet();
   const replayMethodSetters = new WeakSet();
@@ -296,6 +299,31 @@
     return value;
   };
 
+  const instrumentOpenReplayStart = (target) => {
+    patchReplayMethod(
+      target,
+      "start",
+      (origStart) =>
+        function start() {
+          return runReplayRegistration("global:OpenReplay.start", origStart, {
+            args: arguments,
+            markAlways: true,
+            thisArg: this,
+          });
+        }
+    );
+  };
+
+  const instrumentOpenReplayGlobal = (value) => {
+    if (!isObjectLike(value) || openReplayGlobals.has(value)) return value;
+    openReplayGlobals.add(value);
+    instrumentOpenReplayStart(value);
+    try {
+      if (isObjectLike(value.prototype)) instrumentOpenReplayStart(value.prototype);
+    } catch {}
+    return value;
+  };
+
   const instrumentSentryReplayFactory = (value, key) => {
     patchReplayMethod(
       value,
@@ -399,6 +427,35 @@
     } catch {}
   };
 
+  const patchOpenReplayGlobal = () => {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(window, "OpenReplay");
+      if (desc) {
+        if ("value" in desc) instrumentOpenReplayGlobal(desc.value);
+        return;
+      }
+      let currentValue = undefined;
+      Object.defineProperty(window, "OpenReplay", {
+        configurable: true,
+        enumerable: true,
+        get: stealth(
+          function get() {
+            return currentValue;
+          },
+          "get OpenReplay",
+          { length: 0 }
+        ),
+        set: stealth(
+          function set(value) {
+            currentValue = instrumentOpenReplayGlobal(value);
+          },
+          "set OpenReplay",
+          { length: 1 }
+        ),
+      });
+    } catch {}
+  };
+
   const patchSentryGlobal = () => {
     try {
       const desc = Object.getOwnPropertyDescriptor(window, "Sentry");
@@ -484,7 +541,8 @@
 
   const isReplayScriptUrl = (url) => {
     try {
-      return REPLAY_RE.test(String(url || ""));
+      const safeUrl = String(url || "");
+      return REPLAY_RE.test(safeUrl) || OPENREPLAY_SCRIPT_RE.test(safeUrl);
     } catch {
       return false;
     }
@@ -857,6 +915,9 @@
       instrumentPostHogGlobal(window.posthog);
     } catch {}
     try {
+      instrumentOpenReplayGlobal(window.OpenReplay);
+    } catch {}
+    try {
       instrumentSentryGlobal(window.Sentry);
     } catch {}
     for (const key of REPLAY_GLOBALS) {
@@ -916,6 +977,7 @@
 
   patchDatadogGlobal();
   patchPostHogGlobal();
+  patchOpenReplayGlobal();
   patchSentryGlobal();
   patchReplayScriptProperties();
   patchReplayListeners();

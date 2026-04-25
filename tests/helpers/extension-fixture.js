@@ -215,6 +215,18 @@ const fixtureFiles = {
       return !!this.__recording;
     };
   `,
+  "/openreplay-global-replay.html": `<!doctype html><meta charset="utf-8">
+    <input id="secret" type="email" /><script src="/assets/app/openreplay-bundled.js"></script>
+    <script>window.__orAppValues=[];document.addEventListener("input",(event)=>window.__orAppValues.push(event.target.value));OpenReplay.start();</script>`,
+  "/assets/app/openreplay-bundled.js": `
+    window.__orRecords = [];
+    window.OpenReplay = { __recording: false, start() {
+      if (this.__recording) return Promise.resolve({ sessionID: "already-recording" });
+      this.__recording = true;
+      document.addEventListener("input", function openReplayRecorder(event) { window.__orRecords.push({ type: event.type, value: event.target && event.target.value }); }, true);
+      return Promise.resolve({ sessionID: "openreplay-session" });
+    }, isActive() { return this.__recording; } };
+  `,
   "/datadog-replay-auto.html": `
     <!doctype html>
     <meta charset="utf-8">

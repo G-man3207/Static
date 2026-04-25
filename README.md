@@ -47,7 +47,7 @@ Websites quietly probe your browser to figure out **which extensions you have in
 4. **Network-layer blocklists (togglable).** Declarative-Net-Request rulesets block known:
    - **Fingerprinting / anti-bot vendors** — Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
    - **CAPTCHA / device-check vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA, DataDome response pages, and Cloudflare Turnstile / Challenge Platform.
-   - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, PostHog, and Sentry Replay CDN bundles.
+   - **Session-replay vendors** — FullStory, LogRocket, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, PostHog, OpenReplay, and Sentry Replay CDN bundles.
    - **Datadog RUM** _(off by default, also used for legitimate monitoring)_.
    - **LinkedIn** — sensor/metrics collection, conversion tracking, ad pixel, adblock detection, internal Piwik, marketing tag system, LMS analytics.
 5. **Device signal poisoning _(opt-in)._** Static can return a stable per-site machine persona for high-entropy Signal guide surfaces documented in BrowserGate-style collectors: OS/user-agent platform, CPU/RAM buckets, language, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, offline-audio render output, storage quota, battery, and network hints.
@@ -179,6 +179,8 @@ Sentry Replay is handled here too. Static looks for replay-specific Sentry signa
 Datadog Session Replay is handled more narrowly than the optional Datadog RUM ruleset. Static watches for replay-specific `DD_RUM` init/start signals such as `sessionReplaySampleRate`, legacy `premiumSampleRate` / `replaySampleRate`, and `startSessionReplayRecording()`, so self-hosted or first-party Datadog replay can still be detected without treating every `DD_RUM` install as a replay recorder.
 
 PostHog Session Replay is blocked on its documented cloud ingest/assets host family (`*.i.posthog.com`). For first-party reverse-proxy and bundled SDK deployments, Static also treats PostHog's replay bundle names such as `lazy-recorder`, `posthog-recorder`, and `recorder-v2`, plus documented `posthog.init(...)` default recording starts and `posthog.startSessionRecording()` calls, as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
+
+OpenReplay cloud tracker and ingest hosts (`static.openreplay.com`, `api.openreplay.com`) are blocked by the session-replay ruleset. First-party or bundled OpenReplay deployments are detected through `openreplay` script/source labels and documented `window.OpenReplay.start()` recording starts.
 
 ## Install
 
