@@ -1,5 +1,6 @@
 const { expect, test: base } = require("@playwright/test");
 const { launchExtension } = require("./extension");
+const { hotjarFixtureFiles } = require("./hotjar-fixtures");
 const { startFixtureServer } = require("./server");
 const { sentryFixtureFiles } = require("./sentry-fixtures");
 
@@ -87,6 +88,7 @@ const fixtureFiles = {
     document.addEventListener("mousemove", LogRocketRecorder, true);
     window.LogRocket = { init() {} };
   `,
+  ...hotjarFixtureFiles,
   "/sentry-replay.html": `
     <!doctype html>
     <meta charset="utf-8">

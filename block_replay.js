@@ -4,6 +4,7 @@
   const BRIDGE_EVENT = "__static_replay_bridge_init__";
   const OPENREPLAY_SCRIPT_RE =
     /(?:^|[/@.-])openreplay(?:[/_.-]|$)|@openreplay\/tracker|tracker-assist/i;
+  const HOTJAR_SCRIPT_RE = /(?:^|[/@.-])hotjar(?:[/_.-]|-\d|$)/i;
   const REPLAY_RE =
     /(fullstory|fs\.js|logrocket|mouseflow|smartlook|clarity|heap|pendo|luckyorange|inspectlet|browsee|contentsquare|quantummetric|session[-_]?replay|posthog-recorder|lazy-recorder|recorder-v2|(?:^|\/|\.)recorder\.js|startSessionRecording|stopSessionRecording|sessionRecordingStarted|@sentry\/replay|sentry.*(?:replay|rrweb)|browser\.sentry-cdn\.com\/.*replay|replayIntegration|replayCanvasIntegration|replaysSessionSampleRate|replaysOnErrorSampleRate|beforeAddRecordingEvent|ReplayCanvas|rrweb|sessionReplaySampleRate|replaySampleRate|premiumSampleRate|startSessionReplayRecording(?:Manually)?|stopSessionReplayRecording|@datadog\/browser-rum)/i;
   const REPLAY_GLOBALS =
@@ -542,7 +543,11 @@
   const isReplayScriptUrl = (url) => {
     try {
       const safeUrl = String(url || "");
-      return REPLAY_RE.test(safeUrl) || OPENREPLAY_SCRIPT_RE.test(safeUrl);
+      return (
+        REPLAY_RE.test(safeUrl) ||
+        OPENREPLAY_SCRIPT_RE.test(safeUrl) ||
+        HOTJAR_SCRIPT_RE.test(safeUrl)
+      );
     } catch {
       return false;
     }
