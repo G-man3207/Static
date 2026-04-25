@@ -385,9 +385,17 @@ const addProbeSeveritySignals = (state, entry, drift) => {
   }
 };
 
+const addDiagnosticSeveritySignals = (state, diagnostics) => {
+  const count = diagnostics && Array.isArray(diagnostics.events) ? diagnostics.events.length : 0;
+  if (count > 0) {
+    addSeverityReason(state, 1, `${fmt(count)} QA diagnostic event${count === 1 ? "" : "s"}.`);
+  }
+};
+
 const severityForEntry = (entry, drift) => {
   const state = { score: 0, reasons: [] };
   addAdaptiveSeveritySignals(state, entry.__adaptive);
+  addDiagnosticSeveritySignals(state, entry.__diagnostics);
   addProbeSeveritySignals(state, entry, drift);
   const level = severityLevelForScore(state.score);
   return {
@@ -414,6 +422,16 @@ const buildAdaptivePill = (adaptive) => {
   const span = document.createElement("span");
   span.className = "drift-pill changed";
   span.textContent = "Adaptive signals";
+  return span;
+};
+
+const buildDiagnosticPill = (diagnostics) => {
+  if (!(diagnostics && Array.isArray(diagnostics.events) && diagnostics.events.length > 0)) {
+    return null;
+  }
+  const span = document.createElement("span");
+  span.className = "drift-pill low";
+  span.textContent = "QA diagnostics";
   return span;
 };
 
@@ -555,6 +573,76 @@ const buildAdaptiveDetail = (adaptive) => {
   return box;
 };
 
+const eventTime = (event) => (event && event.at ? new Date(event.at).toLocaleTimeString() : "—");
+
+const textOr = (value, fallback) => (value ? value : fallback);
+
+const diagnosticProbeText = (event) => {
+  const path = event.extensionPath ? ` ${event.extensionPath}` : "";
+  return `${eventTime(event)} · probe blocked · ${textOr(event.vector, "unknown")} · ${textOr(
+    event.pathKind,
+    "unknown"
+  )} · ${textOr(event.extensionId, "unknown")}${path}`;
+};
+
+const diagnosticReplayText = (event) =>
+  `${eventTime(event)} · replay detected · ${textOr(event.signal, "unknown")}`;
+
+const diagnosticAdaptiveText = (event) => {
+  const reason = Array.isArray(event.reasons) && event.reasons.length ? event.reasons[0] : "";
+  const suffix = reason ? ` · ${reason}` : "";
+  return `${eventTime(event)} · adaptive signal · ${textOr(event.category, "unknown")} · score ${textOr(
+    event.score,
+    0
+  )}${suffix}`;
+};
+
+const diagnosticFallbackText = (event) =>
+  `${eventTime(event)} · ${textOr(event.type, "event")} · ${textOr(event.action, "observed")}`;
+
+const DIAGNOSTIC_TEXT_BUILDERS = {
+  adaptive: diagnosticAdaptiveText,
+  probe: diagnosticProbeText,
+  replay: diagnosticReplayText,
+};
+
+const diagnosticEventText = (event) => {
+  if (!event) return "Unknown diagnostic event.";
+  const builder = DIAGNOSTIC_TEXT_BUILDERS[event.type] || diagnosticFallbackText;
+  return builder(event);
+};
+
+const buildDiagnosticDetail = (diagnostics) => {
+  if (!(diagnostics && Array.isArray(diagnostics.events) && diagnostics.events.length > 0)) {
+    return null;
+  }
+  const box = document.createElement("div");
+  box.className = "drift-detail";
+  const title = document.createElement("div");
+  title.className = "drift-detail-title";
+  title.textContent = "QA diagnostics";
+  box.appendChild(title);
+  const list = document.createElement("ul");
+  list.className = "drift-reasons";
+  const totals = diagnostics.totals || {};
+  const totalLine = Object.entries(totals)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([type, count]) => `${type} ${fmt(count)}`)
+    .join(", ");
+  const summary = document.createElement("li");
+  summary.textContent = totalLine
+    ? `Captured locally: ${totalLine}.`
+    : `${fmt(diagnostics.events.length)} local diagnostic events captured.`;
+  list.appendChild(summary);
+  for (const event of diagnostics.events.slice(-20).reverse()) {
+    const li = document.createElement("li");
+    li.textContent = diagnosticEventText(event);
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  return box;
+};
+
 const buildIdList = (entry) => {
   const box = document.createElement("div");
   box.className = "id-list";
@@ -588,6 +676,8 @@ const buildOriginDetail = (entry, drift, severity, rank) => {
   }
   const adaptive = buildAdaptiveDetail(entry.__adaptive);
   if (adaptive) box.appendChild(adaptive);
+  const diagnostics = buildDiagnosticDetail(entry.__diagnostics);
+  if (diagnostics) box.appendChild(diagnostics);
   const ids = buildIdList(entry);
   ids.classList.add("open");
   box.appendChild(ids);
@@ -600,6 +690,25 @@ const originMatches = (origin, entry, filter) => {
   if (origin.toLowerCase().includes(f)) return true;
   if (Object.keys(entry.idCounts || {}).some((id) => id.toLowerCase().includes(f))) return true;
   const adaptive = entry.__adaptive || {};
+  const diagnostics = entry.__diagnostics || {};
+  if (
+    (diagnostics.events || []).some((event) =>
+      [
+        event.type,
+        event.action,
+        event.vector,
+        event.pathKind,
+        event.extensionId,
+        event.extensionPath,
+        event.signal,
+        event.category,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(f))
+    )
+  ) {
+    return true;
+  }
   return [
     ...Object.keys(adaptive.categories || {}),
     ...Object.keys(adaptive.reasons || {}),
@@ -622,60 +731,75 @@ const compareRankedEntries = (a, b) =>
   (b.entry.lastUpdated || 0) - (a.entry.lastUpdated || 0) ||
   a.origin.localeCompare(b.origin);
 
-const render = (filter) => {
-  const content = document.getElementById("content");
-  content.innerHTML = "";
-  if (!fullData) return;
+const originNamesForData = (data) =>
+  new Set([
+    ...Object.keys(data.origins || {}),
+    ...Object.keys(data.adaptiveSignals || {}),
+    ...Object.keys(data.diagnostics || {}),
+  ]);
 
-  const origins = fullData.origins || {};
-  const adaptiveSignals = fullData.adaptiveSignals || {};
-  const originNames = new Set([...Object.keys(origins), ...Object.keys(adaptiveSignals)]);
-  const allEntries = [...originNames].map((origin) => {
+const lastUpdatedForEntry = (entry, adaptive, diagnostic) =>
+  entry.lastUpdated ||
+  (adaptive && adaptive.lastUpdated) ||
+  (diagnostic && diagnostic.lastUpdated) ||
+  0;
+
+const rankedEntriesForData = (data) => {
+  const origins = data.origins || {};
+  const adaptiveSignals = data.adaptiveSignals || {};
+  const diagnostics = data.diagnostics || {};
+  return [...originNamesForData(data)].map((origin) => {
     const entry = origins[origin] || { idCounts: {}, lastUpdated: 0 };
     const adaptive = adaptiveSignals[origin];
+    const diagnostic = diagnostics[origin];
     return rankedEntryFor(origin, {
       ...entry,
-      lastUpdated: entry.lastUpdated || (adaptive && adaptive.lastUpdated) || 0,
+      lastUpdated: lastUpdatedForEntry(entry, adaptive, diagnostic),
       __adaptive: adaptive,
+      __diagnostics: diagnostic,
     });
   });
+};
 
-  if (allEntries.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.innerHTML =
-      '<p class="big">No probes logged yet.</p>' +
-      "<p>Visit a site that fingerprints browser extensions " +
-      "(LinkedIn, X, major e-commerce) and the log will populate here.</p>";
-    content.appendChild(empty);
-    document.getElementById("summary").textContent = "";
-    return;
-  }
+const renderEmptyState = (content, html) => {
+  const empty = document.createElement("div");
+  empty.className = "empty-state";
+  empty.innerHTML = html;
+  content.appendChild(empty);
+};
 
-  const filtered = allEntries
-    .filter(({ entry, origin }) => originMatches(origin, entry, filter))
-    .sort(compareRankedEntries);
+const diagnosticEventCountForLog = (diagnostics) =>
+  Object.values(diagnostics || {}).reduce(
+    (sum, entry) => sum + ((entry && entry.events && entry.events.length) || 0),
+    0
+  );
 
-  let grand = 0;
-  for (const { entry } of allEntries) grand += totalProbesFor(entry);
-  const adaptiveCount = Object.keys(adaptiveSignals).length;
+const totalProbeCountForEntries = (entries) => {
+  let total = 0;
+  for (const { entry } of entries) total += totalProbesFor(entry);
+  return total;
+};
 
+const renderSummary = ({
+  adaptiveCount,
+  allEntries,
+  cumulative,
+  diagnosticEventCount,
+  filtered,
+}) => {
+  const grand = totalProbeCountForEntries(allEntries);
   document.getElementById("summary").textContent = `${fmt(filtered.length)} of ${fmt(
     allEntries.length
   )} origin${allEntries.length === 1 ? "" : "s"} ranked by severity  ·  ${fmt(
     grand
   )} total probes recorded  ·  ${fmt(adaptiveCount)} adaptive origin${
     adaptiveCount === 1 ? "" : "s"
-  } observed  ·  ${fmt(fullData.cumulative || 0)} probes blocked since install`;
+  } observed  ·  ${fmt(diagnosticEventCount)} QA diagnostic event${
+    diagnosticEventCount === 1 ? "" : "s"
+  }  ·  ${fmt(cumulative || 0)} probes blocked since install`;
+};
 
-  if (filtered.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.innerHTML = '<p class="big">No matches.</p>';
-    content.appendChild(empty);
-    return;
-  }
-
+const createLogTable = () => {
   const table = document.createElement("table");
   table.className = "log-table";
   table.innerHTML =
@@ -690,48 +814,93 @@ const render = (filter) => {
     "</tr></thead>";
   const tbody = document.createElement("tbody");
   table.appendChild(tbody);
+  return { table, tbody };
+};
 
-  for (const [index, { drift, entry, origin, severity }] of filtered.entries()) {
-    const rank = index + 1;
-    const unique = Object.keys(entry.idCounts || {}).length;
-    const total = totalProbesFor(entry);
-    const adaptivePill = buildAdaptivePill(entry.__adaptive);
+const appendOptionalPill = (cell, pill) => {
+  if (!pill) return;
+  cell.appendChild(document.createTextNode(" "));
+  cell.appendChild(pill);
+};
 
-    const tr = document.createElement("tr");
-    tr.className = "origin-row";
-    const caret = '<span class="caret">›</span> ';
-    tr.innerHTML =
-      `<td class='num rank-cell'>${fmt(rank)}</td>` +
-      `<td>${caret}${origin.replace(/</g, "&lt;")}</td>` +
-      `<td class='severity-cell'></td>` +
-      `<td class='num'>${fmt(unique)}</td>` +
-      `<td class='num'>${fmt(total)}</td>` +
-      `<td class='drift-cell'></td>` +
-      `<td>${fmtDate(entry.lastUpdated)}</td>`;
-    tr.querySelector(".severity-cell").appendChild(buildSeverityPill(severity));
-    tr.querySelector(".drift-cell").appendChild(buildDriftPill(drift));
-    if (adaptivePill) {
-      tr.querySelector(".drift-cell").appendChild(document.createTextNode(" "));
-      tr.querySelector(".drift-cell").appendChild(adaptivePill);
+const appendRankedEntryRow = (tbody, rankedEntry, index) => {
+  const { drift, entry, origin, severity } = rankedEntry;
+  const rank = index + 1;
+  const unique = Object.keys(entry.idCounts || {}).length;
+  const total = totalProbesFor(entry);
+
+  const tr = document.createElement("tr");
+  tr.className = "origin-row";
+  const caret = '<span class="caret">›</span> ';
+  tr.innerHTML =
+    `<td class='num rank-cell'>${fmt(rank)}</td>` +
+    `<td>${caret}${origin.replace(/</g, "&lt;")}</td>` +
+    `<td class='severity-cell'></td>` +
+    `<td class='num'>${fmt(unique)}</td>` +
+    `<td class='num'>${fmt(total)}</td>` +
+    `<td class='drift-cell'></td>` +
+    `<td>${fmtDate(entry.lastUpdated)}</td>`;
+  tr.querySelector(".severity-cell").appendChild(buildSeverityPill(severity));
+  const driftCell = tr.querySelector(".drift-cell");
+  driftCell.appendChild(buildDriftPill(drift));
+  appendOptionalPill(driftCell, buildAdaptivePill(entry.__adaptive));
+  appendOptionalPill(driftCell, buildDiagnosticPill(entry.__diagnostics));
+  tbody.appendChild(tr);
+
+  const detailTr = document.createElement("tr");
+  detailTr.className = "detail-row";
+  const detailTd = document.createElement("td");
+  detailTd.colSpan = 7;
+  detailTr.appendChild(detailTd);
+  tbody.appendChild(detailTr);
+
+  tr.addEventListener("click", () => {
+    if (!detailTd.firstChild) {
+      detailTd.appendChild(buildOriginDetail(entry, drift, severity, rank));
     }
-    tbody.appendChild(tr);
+    const list = detailTd.firstChild;
+    const open = list.classList.toggle("open");
+    tr.classList.toggle("open", open);
+  });
+};
 
-    const detailTr = document.createElement("tr");
-    detailTr.className = "detail-row";
-    const detailTd = document.createElement("td");
-    detailTd.colSpan = 7;
-    detailTr.appendChild(detailTd);
-    tbody.appendChild(detailTr);
+const render = (filter) => {
+  const content = document.getElementById("content");
+  content.innerHTML = "";
+  if (!fullData) return;
 
-    tr.addEventListener("click", () => {
-      if (!detailTd.firstChild) {
-        detailTd.appendChild(buildOriginDetail(entry, drift, severity, rank));
-      }
-      const list = detailTd.firstChild;
-      const open = list.classList.toggle("open");
-      tr.classList.toggle("open", open);
-    });
+  const allEntries = rankedEntriesForData(fullData);
+
+  if (allEntries.length === 0) {
+    renderEmptyState(
+      content,
+      '<p class="big">No probes logged yet.</p>' +
+        "<p>Visit a site that fingerprints browser extensions " +
+        "(LinkedIn, X, major e-commerce) and the log will populate here.</p>"
+    );
+    document.getElementById("summary").textContent = "";
+    return;
   }
+
+  const filtered = allEntries
+    .filter(({ entry, origin }) => originMatches(origin, entry, filter))
+    .sort(compareRankedEntries);
+
+  renderSummary({
+    adaptiveCount: Object.keys(fullData.adaptiveSignals || {}).length,
+    allEntries,
+    cumulative: fullData.cumulative,
+    diagnosticEventCount: diagnosticEventCountForLog(fullData.diagnostics),
+    filtered,
+  });
+
+  if (filtered.length === 0) {
+    renderEmptyState(content, '<p class="big">No matches.</p>');
+    return;
+  }
+
+  const { table, tbody } = createLogTable();
+  filtered.forEach((entry, index) => appendRankedEntryRow(tbody, entry, index));
 
   content.appendChild(table);
 };
@@ -801,6 +970,198 @@ const buildShareableExport = async (raw) => {
   return out;
 };
 
+const countEntriesForReport = (counts, limit = 8) =>
+  Object.entries(counts || {})
+    .filter(([, count]) => typeof count === "number" && count > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit);
+
+const latestWeekForReport = (entry) => {
+  const weeks = entry && entry.playbook && entry.playbook.weeks;
+  const keys = Object.keys(weeks || {}).sort();
+  if (keys.length === 0) return null;
+  const key = keys[keys.length - 1];
+  const week = weeks[key] || {};
+  return {
+    pathKinds: countEntriesForReport(week.pathKindCounts),
+    total: week.total || 0,
+    vectors: countEntriesForReport(week.vectorCounts),
+    week: key,
+  };
+};
+
+const hashIdBucketsForReport = async (salt, idCounts) => {
+  const buckets = {};
+  for (const [id, count] of countEntriesForReport(idCounts, 40)) {
+    const bucket = bucketCount(count);
+    if (bucket) buckets[await hashLabel(salt, `id:${id}`)] = bucket;
+  }
+  return buckets;
+};
+
+const diagnosticTotalsFor = (events) => {
+  const totals = {};
+  for (const event of events || []) {
+    const type = event && event.type ? event.type : "unknown";
+    totals[type] = (totals[type] || 0) + 1;
+  }
+  return totals;
+};
+
+const signalKindForReport = (signal) => {
+  const kind = String(signal || "unknown")
+    .split(":")[0]
+    .slice(0, 48);
+  return /^[a-z0-9._-]+$/i.test(kind) ? kind : "signal";
+};
+
+const signalKindCountsForReport = (signals) => {
+  const counts = {};
+  for (const [signal, count] of countEntriesForReport(signals, 20)) {
+    const kind = signalKindForReport(signal);
+    counts[kind] = (counts[kind] || 0) + count;
+  }
+  return counts;
+};
+
+const issueProbeEventForReport = async (salt, event) => ({
+  type: "probe",
+  action: textOr(event.action, "blocked"),
+  extensionIdHash: event.extensionId ? await hashLabel(salt, `id:${event.extensionId}`) : null,
+  extensionPath: textOr(event.extensionPath, ""),
+  pathKind: textOr(event.pathKind, "unknown"),
+  vector: textOr(event.vector, "unknown"),
+});
+
+const issueReplayEventForReport = async (salt, event) => ({
+  type: "replay",
+  action: textOr(event.action, "detected"),
+  signalHash: await hashLabel(salt, `signal:${textOr(event.signal, "unknown")}`),
+  signalKind: signalKindForReport(event.signal),
+});
+
+const issueAdaptiveEventForReport = (event) => ({
+  type: "adaptive",
+  action: textOr(event.action, "observed"),
+  category: textOr(event.category, "unknown"),
+  reasons: Array.isArray(event.reasons) ? event.reasons.slice(0, 8) : [],
+  score: textOr(event.score, 0),
+});
+
+const issueFallbackEventForReport = (event) => ({
+  action: textOr(event.action, "observed"),
+  type: textOr(event.type, "unknown"),
+});
+
+const ISSUE_EVENT_BUILDERS = {
+  adaptive: (_salt, event) => issueAdaptiveEventForReport(event),
+  probe: issueProbeEventForReport,
+  replay: issueReplayEventForReport,
+};
+
+const issueEventForReport = async (salt, event) => {
+  const builder = ISSUE_EVENT_BUILDERS[event.type];
+  return builder ? builder(salt, event) : issueFallbackEventForReport(event);
+};
+
+const issueOriginNames = ({
+  adaptiveSignals = {},
+  diagnostics = {},
+  origins = {},
+  replayDetections = {},
+}) =>
+  [
+    ...new Set([
+      ...Object.keys(origins),
+      ...Object.keys(replayDetections),
+      ...Object.keys(adaptiveSignals),
+      ...Object.keys(diagnostics),
+    ]),
+  ].sort();
+
+const issueReportSummary = ({ adaptiveSignals, diagnostics, originNames, origins }) => ({
+  adaptiveOrigins: Object.keys(adaptiveSignals).length,
+  diagnosticEvents: diagnosticEventCountForLog(diagnostics),
+  origins: originNames.length,
+  totalProbes: Object.values(origins).reduce((sum, entry) => sum + totalProbesFor(entry), 0),
+});
+
+const issueOriginReport = async ({
+  adaptiveEntry,
+  diagnosticEntry,
+  events,
+  origin,
+  probeEntry,
+  replayEntry,
+  salt,
+}) => {
+  const originReport = {
+    originHash: await hashLabel(salt, `origin:${origin}`),
+    probes: {
+      idBuckets: await hashIdBucketsForReport(salt, probeEntry.idCounts),
+      latestWeek: latestWeekForReport(probeEntry),
+      total: totalProbesFor(probeEntry),
+      uniqueIds: Object.keys(probeEntry.idCounts || {}).length,
+    },
+    replay: {
+      signalKinds: signalKindCountsForReport(replayEntry.signals),
+      total: replayEntry.total || 0,
+    },
+    adaptive: {
+      categories: Object.fromEntries(countEntriesForReport(adaptiveEntry.categories)),
+      reasons: Object.fromEntries(countEntriesForReport(adaptiveEntry.reasons)),
+      scoreMax: adaptiveEntry.scoreMax || 0,
+      total: adaptiveEntry.total || 0,
+    },
+    diagnostics: {
+      events: [],
+      totals: diagnosticEntry.totals || diagnosticTotalsFor(events),
+    },
+  };
+  for (const event of events) {
+    originReport.diagnostics.events.push(await issueEventForReport(salt, event));
+  }
+  return originReport;
+};
+
+const buildIssueReport = async (raw) => {
+  const salt = randomSalt();
+  const origins = raw.origins || {};
+  const replayDetections = raw.replayDetections || {};
+  const adaptiveSignals = raw.adaptiveSignals || {};
+  const diagnostics = raw.diagnostics || {};
+  const originNames = issueOriginNames({ adaptiveSignals, diagnostics, origins, replayDetections });
+  const report = {
+    schema: "static.issue-diagnostics.v1",
+    anonymization:
+      "per-copy salted SHA-256 labels; site origins, extension IDs, and replay signals are hashed; salt is not retained",
+    exportMonth: new Date().toISOString().slice(0, 7),
+    diagnosticsMode: !!raw.diagnosticsMode,
+    summary: issueReportSummary({ adaptiveSignals, diagnostics, originNames, origins }),
+    origins: [],
+  };
+
+  for (const origin of originNames) {
+    const probeEntry = origins[origin] || { idCounts: {} };
+    const replayEntry = replayDetections[origin] || {};
+    const adaptiveEntry = adaptiveSignals[origin] || {};
+    const diagnosticEntry = diagnostics[origin] || {};
+    const events = Array.isArray(diagnosticEntry.events) ? diagnosticEntry.events.slice(-25) : [];
+    report.origins.push(
+      await issueOriginReport({
+        adaptiveEntry,
+        diagnosticEntry,
+        events,
+        origin,
+        probeEntry,
+        replayEntry,
+        salt,
+      })
+    );
+  }
+  return report;
+};
+
 const downloadJson = (obj, filename) => {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -812,6 +1173,22 @@ const downloadJson = (obj, filename) => {
     URL.revokeObjectURL(a.href);
     a.remove();
   }, 1000);
+};
+
+const copyText = async (text) => {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
 };
 
 document.getElementById("export-raw").addEventListener("click", () => {
@@ -836,9 +1213,24 @@ document.getElementById("export-shareable").addEventListener("click", async () =
   );
 });
 
+document.getElementById("copy-issue-report").addEventListener("click", async () => {
+  const status = document.getElementById("copy-status");
+  if (!fullData) return;
+  try {
+    const report = await buildIssueReport(fullData);
+    await copyText(JSON.stringify(report, null, 2));
+    status.textContent = "Copied";
+    setTimeout(() => {
+      if (status.textContent === "Copied") status.textContent = "";
+    }, 1800);
+  } catch {
+    status.textContent = "Copy failed";
+  }
+});
+
 document.getElementById("clear").addEventListener("click", async () => {
   const ok = confirm(
-    "Clear all probe logs? This also resets the since-install counter and Noise-mode identity."
+    "Clear all probe and diagnostic logs? This also resets the since-install counter and Noise-mode identity."
   );
   if (!ok) return;
   try {

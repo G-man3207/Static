@@ -826,6 +826,7 @@ test("popup keeps detailed controls folded by default", async ({ extension }) =>
   await expect(popupPage.locator("#advanced-controls > summary")).toContainText("More");
   await expect(popupPage.getByRole("heading", { name: "Always on" })).toBeHidden();
   await expect(popupPage.locator("#noise-title-text")).toBeHidden();
+  await expect(popupPage.locator("#diagnostics-title-text")).toBeHidden();
   await expect(popupPage.locator("#rulesets")).toBeHidden();
   await expect(popupPage.getByText("Power diagnostics")).toBeHidden();
 
@@ -833,8 +834,30 @@ test("popup keeps detailed controls folded by default", async ({ extension }) =>
 
   await expect(popupPage.getByRole("heading", { name: "Always on" })).toBeVisible();
   await expect(popupPage.locator("#noise-title-text")).toBeVisible();
+  await expect(popupPage.locator("#diagnostics-title-text")).toBeVisible();
   await expect(popupPage.locator("#rulesets")).toBeVisible();
   await expect(popupPage.getByText("Power diagnostics")).toBeVisible();
+});
+
+test("popup toggles QA diagnostics mode", async ({ extension }) => {
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  await openPopupAdvancedControls(popupPage);
+
+  await expect(popupPage.locator("#diagnostics-toggle")).not.toBeChecked();
+  await popupPage.locator("#diagnostics-toggle").evaluate((input) => input.click());
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(() => chrome.storage.local.get("diagnostics_mode"))
+    )
+    .toEqual({ diagnostics_mode: true });
+
+  await popupPage.locator("#diagnostics-toggle").evaluate((input) => input.click());
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(() => chrome.storage.local.get("diagnostics_mode"))
+    )
+    .toEqual({ diagnostics_mode: false });
 });
 
 test("popup shows replay blocking and poisoning indicators", async ({ extension }) => {
@@ -904,6 +927,23 @@ test("popup exposes local help text for privacy controls", async ({ extension })
     "noise-help-text"
   );
   await expect(popupPage.locator("#noise-help")).not.toHaveAttribute("title", /.*/);
+  await expect(popupPage.locator("#diagnostics-toggle")).toHaveAttribute(
+    "aria-labelledby",
+    "diagnostics-title-text"
+  );
+  await expect(popupPage.locator("#diagnostics-toggle")).toHaveAttribute(
+    "aria-describedby",
+    "diagnostics-desc"
+  );
+  await expect(popupPage.locator("#diagnostics-help")).toHaveAttribute(
+    "data-tip",
+    /compatibility testing/
+  );
+  await expect(popupPage.locator("#diagnostics-help")).toHaveAttribute(
+    "aria-describedby",
+    "diagnostics-help-text"
+  );
+  await expect(popupPage.locator("#diagnostics-help")).not.toHaveAttribute("title", /.*/);
   await expect(popupPage.locator("#replay-mode")).toHaveAttribute(
     "aria-labelledby",
     "replay-title-text"
@@ -1875,6 +1915,84 @@ test("log viewer shows local Noise readiness diagnostics", async ({ extension })
   await expect(logPage.locator(".id-entry span").getByText(unknown, { exact: true })).toBeVisible();
 });
 
+test("QA diagnostics mode records local behavior and builds anonymized issue reports", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ diagnostics_mode: true })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(100);
+  await page.evaluate(
+    async (url) => {
+      await fetch(url).catch(() => {});
+    },
+    probedUrl(PROBED_ID, "/manifest.json?secret=should-not-export")
+  );
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate((origin) => {
+        return chrome.storage.local
+          .get("diagnostic_log")
+          .then(({ diagnostic_log }) => diagnostic_log && diagnostic_log[origin]);
+      }, server.origin)
+    )
+    .toMatchObject({
+      totals: { probe: 1 },
+      events: [
+        {
+          action: "blocked",
+          extensionId: PROBED_ID,
+          extensionPath: "/manifest.json",
+          pathKind: "manifest",
+          type: "probe",
+          vector: "fetch",
+        },
+      ],
+    });
+
+  const diagnosticEntry = await extension.serviceWorker.evaluate((origin) => {
+    return chrome.storage.local
+      .get("diagnostic_log")
+      .then(({ diagnostic_log }) => diagnostic_log && diagnostic_log[origin]);
+  }, server.origin);
+
+  const serializedDiagnostic = JSON.stringify(diagnosticEntry);
+  expect(serializedDiagnostic).toContain(PROBED_ID);
+  expect(serializedDiagnostic).not.toContain("should-not-export");
+
+  const logPage = await extension.context.newPage();
+  await logPage.goto(`chrome-extension://${extension.extensionId}/log.html`);
+  await expect(logPage.getByText(server.origin)).toBeVisible();
+  await logPage.getByText(server.origin).click();
+  await expect(logPage.locator(".drift-detail-title").getByText("QA diagnostics")).toBeVisible();
+  await expect(logPage.getByText(/probe blocked/)).toBeVisible();
+  await expect(
+    logPage.locator(".id-entry span").getByText(PROBED_ID, { exact: true })
+  ).toBeVisible();
+
+  const issueReport = await logPage.evaluate("buildIssueReport(fullData)");
+  const serializedIssue = JSON.stringify(issueReport);
+  expect(issueReport.schema).toBe("static.issue-diagnostics.v1");
+  expect(issueReport.diagnosticsMode).toBe(true);
+  expect(issueReport.summary.diagnosticEvents).toBe(1);
+  expect(serializedIssue).not.toContain(server.origin);
+  expect(serializedIssue).not.toContain(PROBED_ID);
+  expect(serializedIssue).not.toContain("should-not-export");
+  expect(issueReport.origins[0].originHash).toMatch(/^[0-9a-f]{64}$/);
+  expect(issueReport.origins[0].diagnostics.events[0]).toMatchObject({
+    action: "blocked",
+    extensionPath: "/manifest.json",
+    pathKind: "manifest",
+    type: "probe",
+    vector: "fetch",
+  });
+  expect(issueReport.origins[0].diagnostics.events[0].extensionIdHash).toMatch(/^[0-9a-f]{64}$/);
+});
+
 test("scrubs extension DOM markers on initial parse and later mutations", async ({
   extension,
   server,
@@ -2000,6 +2118,7 @@ test("Clear log removes probe state and Noise identity while preserving preferen
     ({ id }) =>
       chrome.storage.local.set({
         cumulative: 42,
+        diagnostics_mode: true,
         fingerprint_mode: "mask",
         noise_enabled: true,
         replay_mode: "chaos",
@@ -2019,6 +2138,23 @@ test("Clear log removes probe state and Noise identity while preserving preferen
             endpoints: { "https://example.test/collect": 1 },
             sources: { "inline-or-runtime": 1 },
             lastUpdated: Date.now(),
+          },
+        },
+        diagnostic_log: {
+          "https://example.test": {
+            events: [
+              {
+                action: "blocked",
+                at: Date.now(),
+                extensionId: id,
+                extensionPath: "/manifest.json",
+                pathKind: "manifest",
+                type: "probe",
+                vector: "fetch",
+              },
+            ],
+            lastUpdated: Date.now(),
+            totals: { probe: 1 },
           },
         },
         user_secret: "secret",
@@ -2042,6 +2178,8 @@ test("Clear log removes probe state and Noise identity while preserving preferen
       extension.serviceWorker.evaluate(() =>
         chrome.storage.local.get([
           "cumulative",
+          "diagnostic_log",
+          "diagnostics_mode",
           "fingerprint_mode",
           "noise_enabled",
           "replay_mode",
@@ -2052,5 +2190,10 @@ test("Clear log removes probe state and Noise identity while preserving preferen
         ])
       )
     )
-    .toEqual({ fingerprint_mode: "mask", noise_enabled: true, replay_mode: "chaos" });
+    .toEqual({
+      diagnostics_mode: true,
+      fingerprint_mode: "mask",
+      noise_enabled: true,
+      replay_mode: "chaos",
+    });
 });

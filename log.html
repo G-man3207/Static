@@ -146,6 +146,11 @@
         color: var(--text);
         font-weight: 600;
       }
+      .copy-status {
+        color: var(--text-subtle);
+        font-size: 11px;
+        min-width: 82px;
+      }
       .summary {
         color: var(--text-muted);
         font-size: 12px;
@@ -417,12 +422,22 @@
           >
             Export for research
           </button>
+          <button
+            class="btn"
+            id="copy-issue-report"
+            title="Copies a bounded JSON report with hashed site and extension labels."
+          >
+            Copy issue report
+          </button>
           <button class="btn btn-danger" id="clear">Clear log</button>
+          <span class="copy-status" id="copy-status" aria-live="polite"></span>
         </div>
         <div class="export-hint">
           <strong>Raw</strong> keeps timestamps and exact counts — for your own archive, don't
           publish. <strong>Research</strong> is anonymized (month-bucketed, log-scale counts,
           canaries dropped) and safe to share or contribute to collective datasets.
+          <strong>Issue report</strong> is copied to the clipboard with site and extension labels
+          hashed for GitHub reports.
         </div>
         <div class="summary" id="summary"></div>
         <div id="content"></div>

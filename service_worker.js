@@ -12,8 +12,8 @@
 //   6. Record observe-only adaptive behavior signals for local calibration.
 //   7. Generate stable per-origin device personas for opt-in fingerprint masking.
 //   8. Answer popup queries (`static_get_details`, `static_export_log`,
-//      `static_set_noise`, `static_set_replay`, `static_set_fingerprint`) and bridge
-//      queries (`static_get_persona`).
+//      `static_set_noise`, `static_set_replay`, `static_set_fingerprint`,
+//      `static_set_diagnostics`) and bridge queries (`static_get_persona`).
 
 importScripts("lists.js", "service_worker_utils.js");
 const CFG = globalThis.__static_config__ || {};
@@ -32,6 +32,8 @@ const {
 const perTabState = new Map(); // tabId -> { origin, frames: Map<frameId, {total, idCounts}> }
 const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
 const MAX_CAPTURED_IDS = 2000;
+const MAX_DIAGNOSTIC_EVENTS_PER_ORIGIN = 120;
+const MAX_DIAGNOSTIC_ORIGINS = 25;
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -220,6 +222,84 @@ const recordAdaptiveSignal = async (origin, signal) => {
   adaptive_log[origin] = entry;
   trimLogOrigins(adaptive_log, 100);
   await chrome.storage.local.set({ adaptive_log });
+};
+
+const safeDiagnosticText = (value, fallback, maxLength) => {
+  const text = String(value || fallback || "unknown")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.slice(0, maxLength);
+};
+
+const normalizeDiagnosticEvent = (event, now) => {
+  const type = safeDiagnosticText(event && event.type, "unknown", 24);
+  const base = { at: now, type };
+  if (type === "probe") {
+    const extensionId = safeDiagnosticText(event.extensionId, "", 32).toLowerCase();
+    return {
+      ...base,
+      action: "blocked",
+      extensionId: CHROME_EXT_ID_RE.test(extensionId) ? extensionId : null,
+      extensionPath: safeDiagnosticText(event.extensionPath, "", 96),
+      pathKind: safeDiagnosticText(event.pathKind, "unknown", 32),
+      vector: safeDiagnosticText(event.vector, "unknown", 48),
+    };
+  }
+  if (type === "replay") {
+    return {
+      ...base,
+      action: "detected",
+      signal: safeDiagnosticText(event.signal, "unknown", 160),
+    };
+  }
+  if (type === "adaptive") {
+    return {
+      ...base,
+      action: "observed",
+      category: safeDiagnosticText(event.category, "unknown", 48),
+      endpoint: safeDiagnosticText(event.endpoint, "", 160),
+      reasons: Array.isArray(event.reasons)
+        ? event.reasons.map((reason) => safeDiagnosticText(reason, "unknown", 64)).slice(0, 12)
+        : [],
+      score: Math.max(0, Math.min(100, Math.round(event.score || 0))),
+      source: safeDiagnosticText(event.source, "unknown", 160),
+    };
+  }
+  return {
+    ...base,
+    action: safeDiagnosticText(event && event.action, "observed", 48),
+  };
+};
+
+const bumpDiagnosticTotal = (entry, type) => {
+  entry.totals ||= {};
+  entry.totals[type] = (entry.totals[type] || 0) + 1;
+};
+
+const recordDiagnosticEvents = async (origin, events) => {
+  if (!origin || !Array.isArray(events) || events.length === 0) return;
+  const { diagnostics_mode = false, diagnostic_log = {} } = await chrome.storage.local.get({
+    diagnostic_log: {},
+    diagnostics_mode: false,
+  });
+  if (!diagnostics_mode) return;
+
+  const now = Date.now();
+  const entry = diagnostic_log[origin] || { events: [], lastUpdated: 0, totals: {} };
+  entry.events ||= [];
+  entry.totals ||= {};
+  for (const rawEvent of events.slice(0, 80)) {
+    const event = normalizeDiagnosticEvent(rawEvent, now);
+    entry.events.push(event);
+    bumpDiagnosticTotal(entry, event.type);
+  }
+  if (entry.events.length > MAX_DIAGNOSTIC_EVENTS_PER_ORIGIN) {
+    entry.events = entry.events.slice(-MAX_DIAGNOSTIC_EVENTS_PER_ORIGIN);
+  }
+  entry.lastUpdated = now;
+  diagnostic_log[origin] = entry;
+  trimLogOrigins(diagnostic_log, MAX_DIAGNOSTIC_ORIGINS);
+  await chrome.storage.local.set({ diagnostic_log });
 };
 
 // ─── Persona generation ───────────────────────────────────────────────────
@@ -485,6 +565,9 @@ const handleProbeBlocked = (msg, sender) => {
       })
     );
   }
+  if (origin && Array.isArray(msg.diagnosticEvents) && msg.diagnosticEvents.length > 0) {
+    serialize(() => recordDiagnosticEvents(origin, msg.diagnosticEvents));
+  }
 };
 
 const handleReplayDetected = (msg, sender) => {
@@ -492,26 +575,46 @@ const handleReplayDetected = (msg, sender) => {
   const origin = rememberSenderOrigin(sender);
   const signal = typeof msg.signal === "string" ? msg.signal : "unknown";
   if (origin) serialize(() => recordReplayDetection(origin, signal));
+  if (origin) serialize(() => recordDiagnosticEvents(origin, [{ signal, type: "replay" }]));
 };
 
 const handleAdaptiveSignal = (msg, sender) => {
   if (!sender.tab) return;
   const origin = rememberSenderOrigin(sender);
   if (origin) serialize(() => recordAdaptiveSignal(origin, msg.signal));
+  if (origin && msg.signal && typeof msg.signal === "object") {
+    serialize(() =>
+      recordDiagnosticEvents(origin, [
+        {
+          ...normalizeAdaptiveSignal(msg.signal),
+          type: "adaptive",
+        },
+      ])
+    );
+  }
 };
+
+const storedEntryForOrigin = (origin, log) => (origin ? log[origin] : null);
+
+const loggedOriginsFor = (stored) =>
+  new Set([
+    ...Object.keys(stored.probe_log),
+    ...Object.keys(stored.replay_log),
+    ...Object.keys(stored.adaptive_log),
+    ...Object.keys(stored.diagnostic_log),
+  ]);
+
+const diagnosticEventCountFor = (entry) => (entry ? (entry.events || []).length : 0);
 
 const detailsResponseFor = async (tabId, stored) => {
   const state = perTabState.get(tabId);
   const origin = state ? state.origin : null;
-  const originProbeEntry = origin ? stored.probe_log[origin] : null;
-  const adaptiveEntry = origin ? stored.adaptive_log[origin] : null;
+  const originProbeEntry = storedEntryForOrigin(origin, stored.probe_log);
+  const adaptiveEntry = storedEntryForOrigin(origin, stored.adaptive_log);
+  const diagnosticEntry = storedEntryForOrigin(origin, stored.diagnostic_log);
   const selectedPersonaIds =
     originProbeEntry && stored.noise_enabled ? await personaFor(origin) : [];
-  const loggedOrigins = new Set([
-    ...Object.keys(stored.probe_log),
-    ...Object.keys(stored.replay_log),
-    ...Object.keys(stored.adaptive_log),
-  ]);
+  const loggedOrigins = loggedOriginsFor(stored);
   return {
     total: sumTabTotal(tabId),
     topIds: topIdsForTab(tabId, 5),
@@ -523,6 +626,9 @@ const detailsResponseFor = async (tabId, stored) => {
     adaptiveDetected: !!adaptiveEntry,
     adaptiveScore: adaptiveEntry ? adaptiveEntry.scoreMax || 0 : 0,
     adaptiveCategories: adaptiveEntry ? adaptiveEntry.categories || {} : {},
+    diagnosticEvents: diagnosticEventCountFor(diagnosticEntry),
+    diagnosticOrigins: Object.keys(stored.diagnostic_log).length,
+    diagnosticsMode: stored.diagnostics_mode,
     origin,
     drift: originProbeEntry ? playbookDriftForEntry(originProbeEntry) : null,
     noiseDiagnostics: originProbeEntry
@@ -538,6 +644,8 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
   (async () => {
     const stored = await chrome.storage.local.get({
       cumulative: 0,
+      diagnostic_log: {},
+      diagnostics_mode: false,
       fingerprint_mode: "off",
       noise_enabled: false,
       probe_log: {},
@@ -553,10 +661,12 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
 const handleGetPersona = (_msg, sender, sendResponse) => {
   (async () => {
     const {
+      diagnostics_mode = false,
       fingerprint_mode = "off",
       noise_enabled = false,
       replay_mode = "off",
     } = await chrome.storage.local.get({
+      diagnostics_mode: false,
       fingerprint_mode: "off",
       noise_enabled: false,
       replay_mode: "off",
@@ -567,6 +677,7 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
       fingerprintMode === "mask" ? await fingerprintPersonaFor(origin) : null;
     if (!noise_enabled || !origin) {
       sendResponse({
+        diagnosticsMode: diagnostics_mode,
         fingerprintMode,
         fingerprintPersona,
         ids: [],
@@ -578,6 +689,7 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
     }
     const ids = await personaFor(origin);
     sendResponse({
+      diagnosticsMode: diagnostics_mode,
       fingerprintMode,
       fingerprintPersona,
       ids,
@@ -635,23 +747,39 @@ const handleSetFingerprint = (msg, _sender, sendResponse) => {
   return true;
 };
 
+const handleSetDiagnostics = (msg, _sender, sendResponse) => {
+  (async () => {
+    const enabled = !!msg.enabled;
+    await chrome.storage.local.set({ diagnostics_mode: enabled });
+    await broadcastConfigUpdate();
+    sendResponse({ enabled, ok: true });
+  })();
+  return true;
+};
+
 const handleExportLog = (_msg, _sender, sendResponse) => {
   (async () => {
     const {
       probe_log = {},
       replay_log = {},
       adaptive_log = {},
+      diagnostic_log = {},
+      diagnostics_mode = false,
       cumulative = 0,
     } = await chrome.storage.local.get({
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
+      diagnostic_log: {},
+      diagnostics_mode: false,
       cumulative: 0,
     });
     sendResponse({
       schema: "static.probe-log.v1",
       exportedAt: new Date().toISOString(),
       cumulative,
+      diagnostics: diagnostic_log,
+      diagnosticsMode: diagnostics_mode,
       origins: probe_log,
       replayDetections: replay_log,
       adaptiveSignals: adaptive_log,
@@ -668,6 +796,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
         "probe_log",
         "replay_log",
         "adaptive_log",
+        "diagnostic_log",
         "cumulative",
         "user_secret",
       ])
@@ -687,6 +816,7 @@ const messageHandlers = {
   static_get_persona: handleGetPersona,
   static_probe_blocked: handleProbeBlocked,
   static_replay_detected: handleReplayDetected,
+  static_set_diagnostics: handleSetDiagnostics,
   static_set_fingerprint: handleSetFingerprint,
   static_set_noise: handleSetNoise,
   static_set_replay: handleSetReplay,

@@ -358,6 +358,26 @@ const renderNoiseSection = (resp) => {
   }
 };
 
+const renderDiagnosticsSection = (resp) => {
+  const toggle = document.getElementById("diagnostics-toggle");
+  toggle.checked = !!(resp && resp.diagnosticsMode);
+
+  toggle.addEventListener("change", async () => {
+    const desired = toggle.checked;
+    try {
+      const saved = await chrome.runtime.sendMessage({
+        enabled: desired,
+        type: "static_set_diagnostics",
+      });
+      setChecked(toggle, !!(saved && saved.enabled));
+      await pushConfigUpdateToActiveTab();
+    } catch (e) {
+      console.error("[Static] diagnostics toggle failed", e);
+      setChecked(toggle, !desired);
+    }
+  });
+};
+
 const renderReplaySection = (resp) => {
   const select = document.getElementById("replay-mode");
   const detected = document.getElementById("replay-detected");
@@ -570,6 +590,7 @@ const renderRulesets = (enabledArr, counts) => {
 
   renderDetails(details);
   renderNoiseSection(details);
+  renderDiagnosticsSection(details);
   renderFingerprintSection(details);
   renderReplaySection(details);
   renderRulesets(enabledArr, counts);
