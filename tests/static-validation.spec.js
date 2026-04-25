@@ -497,6 +497,8 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
     "||auryc.com^",
     "||heap-api.com^",
     "||heapanalytics.com^",
+    "||hotjar.com^",
+    "||hotjar.io^",
     "||i.posthog.com^",
     "||api.openreplay.com^",
     "||static.openreplay.com^",
