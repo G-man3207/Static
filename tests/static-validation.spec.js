@@ -441,6 +441,7 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
   ).toBe(true);
 
   for (const filter of [
+    "||api.fpjs.io^",
     "||api.fpjs.pro^",
     "||datadome.co^",
     "||fpcdn.io^",
