@@ -1146,6 +1146,79 @@ test("Adaptive observe-only logging records environment snapshot telemetry with 
     });
 });
 
+test("Adaptive observe-only logging records WebSocket network corroboration", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  const surface = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 8;
+    canvas.height = 8;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#123456";
+    ctx.fillRect(0, 0, 8, 8);
+    canvas.toDataURL();
+    void navigator.hardwareConcurrency;
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode("persistent-transport"));
+
+    const endpoint = `${location.origin.replace(
+      /^http/,
+      "ws"
+    )}/socket/user-1234567890abcdef1234567890abcdef`;
+    try {
+      const socket = new WebSocket(endpoint);
+      socket.addEventListener("error", () => {});
+      setTimeout(() => socket.close(), 0);
+    } catch {}
+
+    return {
+      constants: [WebSocket.CONNECTING, WebSocket.OPEN, WebSocket.CLOSING, WebSocket.CLOSED],
+      name: WebSocket.name,
+      toString: Function.prototype.toString.call(WebSocket),
+    };
+  });
+  expect(surface).toEqual({
+    constants: [0, 1, 2, 3],
+    name: "WebSocket",
+    toString: "function WebSocket() { [native code] }",
+  });
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get("adaptive_log").then(({ adaptive_log }) => {
+            const entry = adaptive_log && adaptive_log[origin];
+            return entry
+              ? {
+                  categories: entry.categories,
+                  endpoints: entry.endpoints,
+                  reasons: entry.reasons,
+                  scoreMax: entry.scoreMax,
+                }
+              : null;
+          }),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      categories: { "anti-bot": 1 },
+      endpoints: expect.objectContaining({
+        [`${server.origin.replace(/^http/, "ws")}/socket/:token`]: 1,
+      }),
+      reasons: expect.objectContaining({
+        "WebSocket:0": 1,
+        canvas: expect.any(Number),
+        crypto: expect.any(Number),
+        navigator: expect.any(Number),
+        network: expect.any(Number),
+      }),
+      scoreMax: expect.any(Number),
+    });
+});
+
 test("Adaptive observe-only logging ignores ordinary environment reads with network only", async ({
   extension,
   server,

@@ -5,7 +5,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||fullstory.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -14,7 +22,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||fs.net^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -23,7 +39,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||logrocket.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -32,7 +56,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||logrocket.io^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -41,7 +73,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||lr-in.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -50,7 +90,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||lr-ingest.io^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -59,7 +107,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||lr-in-prod.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -68,7 +124,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||lr-ingest.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -77,7 +141,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||ingest-lr.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -86,7 +158,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||lr-intake.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -95,7 +175,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||intake-lr.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -104,7 +192,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||logr-ingest.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -113,7 +209,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||lrkt-in.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -122,7 +226,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||lgrckt-in.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -131,7 +243,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||logr-in.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -140,7 +260,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||mouseflow.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -149,7 +277,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||contentsquare.net^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -158,7 +294,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||contentsquare.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -167,7 +311,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||smartlook.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -176,7 +328,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||smartlook.cloud^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -185,7 +345,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||quantummetric.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -194,7 +362,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||clarity.ms^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -203,7 +379,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||c.bing.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -212,7 +396,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||heap.io^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -221,7 +413,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||heapanalytics.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -230,7 +430,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||heap-api.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -239,7 +447,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||auryc.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -248,7 +464,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||i.posthog.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -257,7 +481,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||luckyorange.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -266,7 +498,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||inspectlet.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -275,7 +515,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||pendo.io^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -284,7 +532,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||browsee.io^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {

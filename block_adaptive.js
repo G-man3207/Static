@@ -1377,6 +1377,8 @@
     });
     patchXhrNetwork();
     patchBeaconNetwork();
+    patchNetworkConstructor("WebSocket", webSocketEndpointFor);
+    patchNetworkConstructor("WebTransport");
   };
 
   const patchXhrNetwork = () => {
@@ -1416,6 +1418,45 @@
         value: stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
       });
     } catch {}
+  };
+
+  const webSocketEndpointFor = (input) => {
+    const candidate = firstStringEntry(input);
+    if (!candidate) return "";
+    try {
+      const parsed = new URL(candidate, location.href);
+      if (parsed.protocol === "http:") parsed.protocol = "ws:";
+      if (parsed.protocol === "https:") parsed.protocol = "wss:";
+      return parsed.href;
+    } catch {
+      return candidate;
+    }
+  };
+
+  const copyConstructorStatics = (wrapped, original) => {
+    for (const key of Object.getOwnPropertyNames(original)) {
+      if (key === "length" || key === "name" || key === "prototype") continue;
+      try {
+        Object.defineProperty(wrapped, key, Object.getOwnPropertyDescriptor(original, key));
+      } catch {}
+    }
+  };
+
+  const patchNetworkConstructor = (name, urlFor = firstStringEntry) => {
+    const OrigCtor = window[name];
+    if (typeof OrigCtor !== "function") return;
+    const WrappedCtor = function (...args) {
+      if (!new.target) return OrigCtor.apply(this, args);
+      recordAdaptiveNetwork(name, urlFor(args[0]), null);
+      return Reflect.construct(OrigCtor, args, new.target);
+    };
+    WrappedCtor.prototype = OrigCtor.prototype;
+    copyConstructorStatics(WrappedCtor, OrigCtor);
+    alignPrototypeConstructor(WrappedCtor, OrigCtor);
+    window[name] = stealth(WrappedCtor, name, {
+      length: OrigCtor.length,
+      source: nativeSourceFor(OrigCtor, name),
+    });
   };
 
   const patchInputHooks = () => {

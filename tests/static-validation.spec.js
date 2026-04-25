@@ -502,6 +502,25 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
   }
 });
 
+test("vendor DNR connection rules include persistent transport resource types", () => {
+  for (const filePath of [
+    "rules/captcha_vendors.json",
+    "rules/datadog_rum.json",
+    "rules/fingerprint_vendors.json",
+    "rules/linkedin.json",
+    "rules/session_replay.json",
+  ]) {
+    for (const rule of readJson(filePath)) {
+      const resourceTypes = rule.condition && rule.condition.resourceTypes;
+      if (!Array.isArray(resourceTypes)) continue;
+      if (!resourceTypes.includes("xmlhttprequest") && !resourceTypes.includes("ping")) continue;
+      expect(resourceTypes, `${filePath}: rule ${rule.id}`).toEqual(
+        expect.arrayContaining(["websocket", "webtransport"])
+      );
+    }
+  }
+});
+
 test("LinkedIn DNR rules avoid blocking app allowlist profiles", () => {
   const linkedinRules = readJson("rules/linkedin.json");
   const serializedRules = JSON.stringify(linkedinRules);

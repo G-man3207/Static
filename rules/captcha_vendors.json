@@ -5,7 +5,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||arkoselabs.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -14,7 +22,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||funcaptcha.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -23,7 +39,16 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||captcha-delivery.com^",
-      "resourceTypes": ["sub_frame", "xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "sub_frame",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -32,7 +57,16 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||challenges.cloudflare.com^",
-      "resourceTypes": ["sub_frame", "xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "sub_frame",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   }
 ]
