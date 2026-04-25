@@ -10,8 +10,10 @@ Static rules block known endpoints before they run. Adaptive blocking is the sec
 rotation and self-hosted collectors: observe behavior, classify locally, and eventually block only
 when confidence is high enough.
 
-The current implementation is Stage 1 only: observe-only adaptive logging. It records compact local
-signals and never creates dynamic DNR rules.
+The current adaptive implementation is Stage 1 only: observe-only adaptive logging. It records
+compact local signals and never creates dynamic DNR rules. Separate opt-in Device signal poisoning
+can weaken many high-entropy Signal guide surfaces by returning stable per-site decoys instead of
+blocking the reads.
 
 ## Threat Model
 
@@ -97,6 +99,10 @@ Stage 1: Observe-only adaptive log.
 - Do not block.
 - Do not add dynamic or session DNR rules.
 - Do not include adaptive data in anonymized research exports.
+- High-entropy browser surfaces that overlap the Signal guide, such as navigator, screen, timezone,
+  WebGL, canvas, offline audio, storage, battery, and network hints, may be weakened only by the
+  user-controlled Device signal poisoning mode. Crypto and generic network calls remain observe-only
+  because altering them would break application behavior or create a stronger detection signal.
 
 Stage 2: UI calibration.
 

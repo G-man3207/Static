@@ -754,26 +754,26 @@
         <div class="fingerprint-row">
           <div class="col">
             <div class="ttl" id="fingerprint-title">
-              <span id="fingerprint-title-text">Device masking</span>
+              <span id="fingerprint-title-text">Device signal poisoning</span>
               <button
                 class="help-tip"
                 id="fingerprint-help"
                 type="button"
-                data-tip="Returns a stable per-site device profile for high-entropy browser surfaces such as OS, CPU/RAM buckets, screen, timezone, WebGL, canvas readback, storage, battery, and network hints."
-                aria-label="Device masking details"
+                data-tip="Returns stable per-site decoys for high-entropy Signal guide surfaces such as OS, CPU/RAM buckets, language, screen, timezone, WebGL, canvas, audio, storage, battery, and network hints."
+                aria-label="Device signal poisoning details"
                 aria-describedby="fingerprint-help-text"
               >
                 ?
               </button>
               <span class="sr-only" id="fingerprint-help-text"
-                >Returns a stable per-site device profile for high-entropy browser surfaces such as
-                OS, CPU/RAM buckets, screen, timezone, WebGL, canvas readback, storage, battery, and
-                network hints.</span
+                >Returns stable per-site decoys for high-entropy Signal guide surfaces such as OS,
+                CPU/RAM buckets, language, screen, timezone, WebGL, canvas, audio, storage, battery,
+                and network hints.</span
               >
             </div>
             <div class="desc" id="fingerprint-desc">
-              Hide your real OS and machine profile behind a plausible per-site persona. Stable for
-              each origin, different across origins.
+              Weaken fingerprint reads with a plausible per-site persona instead of blocking them.
+              Stable for each origin, different across origins.
             </div>
           </div>
           <select
@@ -783,7 +783,7 @@
             aria-describedby="fingerprint-desc"
           >
             <option value="off">Off</option>
-            <option value="mask">Mask</option>
+            <option value="mask">Poison</option>
           </select>
         </div>
         <div class="replay-row">

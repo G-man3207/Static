@@ -10,7 +10,7 @@
 //      from a per-user secret so different users claim different sets).
 //   5. Record local session-replay detector sightings for Replay poisoning.
 //   6. Record observe-only adaptive behavior signals for local calibration.
-//   7. Generate stable per-origin device personas for opt-in fingerprint masking.
+//   7. Generate stable per-origin device personas for opt-in signal poisoning.
 //   8. Answer popup queries (`static_get_details`, `static_export_log`,
 //      `static_set_noise`, `static_set_replay`, `static_set_fingerprint`,
 //      `static_set_diagnostics`) and bridge queries (`static_get_persona`).
@@ -480,6 +480,18 @@ const FINGERPRINT_TIMEZONES = [
   "Europe/Berlin",
 ];
 
+const FINGERPRINT_LANGUAGES_BY_TIMEZONE = {
+  "America/Chicago": [["en-US", "en"]],
+  "America/Denver": [["en-US", "en"]],
+  "America/Los_Angeles": [["en-US", "en"]],
+  "America/New_York": [["en-US", "en"]],
+  "Europe/Berlin": [
+    ["de-DE", "de", "en-US", "en"],
+    ["en-US", "en"],
+  ],
+  "Europe/London": [["en-GB", "en"]],
+};
+
 const FINGERPRINT_CONNECTIONS = [
   { downlink: 5, effectiveType: "4g", rtt: 75, saveData: false, type: "wifi" },
   { downlink: 10, effectiveType: "4g", rtt: 50, saveData: false, type: "wifi" },
@@ -505,16 +517,21 @@ const fingerprintPersonaFor = async (origin) => {
   const profile = pick(FINGERPRINT_PROFILES, rng);
   const hardwareConcurrency = pick([4, 8, 8, 12, 16], rng);
   const deviceMemory = hardwareConcurrency >= 12 ? pick([8, 16], rng) : pick([4, 8], rng);
+  const timeZone = pick(FINGERPRINT_TIMEZONES, rng);
   return {
     ...profile,
+    audioSeed: Math.floor(rng() * 0xffffffff),
     canvasSeed: Math.floor(rng() * 0xffffffff),
     connection: pick(FINGERPRINT_CONNECTIONS, rng),
     deviceMemory,
     hardwareConcurrency,
+    languages: pick(FINGERPRINT_LANGUAGES_BY_TIMEZONE[timeZone] || [["en-US", "en"]], rng),
     maxTouchPoints: 0,
+    pdfViewerEnabled: true,
     screen: screenPersonaFor(rng),
     storageQuota: pick([64, 128, 256], rng) * 1024 * 1024 * 1024,
-    timeZone: pick(FINGERPRINT_TIMEZONES, rng),
+    timeZone,
+    vendor: "Google Inc.",
   };
 };
 
@@ -765,6 +782,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       adaptive_log = {},
       diagnostic_log = {},
       diagnostics_mode = false,
+      fingerprint_mode = "off",
       cumulative = 0,
     } = await chrome.storage.local.get({
       probe_log: {},
@@ -772,6 +790,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       adaptive_log: {},
       diagnostic_log: {},
       diagnostics_mode: false,
+      fingerprint_mode: "off",
       cumulative: 0,
     });
     sendResponse({
@@ -780,6 +799,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       cumulative,
       diagnostics: diagnostic_log,
       diagnosticsMode: diagnostics_mode,
+      fingerprintMode: fingerprint_mode,
       origins: probe_log,
       replayDetections: replay_log,
       adaptiveSignals: adaptive_log,
