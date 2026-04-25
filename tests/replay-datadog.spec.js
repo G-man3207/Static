@@ -60,3 +60,34 @@ test("Replay poisoning detects Datadog Session Replay manual start", async ({
   }, server.origin);
   expect(Object.keys(replayLog.signals)).toContain("global:DD_RUM.startSessionReplayRecording");
 });
+
+test("Replay poisoning leaves Datadog RUM listeners real before manual replay start", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
+
+  await page.goto(server.url("/datadog-replay-manual.html"));
+  await expect
+    .poll(() => page.evaluate(() => Array.isArray(window.__datadogRumRecords)))
+    .toBe(true);
+  await page.locator("#secret").fill("dd-rum-only@example.com");
+
+  const observed = await page.evaluate(() => ({
+    appValue: window.__ddAppValues.at(-1),
+    replayCount: window.__datadogReplayRecords.length,
+    rumValue: window.__datadogRumRecords.at(-1).value,
+  }));
+
+  expect(observed).toEqual({
+    appValue: "dd-rum-only@example.com",
+    replayCount: 0,
+    rumValue: "dd-rum-only@example.com",
+  });
+
+  const replayLog = await extension.serviceWorker.evaluate((origin) => {
+    return chrome.storage.local.get("replay_log").then(({ replay_log }) => replay_log?.[origin]);
+  }, server.origin);
+  expect(replayLog).toBeUndefined();
+});

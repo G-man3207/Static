@@ -1,6 +1,8 @@
 const { expect, test: base } = require("@playwright/test");
+const { datadogFixtureFiles } = require("./datadog-fixtures");
 const { launchExtension } = require("./extension");
 const { hotjarFixtureFiles } = require("./hotjar-fixtures");
+const { posthogFixtureFiles } = require("./posthog-fixtures");
 const { startFixtureServer } = require("./server");
 const { sentryFixtureFiles } = require("./sentry-fixtures");
 
@@ -116,107 +118,7 @@ const fixtureFiles = {
     document.addEventListener("input", sentryReplayIntegrationRecorder, true);
   `,
   ...sentryFixtureFiles,
-  "/posthog-replay.html": `
-    <!doctype html>
-    <meta charset="utf-8">
-    <input id="secret" type="email" />
-    <script src="/assets/posthog/static/lazy-recorder.js"></script>
-    <script>
-      window.__posthogAppValues = [];
-      document.addEventListener("input", (event) => {
-        window.__posthogAppValues.push(event.target.value);
-      });
-    </script>
-  `,
-  "/assets/posthog/static/lazy-recorder.js": `
-    window.__posthogReplayRecords = [];
-    window.__PosthogExtensions__ = {
-      initSessionRecording() {},
-      rrweb: { record() {} },
-    };
-    window.posthog = {
-      sessionRecordingStarted() {
-        return true;
-      },
-    };
-    function posthogLazyRecorder(event) {
-      window.__posthogReplayRecords.push({
-        type: event.type,
-        value: event.target && event.target.value,
-      });
-    }
-    document.addEventListener("input", posthogLazyRecorder, true);
-  `,
-  "/posthog-global-replay.html": `
-    <!doctype html>
-    <meta charset="utf-8">
-    <input id="secret" type="email" />
-    <script src="/assets/app/posthog-bundled.js"></script>
-    <script>
-      window.__posthogAppValues = [];
-      document.addEventListener("input", (event) => {
-        window.__posthogAppValues.push(event.target.value);
-      });
-      posthog.startSessionRecording();
-    </script>
-  `,
-  "/posthog-global-auto.html": `
-    <!doctype html>
-    <meta charset="utf-8">
-    <input id="secret" type="email" />
-    <script src="/assets/app/posthog-bundled.js"></script>
-    <script>
-      window.__posthogAppValues = [];
-      document.addEventListener("input", (event) => {
-        window.__posthogAppValues.push(event.target.value);
-      });
-      posthog.init("project-token", {
-        api_host: "https://us.i.posthog.com",
-      });
-    </script>
-  `,
-  "/posthog-global-disabled.html": `
-    <!doctype html>
-    <meta charset="utf-8">
-    <input id="secret" type="email" />
-    <script src="/assets/app/posthog-bundled.js"></script>
-    <script>
-      window.__posthogAppValues = [];
-      document.addEventListener("input", (event) => {
-        window.__posthogAppValues.push(event.target.value);
-      });
-      posthog.init("project-token", {
-        api_host: "https://us.i.posthog.com",
-        disable_session_recording: true,
-      });
-    </script>
-  `,
-  "/assets/app/posthog-bundled.js": `
-    window.__posthogReplayRecords = [];
-    window.posthog = [];
-    function startRecorder(context) {
-      if (context.__recording) return;
-      context.__recording = true;
-      function recordInput(event) {
-        window.__posthogReplayRecords.push({
-          type: event.type,
-          value: event.target && event.target.value,
-        });
-      }
-      document.addEventListener("input", recordInput, true);
-    }
-    posthog.init = function init(_token, config) {
-      this.config = config || {};
-      if (this.config.disable_session_recording === true) return;
-      startRecorder(this);
-    };
-    posthog.startSessionRecording = function startSessionRecording() {
-      startRecorder(this);
-    };
-    posthog.sessionRecordingStarted = function sessionRecordingStarted() {
-      return !!this.__recording;
-    };
-  `,
+  ...posthogFixtureFiles,
   "/openreplay-global-replay.html": `<!doctype html><meta charset="utf-8">
     <input id="secret" type="email" /><script src="/assets/app/openreplay-bundled.js"></script>
     <script>window.__orAppValues=[];document.addEventListener("input",(event)=>window.__orAppValues.push(event.target.value));OpenReplay.start();</script>`,
@@ -229,74 +131,7 @@ const fixtureFiles = {
       return Promise.resolve({ sessionID: "openreplay-session" });
     }, isActive() { return this.__recording; } };
   `,
-  "/datadog-replay-auto.html": `
-    <!doctype html>
-    <meta charset="utf-8">
-    <input id="secret" type="email" />
-    <script src="/assets/replay/datadog-rum.js"></script>
-    <script>
-      window.__ddAppValues = [];
-      document.addEventListener("input", (event) => {
-        window.__ddAppValues.push(event.target.value);
-      });
-      window.DD_RUM.init({
-        sessionSampleRate: 100,
-        sessionReplaySampleRate: 100,
-      });
-    </script>
-  `,
-  "/datadog-replay-manual.html": `
-    <!doctype html>
-    <meta charset="utf-8">
-    <input id="secret" type="email" />
-    <script src="/assets/replay/datadog-rum.js"></script>
-    <script>
-      window.__ddAppValues = [];
-      document.addEventListener("input", (event) => {
-        window.__ddAppValues.push(event.target.value);
-      });
-      window.DD_RUM.init({
-        sessionSampleRate: 100,
-        sessionReplaySampleRate: 100,
-        startSessionReplayRecordingManually: true,
-      });
-    </script>
-  `,
-  "/assets/replay/datadog-rum.js": `
-    window.__datadogReplayRecords = [];
-    function registerDatadogReplayListener(context) {
-      if (context.__replayStarted) return;
-      context.__replayStarted = true;
-      function datadogReplayRecorder(event) {
-        window.__datadogReplayRecords.push({
-          type: event.type,
-          value: event.target && event.target.value,
-        });
-      }
-      document.addEventListener("input", datadogReplayRecorder, true);
-    }
-    window.DD_RUM = {
-      __config: null,
-      init(config) {
-        this.__config = config || {};
-        if (
-          this.__config.sessionReplaySampleRate > 0 &&
-          !this.__config.startSessionReplayRecordingManually
-        ) {
-          registerDatadogReplayListener(this);
-        }
-      },
-      startSessionReplayRecording() {
-        registerDatadogReplayListener(this);
-      },
-      stopSessionReplayRecording() {
-        this.__replayStarted = false;
-      },
-      onReady(callback) {
-        callback();
-      },
-    };
-  `,
+  ...datadogFixtureFiles,
   "/adaptive-positive.html": `
     <!doctype html>
     <meta charset="utf-8">

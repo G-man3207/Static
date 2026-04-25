@@ -103,8 +103,13 @@
     return Number.isFinite(num) && num > 0;
   };
 
+  const configTrue = (value) => value === true || value === "true";
+
+  const configFalse = (value) => value === false || value === "false";
+
   const datadogReplaySignalForConfig = (config) => {
     if (!isObjectLike(config)) return null;
+    if (configTrue(config.startSessionReplayRecordingManually)) return null;
     if (positiveNumber(config.sessionReplaySampleRate)) {
       return "global:DD_RUM.sessionReplaySampleRate";
     }
@@ -119,9 +124,11 @@
 
   const posthogReplayDisabledByConfig = (config) =>
     isObjectLike(config) &&
-    (config.disable_session_recording === true ||
-      config.sessionReplay === false ||
-      config.session_recording === false);
+    (configTrue(config.disable_session_recording) ||
+      configTrue(config.advanced_disable_flags) ||
+      configTrue(config.advanced_disable_decide) ||
+      configFalse(config.sessionReplay) ||
+      configFalse(config.session_recording));
 
   const posthogReplaySignalForInit = (config) =>
     posthogReplayDisabledByConfig(config) ? null : "global:posthog.init.sessionReplay";
