@@ -21,6 +21,8 @@
   const activeReplayListeners = [];
   const replayRegistrationStack = [];
   const datadogGlobals = new WeakSet();
+  const sentryGlobals = new WeakSet();
+  const sentryReplayIntegrations = new WeakSet();
   const replayMethodSetters = new WeakSet();
   const replayWrappedMethods = new WeakSet();
   const MAX_QUEUED_SIGNALS = 50;
@@ -119,6 +121,43 @@
 
   const posthogReplaySignalForInit = (config) =>
     posthogReplayDisabledByConfig(config) ? null : "global:posthog.init.sessionReplay";
+
+  const sentryReplayIntegrationNameFor = (integration) => {
+    if (!isObjectLike(integration)) return "";
+    try {
+      return String(integration.name || integration.id || integration._name || "").trim();
+    } catch {
+      return "";
+    }
+  };
+
+  const sentryReplaySignalForIntegration = (integration) => {
+    if (!isObjectLike(integration)) return null;
+    if (sentryReplayIntegrations.has(integration)) return "global:Sentry.replayIntegration";
+    const normalizedName = sentryReplayIntegrationNameFor(integration)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+    if (normalizedName === "replay") return "global:Sentry.integration.Replay";
+    if (normalizedName === "replaycanvas") return "global:Sentry.integration.ReplayCanvas";
+    return null;
+  };
+
+  const sentryReplaySignalForConfig = (config) => {
+    if (!isObjectLike(config)) return null;
+    const integrations = Array.isArray(config.integrations) ? config.integrations : [];
+    const integrationSignal = integrations.map(sentryReplaySignalForIntegration).find(Boolean);
+    if (positiveNumber(config.replaysSessionSampleRate)) {
+      if (integrationSignal || !Array.isArray(config.integrations)) {
+        return "global:Sentry.replaysSessionSampleRate";
+      }
+    }
+    if (positiveNumber(config.replaysOnErrorSampleRate)) {
+      if (integrationSignal || !Array.isArray(config.integrations)) {
+        return "global:Sentry.replaysOnErrorSampleRate";
+      }
+    }
+    return integrationSignal;
+  };
 
   const wrapReplayMethod = (orig, key, wrap) => {
     if (replayWrappedMethods.has(orig)) return orig;
@@ -257,6 +296,51 @@
     return value;
   };
 
+  const instrumentSentryReplayFactory = (value, key) => {
+    patchReplayMethod(
+      value,
+      key,
+      (origFactory) =>
+        function replayFactory() {
+          const integration = origFactory.apply(this, arguments);
+          if (isObjectLike(integration)) sentryReplayIntegrations.add(integration);
+          return integration;
+        }
+    );
+  };
+
+  const instrumentSentryGlobal = (value) => {
+    if (!isObjectLike(value) || sentryGlobals.has(value)) return value;
+    sentryGlobals.add(value);
+    instrumentSentryReplayFactory(value, "replayIntegration");
+    instrumentSentryReplayFactory(value, "replayCanvasIntegration");
+    patchReplayMethod(
+      value,
+      "init",
+      (origInit) =>
+        function init(config) {
+          const signal = sentryReplaySignalForConfig(config);
+          if (!signal) return origInit.apply(this, arguments);
+          return runReplayRegistration(signal, origInit, { args: arguments, thisArg: this });
+        }
+    );
+    patchReplayMethod(
+      value,
+      "addIntegration",
+      (origAddIntegration) =>
+        function addIntegration(integration) {
+          const signal = sentryReplaySignalForIntegration(integration);
+          if (!signal) return origAddIntegration.apply(this, arguments);
+          return runReplayRegistration(
+            "global:Sentry.addIntegration.replayIntegration",
+            origAddIntegration,
+            { args: arguments, thisArg: this }
+          );
+        }
+    );
+    return value;
+  };
+
   const patchDatadogGlobal = () => {
     try {
       const desc = Object.getOwnPropertyDescriptor(window, "DD_RUM");
@@ -309,6 +393,35 @@
             currentValue = instrumentPostHogGlobal(value);
           },
           "set posthog",
+          { length: 1 }
+        ),
+      });
+    } catch {}
+  };
+
+  const patchSentryGlobal = () => {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(window, "Sentry");
+      if (desc) {
+        if ("value" in desc) instrumentSentryGlobal(desc.value);
+        return;
+      }
+      let currentValue = undefined;
+      Object.defineProperty(window, "Sentry", {
+        configurable: true,
+        enumerable: true,
+        get: stealth(
+          function get() {
+            return currentValue;
+          },
+          "get Sentry",
+          { length: 0 }
+        ),
+        set: stealth(
+          function set(value) {
+            currentValue = instrumentSentryGlobal(value);
+          },
+          "set Sentry",
           { length: 1 }
         ),
       });
@@ -743,6 +856,9 @@
     try {
       instrumentPostHogGlobal(window.posthog);
     } catch {}
+    try {
+      instrumentSentryGlobal(window.Sentry);
+    } catch {}
     for (const key of REPLAY_GLOBALS) {
       try {
         if (window[key] != null) markReplayDetected(`global:${key}`);
@@ -800,6 +916,7 @@
 
   patchDatadogGlobal();
   patchPostHogGlobal();
+  patchSentryGlobal();
   patchReplayScriptProperties();
   patchReplayListeners();
   setTimeout(scanReplaySignals, 0);

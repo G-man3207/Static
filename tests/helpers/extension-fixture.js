@@ -1,6 +1,7 @@
 const { expect, test: base } = require("@playwright/test");
 const { launchExtension } = require("./extension");
 const { startFixtureServer } = require("./server");
+const { sentryFixtureFiles } = require("./sentry-fixtures");
 
 const fixtureFiles = {
   "/blank.html": '<!doctype html><meta charset="utf-8"><body>blank</body>',
@@ -112,6 +113,7 @@ const fixtureFiles = {
     }
     document.addEventListener("input", sentryReplayIntegrationRecorder, true);
   `,
+  ...sentryFixtureFiles,
   "/posthog-replay.html": `
     <!doctype html>
     <meta charset="utf-8">
