@@ -811,11 +811,38 @@ test("Replay poisoning detects Sentry Replay bundle signatures", async ({ extens
   );
 });
 
+const openPopupAdvancedControls = async (popupPage) => {
+  await popupPage.locator("#advanced-controls > summary").click();
+  await expect(popupPage.locator("#advanced-controls")).toHaveAttribute("open", "");
+};
+
+test("popup keeps detailed controls folded by default", async ({ extension }) => {
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+  await expect(popupPage.locator("#count")).toBeVisible();
+  await expect(popupPage.getByText("probes blocked on this tab")).toBeVisible();
+  await expect(popupPage.locator("#advanced-controls")).not.toHaveAttribute("open", /.*/);
+  await expect(popupPage.locator("#advanced-controls > summary")).toContainText("More");
+  await expect(popupPage.getByRole("heading", { name: "Always on" })).toBeHidden();
+  await expect(popupPage.locator("#noise-title-text")).toBeHidden();
+  await expect(popupPage.locator("#rulesets")).toBeHidden();
+  await expect(popupPage.getByText("Power diagnostics")).toBeHidden();
+
+  await openPopupAdvancedControls(popupPage);
+
+  await expect(popupPage.getByRole("heading", { name: "Always on" })).toBeVisible();
+  await expect(popupPage.locator("#noise-title-text")).toBeVisible();
+  await expect(popupPage.locator("#rulesets")).toBeVisible();
+  await expect(popupPage.getByText("Power diagnostics")).toBeVisible();
+});
+
 test("popup shows replay blocking and poisoning indicators", async ({ extension }) => {
   await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
 
   const popupPage = await extension.context.newPage();
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  await openPopupAdvancedControls(popupPage);
 
   await expect(popupPage.getByText("Replay vendor blocking on")).toBeVisible();
   await expect(popupPage.getByText("Mask poisoning armed")).toBeVisible();
@@ -830,6 +857,7 @@ test("popup shows replay blocking and poisoning indicators", async ({ extension 
 test("popup frames core defenses and groups network protections", async ({ extension }) => {
   const popupPage = await extension.context.newPage();
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  await openPopupAdvancedControls(popupPage);
 
   await expect(popupPage.getByRole("heading", { name: "Always on" })).toBeVisible();
   await expect(popupPage.getByText("Extension probes")).toBeVisible();
@@ -860,6 +888,7 @@ test("popup frames core defenses and groups network protections", async ({ exten
 test("popup exposes local help text for privacy controls", async ({ extension }) => {
   const popupPage = await extension.context.newPage();
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  await openPopupAdvancedControls(popupPage);
 
   await expect(popupPage.locator("#noise-toggle")).toHaveAttribute(
     "aria-labelledby",
@@ -924,6 +953,7 @@ test("popup help tooltips stay inside the visible popup bounds", async ({ extens
   const popupPage = await extension.context.newPage();
   await popupPage.setViewportSize({ width: 320, height: 460 });
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  await openPopupAdvancedControls(popupPage);
   await expect(popupPage.locator("#rs_datadog_rum_help")).toBeVisible();
 
   const helpTips = popupPage.locator(".help-tip");
