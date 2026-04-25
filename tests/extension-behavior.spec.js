@@ -2238,6 +2238,19 @@ test("Clear log removes probe state and Noise identity while preserving preferen
             lastUpdated: Date.now(),
           },
         },
+        ad_log: {
+          "https://example.test": {
+            confidence: "high",
+            endpoints: { "same-origin:/ads/:token": 1 },
+            firstSeen: Date.now(),
+            lastUpdated: Date.now(),
+            reasons: { "gpt.slot": 1, "ad_iframe.size": 1, impression_beacon: 1 },
+            score: 11,
+            sources: { "inline-or-runtime": 1 },
+            total: 3,
+            version: 1,
+          },
+        },
         diagnostic_log: {
           "https://example.test": {
             events: [
@@ -2284,6 +2297,7 @@ test("Clear log removes probe state and Noise identity while preserving preferen
           "probe_log",
           "replay_log",
           "adaptive_log",
+          "ad_log",
           "user_secret",
         ])
       )

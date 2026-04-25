@@ -235,12 +235,30 @@
     } catch {}
   };
 
+  const sendAdSignal = (signal = {}) => {
+    try {
+      chrome.runtime.sendMessage({
+        type: "static_ad_signal",
+        signal: {
+          confidence: String(signal.confidence || "learning").slice(0, 16),
+          endpoint: String(signal.endpoint || "").slice(0, 160),
+          reasons: Array.isArray(signal.reasons)
+            ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
+            : [],
+          score: Math.max(0, Math.min(100, Math.round(signal.score || 0))),
+          source: String(signal.source || "unknown").slice(0, 160),
+        },
+      });
+    } catch {}
+  };
+
   const handlePortMessage = (event) => {
     const data = event.data;
     if (!data || typeof data !== "object") return;
     if (data.type === "probe_blocked") handleProbeBlocked(data);
     if (data.type === "replay_detected") sendReplaySignal(data.signal);
     if (data.type === "adaptive_signal") sendAdaptiveSignal(data.signal);
+    if (data.type === "ad_signal") sendAdSignal(data.signal);
   };
 
   const createPort = (eventName) => {
@@ -290,6 +308,7 @@
     ...PROBE_EVENTS,
     ...CONFIG_EVENTS,
     "__static_adaptive_bridge_init__",
+    "__static_ad_bridge_init__",
   ])) {
     createPort(eventName);
   }

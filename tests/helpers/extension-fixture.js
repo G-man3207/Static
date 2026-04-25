@@ -57,6 +57,68 @@ const fixtureFiles = {
       </script>
     </body>
   `,
+  "/ad-observe-positive.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div id="ad-slot" class="ad-slot"></div>
+      <script src="/assets/ad/loader-1234567890abcdef1234567890abcdef.js?token=secret-token"></script>
+    </body>
+  `,
+  "/assets/ad/loader-1234567890abcdef1234567890abcdef.js": `
+    window.googletag = {
+      defineSlot() {
+        return {
+          addService() {
+            return this;
+          },
+        };
+      },
+      pubads() {
+        return {};
+      },
+    };
+    window.googletag.defineSlot("/1234/home", [300, 250], "ad-slot").addService(
+      window.googletag.pubads()
+    );
+    const iframe = document.createElement("iframe");
+    iframe.width = "300";
+    iframe.height = "250";
+    iframe.src = "/creative/widget.html?creative=private-token";
+    document.getElementById("ad-slot").appendChild(iframe);
+    navigator.sendBeacon(
+      "/collect/impression/user-1234567890abcdef1234567890abcdef?token=secret-token",
+      "body-should-not-store"
+    );
+    window.__adObserveDone = true;
+  `,
+  "/ad-observe-negative.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div id="widget" class="content-widget"></div>
+      <script>
+        const iframe = document.createElement("iframe");
+        iframe.width = "300";
+        iframe.height = "250";
+        iframe.src = "/ordinary-widget.html";
+        document.getElementById("widget").appendChild(iframe);
+        const observer = new IntersectionObserver((entries) => {
+          window.__ordinaryIntersectionCount = entries.length;
+        });
+        observer.observe(iframe);
+        fetch("/api/widget-status").catch(() => {});
+        setTimeout(() => {
+          window.__adNegativeDone = true;
+        }, 50);
+      </script>
+    </body>
+  `,
+  "/ordinary-widget.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>ordinary widget</body>
+  `,
   "/replay.html": `
     <!doctype html>
     <meta charset="utf-8">

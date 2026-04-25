@@ -18,6 +18,12 @@ const loadServiceWorkerUtils = () => {
   return context.__static_sw_utils__;
 };
 
+const loadAdSignals = () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("ad_signals.js"), context);
+  return context.__static_ad_signals__;
+};
+
 const loadBridgeHarness = () => {
   const messages = [];
   const portsByEvent = {};
@@ -134,6 +140,8 @@ const countMap = (count, prefix = "k") =>
 
 const expectedMainWorldScripts = [
   "block_adaptive.js",
+  "ad_signals.js",
+  "block_ads.js",
   "block.js",
   "block_vectors.js",
   "block_iframe_attrs.js",
@@ -314,6 +322,21 @@ test("service worker probe-log caps enforce local privacy bounds", () => {
   expect(Object.keys(latestWeek.vectorCounts)).toHaveLength(50);
   expect(Object.keys(latestWeek.pathKindCounts)).toHaveLength(50);
   expect(Object.keys(latestWeek.idCounts)).toHaveLength(1000);
+});
+
+test("ad signal scoring keeps weak DOM signals below high confidence", () => {
+  const adSignals = loadAdSignals();
+  const reasons = adSignals.reasons;
+
+  expect(adSignals.confidenceForReasons({ [reasons.AD_IFRAME_SIZE]: 1 })).toBe("low");
+  expect(adSignals.confidenceForReasons({ [reasons.SPONSORED_DOM]: 1 })).toBe("low");
+  expect(
+    adSignals.confidenceForReasons({
+      [reasons.AD_IFRAME_SIZE]: 1,
+      [reasons.GPT_SLOT]: 1,
+      [reasons.IMPRESSION_BEACON]: 1,
+    })
+  ).toBe("high");
 });
 
 test("bridge caps high-cardinality probe ID maps before service-worker flush", () => {

@@ -15,8 +15,9 @@
 //      `static_set_noise`, `static_set_replay`, `static_set_fingerprint`,
 //      `static_set_diagnostics`) and bridge queries (`static_get_persona`).
 
-importScripts("lists.js", "service_worker_utils.js");
+importScripts("lists.js", "ad_signals.js", "service_worker_utils.js");
 const CFG = globalThis.__static_config__ || {};
+const AD_SIGNALS = globalThis.__static_ad_signals__ || {};
 const {
   enforceCaps,
   ensurePlaybookWeek,
@@ -34,6 +35,12 @@ const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
 const MAX_CAPTURED_IDS = 2000;
 const MAX_DIAGNOSTIC_EVENTS_PER_ORIGIN = 120;
 const MAX_DIAGNOSTIC_ORIGINS = 25;
+const AD_LOG_CAPS = AD_SIGNALS.caps || {
+  endpoints: 50,
+  origins: 100,
+  reasons: 50,
+  sources: 50,
+};
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -187,6 +194,66 @@ const normalizeAdaptiveSignal = (signal) => ({
 
 const bumpCount = (counts, key) => {
   if (key) counts[key] = (counts[key] || 0) + 1;
+};
+
+const normalizeAdSignal = (signal) => ({
+  endpoint: String(signal.endpoint || "").slice(0, 160),
+  reasons: Array.isArray(signal.reasons)
+    ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
+    : [],
+  source: String(signal.source || "unknown").slice(0, 160),
+});
+
+const adScoreFor = (reasons) => {
+  if (typeof AD_SIGNALS.scoreForReasons === "function") {
+    return AD_SIGNALS.scoreForReasons(reasons);
+  }
+  return Math.min(100, Object.keys(reasons || {}).length * 2);
+};
+
+const adConfidenceFor = (reasons) => {
+  if (typeof AD_SIGNALS.confidenceForReasons === "function") {
+    return AD_SIGNALS.confidenceForReasons(reasons);
+  }
+  return adScoreFor(reasons) > 0 ? "low" : "learning";
+};
+
+const recordAdSignal = async (origin, signal) => {
+  if (!origin || !signal || typeof signal !== "object") return;
+  const { ad_log = {} } = await chrome.storage.local.get({ ad_log: {} });
+  const now = Date.now();
+  const entry = ad_log[origin] || {
+    confidence: "learning",
+    endpoints: {},
+    firstSeen: now,
+    lastUpdated: 0,
+    reasons: {},
+    score: 0,
+    sources: {},
+    total: 0,
+    version: 1,
+  };
+  const normalized = normalizeAdSignal(signal);
+
+  entry.version = 1;
+  entry.total = (entry.total || 0) + 1;
+  entry.firstSeen ||= now;
+  entry.lastUpdated = now;
+  entry.reasons ||= {};
+  entry.endpoints ||= {};
+  entry.sources ||= {};
+  bumpCount(entry.endpoints, normalized.endpoint);
+  bumpCount(entry.sources, normalized.source);
+  for (const reason of normalized.reasons) bumpCount(entry.reasons, reason);
+
+  entry.reasons = trimCountMap(entry.reasons, AD_LOG_CAPS.reasons);
+  entry.endpoints = trimCountMap(entry.endpoints, AD_LOG_CAPS.endpoints);
+  entry.sources = trimCountMap(entry.sources, AD_LOG_CAPS.sources);
+  entry.score = adScoreFor(entry.reasons);
+  entry.confidence = adConfidenceFor(entry.reasons);
+  ad_log[origin] = entry;
+  trimLogOrigins(ad_log, AD_LOG_CAPS.origins);
+  await chrome.storage.local.set({ ad_log });
 };
 
 const recordAdaptiveSignal = async (origin, signal) => {
@@ -611,6 +678,12 @@ const handleAdaptiveSignal = (msg, sender) => {
   }
 };
 
+const handleAdSignal = (msg, sender) => {
+  if (!sender.tab) return;
+  const origin = rememberSenderOrigin(sender);
+  if (origin) serialize(() => recordAdSignal(origin, msg.signal));
+};
+
 const storedEntryForOrigin = (origin, log) => (origin ? log[origin] : null);
 
 const loggedOriginsFor = (stored) =>
@@ -816,6 +889,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
         "probe_log",
         "replay_log",
         "adaptive_log",
+        "ad_log",
         "diagnostic_log",
         "cumulative",
         "user_secret",
@@ -829,6 +903,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
 };
 
 const messageHandlers = {
+  static_ad_signal: handleAdSignal,
   static_adaptive_signal: handleAdaptiveSignal,
   static_clear_log: handleClearLog,
   static_export_log: handleExportLog,
