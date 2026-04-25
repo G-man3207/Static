@@ -389,5 +389,22 @@
         "other"
       ]
     }
+  },
+  {
+    "id": 24,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||api.fpjs.io^",
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
   }
 ]

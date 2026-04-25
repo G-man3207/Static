@@ -17,6 +17,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Fixed
 
+- Fingerprint vendor blocking now covers Fingerprint's current `api.fpjs.io` API host family in addition to the existing CDN, TLS, npm-loader, and `api.fpjs.pro` hosts.
 - Clear log now resets pending per-page bridge batches so stale probe flushes cannot recreate local probe storage after the user clears it.
 - Clear log now clears in-memory tab probe state, resets badges, and disarms already-open pages'
   Noise personas without requiring a reload.
