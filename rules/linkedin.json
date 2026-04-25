@@ -5,7 +5,7 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||www.linkedin.com/sensorCollect",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "other"]
+      "resourceTypes": ["xmlhttprequest", "ping", "websocket", "webtransport", "image", "other"]
     }
   },
   {
@@ -14,7 +14,7 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||www.linkedin.com/li/track",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "other"]
+      "resourceTypes": ["xmlhttprequest", "ping", "websocket", "webtransport", "image", "other"]
     }
   },
   {
@@ -23,7 +23,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||px.ads.linkedin.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -32,7 +40,7 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||www.linkedin.com/voyager/abp-detection.js",
-      "resourceTypes": ["script", "xmlhttprequest"]
+      "resourceTypes": ["xmlhttprequest", "websocket", "webtransport", "script"]
     }
   },
   {
@@ -41,7 +49,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||piwik.corp.linkedin.com^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -50,7 +66,15 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||snap.licdn.com/li.lms-analytics/",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -59,7 +83,15 @@
     "action": { "type": "block" },
     "condition": {
       "regexFilter": "^https?://platform(?:-akam|-ecst|-azur)?\\.linkedin\\.com/litms/(?:utag|vendor)/",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "script", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
     }
   },
   {
@@ -68,7 +100,7 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||merchantpool1.linkedin.com/mdt.js",
-      "resourceTypes": ["script", "xmlhttprequest"]
+      "resourceTypes": ["xmlhttprequest", "websocket", "webtransport", "script"]
     }
   },
   {
@@ -77,7 +109,7 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||lnkd.in^",
-      "resourceTypes": ["xmlhttprequest", "ping", "image", "other"]
+      "resourceTypes": ["xmlhttprequest", "ping", "websocket", "webtransport", "image", "other"]
     }
   }
 ]
