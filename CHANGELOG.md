@@ -6,26 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in Device signal poisoning for high-entropy browser surfaces, with stable per-origin personas.
+- QA diagnostics mode for local compatibility testing, including anonymized issue reports.
+- Replay poisoning detection for Sentry Replay runtime setup, Hotjar, OpenReplay, and replay-specific Datadog/PostHog startup paths.
+
 ### Changed
 
-- GitHub Actions now run only for new `v*.*.*` version tag pushes; formatting is checked on the tagged commit instead of auto-committed after release.
 - Adaptive observe-only logging now treats environment snapshots (screen, timezone, storage, and high-entropy navigator reads) as corroborating signals for crypto-plus-network collector flows.
 - Adaptive observe-only logging now treats WebSocket and WebTransport construction as network corroboration for first-party or proxied collectors.
-- Vendor DNR connection rules now include `websocket` and `webtransport` resource types so known provider hosts do not keep a persistent-transport escape path.
-- The disabled CAPTCHA ruleset now covers DataDome response-page hosts under `captcha-delivery.com`.
-- Popup framing now separates always-on defenses from grouped network protections, so vendor-specific toggles do not understate Static's core protection layers.
+- Fingerprint DNR connection rules now include `websocket` and `webtransport` resource types so known provider hosts do not keep a persistent-transport escape path.
+- Popup controls now keep detailed sections folded by default, rank probe-log origins by severity, and explain adaptive reason tokens.
+- Popup framing now describes network rules as scoped fingerprint checks and recommends uBlock Origin / Privacy Badger for broad tracker blocking.
+- Pre-commit CI checks now cover formatting and strict linting.
+
+### Removed
+
+- Removed broad LinkedIn telemetry, session-replay, and Datadog RUM network rulesets from the extension surface so Static stays focused on extension probing and fingerprinting rather than duplicating general tracker blockers.
 
 ### Fixed
 
 - Replay poisoning now respects provider-documented replay-off init controls for Datadog manual replay starts and PostHog flags-disabled setups, so ordinary RUM/product analytics listeners are not masked as replay listeners before recording starts.
 - Fingerprint vendor blocking now covers Fingerprint's current `api.fpjs.io` API host family in addition to the existing CDN, TLS, npm-loader, and `api.fpjs.pro` hosts.
+- Client Hints masking now handles invocation context correctly.
+- Popup help tooltips stay bounded and no longer expose native `title` tooltips.
+
+## [2.0.10] — 2026-04-24
+
+### Added
+
+- Power-user diagnostics in the popup and log viewer for local probe/adaptive evidence, Noise readiness, and probe behavior details.
+- Adaptive runtime detection for proxied or first-party Fingerprint, DataDome, HUMAN/PerimeterX, and Sift integrations.
+- Adaptive source attribution for external scripts, dynamic modules, timers, promises, microtasks, mutation observers, `postMessage`, custom events, and `onmessage` handoffs.
+- Extension URL blocking coverage for SVG href probes and worklet module loaders.
+
+### Changed
+
+- GitHub Actions now run only for new `v*.*.*` version tag pushes; formatting is checked on the tagged commit instead of auto-committed after release.
+- Adaptive observe-only logging treats environment snapshots as corroborating signals for crypto-plus-network collector flows.
+- The disabled CAPTCHA ruleset covers DataDome response-page hosts under `captcha-delivery.com`.
+- Fingerprint, replay, CAPTCHA, and site-specific DNR rules include persistent transport resource types where applicable.
+
+### Fixed
+
 - Clear log now resets pending per-page bridge batches so stale probe flushes cannot recreate local probe storage after the user clears it.
 - Clear log now clears in-memory tab probe state, resets badges, and disarms already-open pages'
   Noise personas without requiring a reload.
-- Session replay blocking now covers PostHog's documented `*.i.posthog.com` cloud ingest/assets host family, and Replay poisoning recognizes PostHog replay bundle names used by first-party proxy setups.
+- Session replay blocking covers PostHog's documented `*.i.posthog.com` cloud ingest/assets host family, and Replay poisoning recognizes PostHog replay bundle names used by first-party proxy setups.
 - Replay poisoning now recognizes documented PostHog global replay starts (`posthog.init(...)` default recording and `posthog.startSessionRecording()`) without treating explicitly disabled `disable_session_recording` installs as replay recorders.
-- Session replay blocking now covers Heap's documented classic replay `*.auryc.com` host family.
+- Session replay blocking covers Heap's documented classic replay `*.auryc.com` host family.
 - Noise mode no longer answers arbitrary supported-suffix path canaries like random `*.png` / `*.js` / `*.css` / `*.html` names; decoys are now limited to a conservative allowlist of plausible extension resource paths.
+- Noise mode passive decoys preserve original URLs through attribute nodes, serialization, link preloads, and related readback paths.
+- Extension URL probes are normalized more consistently before blocking, including whitespace-padded and style/CSSOM vectors.
+- Iframe policy handling, Trusted Types script decoys, benign console noise, and transient DOM marker observer exposure are hardened.
 
 ## [2.0.4] — 2026-04-18
 
@@ -34,6 +68,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Released the formatter-stable replay lint fix so the tagged version is based on the CI-passing `main` state.
 
 ## [2.0.3] — 2026-04-18
+
+### Fixed
+
+- Released the strict-lint follow-up after the `v2.0.2` formatter pass.
+
+## [2.0.2] — 2026-04-18
 
 ### Added
 
@@ -122,8 +162,10 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.4...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.10...HEAD
+[2.0.10]: https://github.com/G-man3207/Static/compare/v2.0.4...v2.0.10
 [2.0.4]: https://github.com/G-man3207/Static/compare/v2.0.3...v2.0.4
-[2.0.3]: https://github.com/G-man3207/Static/compare/v2.0.1...v2.0.3
-[2.0.1]: https://github.com/G-man3207/Static/releases/tag/v2.0.1
+[2.0.3]: https://github.com/G-man3207/Static/compare/v2.0.2...v2.0.3
+[2.0.2]: https://github.com/G-man3207/Static/compare/v2.0.1...v2.0.2
+[2.0.1]: https://github.com/G-man3207/Static/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/G-man3207/Static/releases/tag/v2.0.0

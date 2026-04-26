@@ -1,36 +1,17 @@
 /* eslint-disable max-lines -- popup rendering and local control wiring are kept together */
 const RULESET_META = [
   {
-    id: "linkedin",
-    group: "Site telemetry",
-    label: "LinkedIn telemetry",
-    help: "Blocks LinkedIn probe, sensor, metrics, conversion, ad, and marketing collection endpoints.",
-  },
-  {
     id: "fingerprint_vendors",
-    group: "Fingerprinting and access checks",
+    group: "Fingerprint checks",
     label: "Fingerprinting and anti-bot",
     help: "Blocks known client-side fingerprinting and anti-bot vendor endpoints at the network layer.",
   },
   {
     id: "captcha_vendors",
-    group: "Fingerprinting and access checks",
+    group: "Fingerprint checks",
     label: "CAPTCHA and device checks",
     help: "Blocks Arkose/FunCAPTCHA endpoints. Leave this off unless you accept login and challenge breakage.",
     warn: "Off by default. Breaks logins on sites using Arkose/FunCAPTCHA (X signup, Roblox, some crypto).",
-  },
-  {
-    id: "session_replay",
-    group: "Replay and monitoring",
-    label: "Session replay recorders",
-    help: "Blocks known session-replay vendor assets and ingest hosts before page scripts can use them.",
-  },
-  {
-    id: "datadog_rum",
-    group: "Replay and monitoring",
-    label: "Datadog browser monitoring",
-    help: "Blocks Datadog browser RUM collection. Keep off if you want legitimate site monitoring to work.",
-    warn: "Off by default. Also used for legitimate performance/error monitoring.",
   },
 ];
 
@@ -45,7 +26,6 @@ const pct = (n) => `${Math.round((n || 0) * 100)}%`;
 const replayState = {
   replayDetected: false,
   replayMode: "off",
-  sessionReplayBlocking: false,
 };
 const fingerprintState = {
   fingerprintMode: "off",
@@ -485,10 +465,6 @@ const renderReplayIndicators = () => {
   const list = document.getElementById("replay-status-list");
   list.innerHTML = "";
 
-  if (replayState.sessionReplayBlocking) {
-    addReplayPill(list, "Replay vendor blocking on", "blocking");
-  }
-
   if (replayState.replayMode !== "off") {
     const label = replayModeLabel(replayState.replayMode);
     addReplayPill(
@@ -503,7 +479,6 @@ const renderReplayIndicators = () => {
 
 const renderRulesets = (enabledArr, counts) => {
   const enabled = new Set(enabledArr);
-  replayState.sessionReplayBlocking = enabled.has("session_replay");
   renderReplayIndicators();
   const container = document.getElementById("rulesets");
   container.innerHTML = "";
@@ -547,17 +522,9 @@ const renderRulesets = (enabledArr, counts) => {
         : { disableRulesetIds: [meta.id] };
       try {
         await chrome.declarativeNetRequest.updateEnabledRulesets(payload);
-        if (meta.id === "session_replay") {
-          replayState.sessionReplayBlocking = input.checked;
-          renderReplayIndicators();
-        }
       } catch (e) {
         console.error("[Static] ruleset toggle failed", meta.id, e);
         input.checked = !input.checked;
-        if (meta.id === "session_replay") {
-          replayState.sessionReplayBlocking = input.checked;
-          renderReplayIndicators();
-        }
       }
     });
 
