@@ -7,6 +7,15 @@ const adLogFor = (extension, origin) =>
     origin
   );
 
+const adPlaybookFor = (extension, origin) =>
+  extension.serviceWorker.evaluate(
+    (originArg) =>
+      chrome.storage.local
+        .get("ad_playbooks")
+        .then(({ ad_playbooks }) => ad_playbooks && ad_playbooks[originArg]),
+    origin
+  );
+
 const dnrRuleCounts = (extension) =>
   extension.serviceWorker.evaluate(async () => {
     const dynamicRules = await chrome.declarativeNetRequest.getDynamicRules();
@@ -65,6 +74,179 @@ test("correlated ad chain reaches high confidence without adding DNR rules", asy
   expect(JSON.stringify(adEntry)).not.toContain("1234567890abcdef1234567890abcdef");
   expect(JSON.stringify(adEntry)).not.toContain("secret-token");
   expect(JSON.stringify(adEntry)).not.toContain("body-should-not-store");
+  expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+});
+
+test("repeated high-confidence observations learn a capped versioned playbook", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  for (let i = 0; i < 2; i++) {
+    await page.goto(server.url("/ad-observe-positive.html"));
+    await expect.poll(() => page.evaluate(() => window.__adObserveDone === true)).toBe(true);
+  }
+
+  await expect.poll(() => adPlaybookFor(extension, server.origin)).toBeTruthy();
+  const playbook = await adPlaybookFor(extension, server.origin);
+  expect(playbook.version).toBe(1);
+  expect(playbook.confidence).toBe("high");
+  expect(playbook.cosmetic.length).toBeLessThanOrEqual(24);
+  expect(playbook.network.length).toBeLessThanOrEqual(24);
+  expect(playbook.scripts.length).toBeLessThanOrEqual(16);
+  expect(playbook.cosmetic).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        diagnosticOnly: false,
+        kind: "selector",
+        value: "#ad-slot",
+      }),
+      expect.objectContaining({
+        diagnosticOnly: false,
+        kind: "structure",
+        value: expect.stringContaining("iframe:300x250"),
+      }),
+    ])
+  );
+  expect(playbook.scripts).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "source",
+        value: expect.stringContaining("/assets/ad/:token.js"),
+      }),
+    ])
+  );
+  expect(playbook.network).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "endpoint",
+        path: "same-origin:/collect/impression/:token",
+        resourceTypes: ["ping"],
+      }),
+    ])
+  );
+  expect(JSON.stringify(playbook)).not.toContain("1234567890abcdef1234567890abcdef");
+  expect(JSON.stringify(playbook)).not.toContain("secret-token");
+  expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+});
+
+test("broad cosmetic selectors stay diagnostics-only while structures can be learned", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  for (let i = 0; i < 2; i++) {
+    await page.goto(server.url("/ad-playbook-broad-selector.html"));
+    await expect.poll(() => page.evaluate(() => window.__adBroadSelectorDone === true)).toBe(true);
+  }
+
+  await expect.poll(() => adPlaybookFor(extension, server.origin)).toBeTruthy();
+  const playbook = await adPlaybookFor(extension, server.origin);
+  const broadSelector = playbook.cosmetic.find((entry) => entry.value === "div.ad");
+  expect(broadSelector).toMatchObject({
+    diagnosticOnly: true,
+    kind: "selector",
+    reason: "broad-selector",
+  });
+  expect(
+    playbook.cosmetic.some(
+      (entry) => entry.kind === "selector" && entry.value === "div.ad" && !entry.diagnosticOnly
+    )
+  ).toBe(false);
+  expect(playbook.cosmetic).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        diagnosticOnly: false,
+        kind: "structure",
+        value: expect.stringContaining("iframe:300x250"),
+      }),
+    ])
+  );
+  expect(playbook.network).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "endpoint",
+        path: "same-origin:/collect/impression/:token",
+      }),
+    ])
+  );
+  expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+});
+
+test("per-site ad cleanup disable prevents new playbook learning", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate((origin) => {
+    return chrome.storage.local.set({
+      ad_prefs: {
+        sites: {
+          [origin]: {
+            cleanupDisabled: true,
+            lastUpdated: Date.now(),
+          },
+        },
+        version: 1,
+      },
+    });
+  }, server.origin);
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/ad-observe-positive.html"));
+  await expect.poll(() => page.evaluate(() => window.__adObserveDone === true)).toBe(true);
+
+  await expect.poll(() => adLogFor(extension, server.origin)).toBeTruthy();
+  const playbook = await adPlaybookFor(extension, server.origin);
+  expect(playbook).toBeFalsy();
+  expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+});
+
+test("stale playbook entries demote to diagnostics-only on later observations", async ({
+  extension,
+  server,
+}) => {
+  const staleSeenAt = Date.now() - 31 * 24 * 60 * 60 * 1000;
+  await extension.serviceWorker.evaluate(
+    ({ origin, staleSeenAt }) =>
+      chrome.storage.local.set({
+        ad_playbooks: {
+          [origin]: {
+            confidence: "high",
+            cosmetic: [
+              {
+                diagnosticOnly: false,
+                firstSeen: staleSeenAt,
+                hits: 6,
+                kind: "selector",
+                lastSeen: staleSeenAt,
+                score: 95,
+                value: "#old-ad-slot",
+              },
+            ],
+            disabled: false,
+            lastUpdated: staleSeenAt,
+            network: [],
+            scripts: [],
+            version: 1,
+          },
+        },
+      }),
+    { origin: server.origin, staleSeenAt }
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/ad-observe-positive.html"));
+  await expect.poll(() => page.evaluate(() => window.__adObserveDone === true)).toBe(true);
+
+  await expect.poll(() => adPlaybookFor(extension, server.origin)).toBeTruthy();
+  const playbook = await adPlaybookFor(extension, server.origin);
+  const staleEntry = playbook.cosmetic.find((entry) => entry.value === "#old-ad-slot");
+  expect(staleEntry).toMatchObject({
+    diagnosticOnly: true,
+    reason: "stale",
+    status: "stale",
+  });
+  expect(staleEntry.score).toBeLessThan(50);
   expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
 });
 

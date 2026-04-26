@@ -674,7 +674,9 @@ const playbookEntryLabel = (entry, valueKey) => {
   const value = entry[valueKey] || entry.value || "entry";
   const score = typeof entry.score === "number" ? entry.score : 0;
   const hits = entry.hits ? `, ${fmt(entry.hits)} hit${entry.hits === 1 ? "" : "s"}` : "";
-  return `${value} (${entry.kind || "candidate"}, score ${fmt(score)}${hits})`;
+  const diagnostic = entry.diagnosticOnly ? ", diagnostics-only" : "";
+  const status = entry.status ? `, ${entry.status}` : "";
+  return `${value} (${entry.kind || "candidate"}, score ${fmt(score)}${hits}${diagnostic}${status})`;
 };
 
 const sortedAdPlaybookEntries = (entries) =>
@@ -771,6 +773,9 @@ const buildAdDetail = (origin, ad, playbook, prefs) => {
   );
   box.appendChild(
     buildAdPlaybookList("Learned endpoint entries", playbook && playbook.network, "path")
+  );
+  box.appendChild(
+    buildAdPlaybookList("Learned script labels", playbook && playbook.scripts, "value")
   );
   return box;
 };
@@ -907,6 +912,7 @@ const diagnosticMatchesFilter = (diagnostics, filter) =>
 const adPlaybookFilterValues = (adPlaybook) => [
   ...sortedAdPlaybookEntries(adPlaybook.cosmetic).map((entry) => entry.value || ""),
   ...sortedAdPlaybookEntries(adPlaybook.network).map((entry) => entry.path || ""),
+  ...sortedAdPlaybookEntries(adPlaybook.scripts).map((entry) => entry.value || ""),
 ];
 
 const entryFilterValues = (entry) => {

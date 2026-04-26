@@ -40,6 +40,16 @@
   const SPONSORED_TOKEN_RE =
     /(?:^|[\s_-])(?:ad|ads|adslot|advert|advertisement|sponsored|promoted)(?:$|[\s_-])/i;
   const SPONSORED_ATTR_RE = /^data-(?:ad|ads|adslot|sponsored|promoted)(?:-|$)/i;
+  const BROAD_SELECTOR_TOKENS = new Set([
+    "ad",
+    "ads",
+    "advert",
+    "advertisement",
+    "banner",
+    "promoted",
+    "sponsor",
+    "sponsored",
+  ]);
   const BEACON_PATH_RE =
     /(?:^|[/?&_.-])(?:impression|impressions|viewability|viewable|beacon|pixel|adview|ad-view)(?:$|[/?&=_.-])/i;
   const VIEWABILITY_PATH_RE = /(?:^|[/?&_.-])(?:viewability|viewable)(?:$|[/?&=_.-])/i;
@@ -47,6 +57,7 @@
   const OMID_PATH_RE = /(?:^|[/_.-])omid(?:$|[/_.-])/i;
   const PREBID_PATH_RE = /(?:^|[/_.-])prebid(?:$|[/_.-])/i;
   const APSTAG_PATH_RE = /(?:^|[/_.-])apstag(?:$|[/_.-])/i;
+  const MAX_COSMETIC_CANDIDATES = 4;
   const MAX_QUEUED_SIGNALS = 100;
   const queuedSignals = [];
   const reasonCounts = {};
@@ -213,12 +224,146 @@
     return stackAdSource() || "inline-or-runtime";
   };
 
+  const cssEscape = (value) => {
+    const text = String(value || "");
+    try {
+      if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(text);
+    } catch {}
+    return text.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  };
+
+  const selectorTokenIsUnstable = (token) => {
+    const value = String(token || "");
+    if (/^[0-9a-f]{12,}$/i.test(value)) return true;
+    if (/\d{5,}/.test(value)) return true;
+    return value.length >= 24 && /[a-z]/i.test(value) && /\d/.test(value);
+  };
+
+  const selectorDiagnosticReason = (token) => {
+    const value = String(token || "").toLowerCase();
+    if (BROAD_SELECTOR_TOKENS.has(value)) return "broad-selector";
+    if (selectorTokenIsUnstable(value)) return "unstable-selector";
+    return "";
+  };
+
+  const classTokensFor = (element) => {
+    const className =
+      typeof element.className === "string" ? element.className : element.getAttribute("class");
+    return String(className || "")
+      .split(/\s+/)
+      .filter(Boolean);
+  };
+
+  const selectorCandidateFor = (element) => {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
+    const tagName = String(element.tagName || "div").toLowerCase();
+    const id = String(element.id || "");
+    if (id) {
+      const reason = selectorDiagnosticReason(id);
+      return {
+        diagnosticOnly: !!reason,
+        kind: "selector",
+        reason,
+        value: `#${cssEscape(id)}`,
+      };
+    }
+    const adClass = classTokensFor(element).find((token) => SPONSORED_TOKEN_RE.test(token));
+    if (!adClass) return null;
+    const reason = selectorDiagnosticReason(adClass);
+    return {
+      diagnosticOnly: !!reason,
+      kind: "selector",
+      reason,
+      value: `${tagName}.${cssEscape(adClass)}`,
+    };
+  };
+
+  const selectorCandidateForSlotId = (slotId) => {
+    if (typeof slotId !== "string" || !slotId || /\s/.test(slotId)) return null;
+    try {
+      const element = document.getElementById(slotId);
+      if (element) return selectorCandidateFor(element);
+    } catch {}
+    const reason = selectorDiagnosticReason(slotId);
+    return {
+      diagnosticOnly: !!reason,
+      kind: "selector",
+      reason,
+      value: `#${cssEscape(slotId)}`,
+    };
+  };
+
+  const iframeForStructure = (element) => {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
+    if (String(element.tagName || "").toLowerCase() === "iframe") return element;
+    try {
+      return element.querySelector && element.querySelector("iframe");
+    } catch {
+      return null;
+    }
+  };
+
+  const structuralCandidateFor = (element) => {
+    const iframe = iframeForStructure(element);
+    if (iframe) {
+      const [width, height] = iframeSizeFor(iframe);
+      if (isKnownAdSize(width, height)) {
+        const parent = iframe.parentElement || element;
+        const tagName = String(parent && parent.tagName ? parent.tagName : "div").toLowerCase();
+        let position = "";
+        try {
+          const computed = getComputedStyle(parent);
+          if (computed.position === "fixed" || computed.position === "sticky") {
+            position = `,position:${computed.position}`;
+          }
+        } catch {}
+        return {
+          diagnosticOnly: false,
+          kind: "structure",
+          reason: "",
+          value: `iframe:${Math.round(width)}x${Math.round(height)},parent:${tagName}${position}`,
+        };
+      }
+    }
+    if (hasSponsoredName(element)) {
+      return {
+        diagnosticOnly: true,
+        kind: "structure",
+        reason: "weak-dom-only",
+        value: `element:${String(element.tagName || "div").toLowerCase()},sponsored-name`,
+      };
+    }
+    return null;
+  };
+
+  const cosmeticCandidatesFor = (element) => {
+    const target =
+      element && String(element.tagName || "").toLowerCase() === "iframe"
+        ? element.parentElement || element
+        : element;
+    const candidates = [selectorCandidateFor(target), structuralCandidateFor(element)].filter(
+      Boolean
+    );
+    return candidates.slice(0, MAX_COSMETIC_CANDIDATES);
+  };
+
+  const sanitizeCosmeticCandidate = (candidate) => ({
+    diagnosticOnly: !!(candidate && candidate.diagnosticOnly),
+    kind: String((candidate && candidate.kind) || "").slice(0, 32),
+    reason: String((candidate && candidate.reason) || "").slice(0, 64),
+    value: String((candidate && candidate.value) || "").slice(0, 160),
+  });
+
   const sanitizeSignal = (signal) => ({
     confidence: String(signal.confidence || "learning").slice(0, 16),
+    cosmetic: Array.isArray(signal.cosmetic)
+      ? signal.cosmetic.map(sanitizeCosmeticCandidate).slice(0, MAX_COSMETIC_CANDIDATES)
+      : [],
     endpoint: String(signal.endpoint || "").slice(0, 160),
     reasons: Array.isArray(signal.reasons)
       ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
       : [],
+    resourceType: String(signal.resourceType || "").slice(0, 32),
     score: Math.max(0, Math.min(100, Math.round(signal.score || 0))),
     source: String(signal.source || "unknown").slice(0, 160),
   });
@@ -271,8 +416,10 @@
     reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
     postAdSignal({
       confidence: confidenceForReasons(reasonCounts),
+      cosmetic: Array.isArray(detail.cosmetic) ? detail.cosmetic : [],
       endpoint: detail.endpoint || "",
       reasons: [reason],
+      resourceType: detail.resourceType || "",
       score: scoreForReasons(reasonCounts),
       source: detail.source || currentAdSource(),
     });
@@ -319,8 +466,16 @@
 
   const instrumentGoogletag = (value) => {
     if (!isObjectLike(value)) return value;
-    patchObjectMethod(value, "defineSlot", () => recordAdSignal(REASONS.GPT_SLOT));
-    patchObjectMethod(value, "defineOutOfPageSlot", () => recordAdSignal(REASONS.GPT_SLOT));
+    patchObjectMethod(value, "defineSlot", (_path, _size, slotId) =>
+      recordAdSignal(REASONS.GPT_SLOT, {
+        cosmetic: [selectorCandidateForSlotId(slotId)].filter(Boolean),
+      })
+    );
+    patchObjectMethod(value, "defineOutOfPageSlot", (_path, slotId) =>
+      recordAdSignal(REASONS.GPT_SLOT, {
+        cosmetic: [selectorCandidateForSlotId(slotId)].filter(Boolean),
+      })
+    );
     patchObjectMethod(value, "pubads", () => recordAdSignal(REASONS.GPT_SLOT));
     return value;
   };
@@ -444,7 +599,7 @@
         if ((position === "fixed" || position === "sticky") && !reportedStickyNodes.has(cursor)) {
           reportedStickyNodes.add(cursor);
           markAdLikeNode(cursor);
-          recordAdSignal(REASONS.STICKY_AD);
+          recordAdSignal(REASONS.STICKY_AD, { cosmetic: cosmeticCandidatesFor(cursor) });
           return;
         }
       } catch {}
@@ -458,7 +613,7 @@
     markAdLikeNode(iframe);
     if (!reportedIframeSizes.has(iframe)) {
       reportedIframeSizes.add(iframe);
-      recordAdSignal(REASONS.AD_IFRAME_SIZE);
+      recordAdSignal(REASONS.AD_IFRAME_SIZE, { cosmetic: cosmeticCandidatesFor(iframe) });
     }
     maybeRecordStickyAd(iframe);
   };
@@ -467,7 +622,7 @@
     if (!hasSponsoredName(element) || reportedSponsoredNodes.has(element)) return;
     reportedSponsoredNodes.add(element);
     markAdLikeNode(element);
-    recordAdSignal(REASONS.SPONSORED_DOM);
+    recordAdSignal(REASONS.SPONSORED_DOM, { cosmetic: cosmeticCandidatesFor(element) });
   };
 
   const scriptMarkerFor = (url) => {
@@ -496,12 +651,19 @@
     return VIEWABILITY_PATH_RE.test(label) ? REASONS.VIEWABILITY_PING : REASONS.IMPRESSION_BEACON;
   };
 
-  const recordAdNetwork = (_where, url) => {
+  const resourceTypeFor = (where) => {
+    if (where === "sendBeacon") return "ping";
+    if (where === "image") return "image";
+    if (where === "fetch" || where === "xhr") return "xmlhttprequest";
+    return "other";
+  };
+
+  const recordAdNetwork = (where, url) => {
     if (!hasAdEvidence()) return;
     const reason = beaconReasonFor(url);
     if (!reason) return;
     const endpoint = endpointLabelFor(url);
-    recordAdSignal(reason, { endpoint });
+    recordAdSignal(reason, { endpoint, resourceType: resourceTypeFor(where) });
   };
 
   const inspectImageBeacon = (img) => {
@@ -563,7 +725,9 @@
       observer.observe = stealth(
         function observe(target) {
           try {
-            if (isAdLikeElement(target)) recordAdSignal(REASONS.VIEWABILITY_PING);
+            if (isAdLikeElement(target)) {
+              recordAdSignal(REASONS.VIEWABILITY_PING, { cosmetic: cosmeticCandidatesFor(target) });
+            }
           } catch {}
           return origObserve.apply(this, arguments);
         },

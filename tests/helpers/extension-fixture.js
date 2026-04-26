@@ -92,6 +92,41 @@ const fixtureFiles = {
     );
     window.__adObserveDone = true;
   `,
+  "/ad-playbook-broad-selector.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div class="ad"></div>
+      <script src="/assets/ad/broad-loader-abcdef1234567890abcdef1234567890.js?token=secret-token"></script>
+    </body>
+  `,
+  "/assets/ad/broad-loader-abcdef1234567890abcdef1234567890.js": `
+    window.googletag = {
+      defineSlot() {
+        return {
+          addService() {
+            return this;
+          },
+        };
+      },
+      pubads() {
+        return {};
+      },
+    };
+    window.googletag.defineSlot("/1234/broad", [300, 250]).addService(
+      window.googletag.pubads()
+    );
+    const iframe = document.createElement("iframe");
+    iframe.width = "300";
+    iframe.height = "250";
+    iframe.src = "/creative/broad-widget.html?creative=private-token";
+    document.querySelector(".ad").appendChild(iframe);
+    navigator.sendBeacon(
+      "/collect/impression/broad-1234567890abcdef1234567890abcdef?token=secret-token",
+      "body-should-not-store"
+    );
+    window.__adBroadSelectorDone = true;
+  `,
   "/ad-observe-negative.html": `
     <!doctype html>
     <meta charset="utf-8">

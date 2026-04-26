@@ -41,8 +41,45 @@ const AD_LOG_CAPS = AD_SIGNALS.caps || {
   reasons: 50,
   sources: 50,
 };
+const AD_PLAYBOOK_CONFIG = AD_SIGNALS.playbooks || {};
+const AD_PLAYBOOK_CAPS = AD_PLAYBOOK_CONFIG.caps || {
+  cosmetic: 24,
+  network: 24,
+  origins: AD_LOG_CAPS.origins,
+  scripts: 16,
+};
+const AD_PLAYBOOK_MIN_HITS = AD_PLAYBOOK_CONFIG.minHits || {
+  cosmetic: 2,
+  network: 2,
+  scripts: 2,
+};
+const AD_PLAYBOOK_VERSION = AD_PLAYBOOK_CONFIG.version || 1;
+const AD_PLAYBOOK_STALE_MS = AD_PLAYBOOK_CONFIG.staleMs || 30 * 24 * 60 * 60 * 1000;
+const AD_PLAYBOOK_EXPIRE_MS = AD_PLAYBOOK_CONFIG.expireMs || 90 * 24 * 60 * 60 * 1000;
 const AD_SESSION_RULE_ID_MIN = 8000000;
 const AD_SESSION_RULE_ID_MAX = 8999999;
+const AD_PLAYBOOK_RESOURCE_TYPES = new Set([
+  "image",
+  "other",
+  "ping",
+  "script",
+  "sub_frame",
+  "xmlhttprequest",
+]);
+const AD_PLAYBOOK_BROAD_SELECTOR_TOKENS = new Set([
+  "ad",
+  "ads",
+  "advert",
+  "advertisement",
+  "banner",
+  "promoted",
+  "sponsor",
+  "sponsored",
+]);
+const AD_PLAYBOOK_ENDPOINT_RE =
+  /(?:^|[/:_.-])(?:ad|ads|adserver|auction|beacon|bid|creative|impression|pixel|viewability|viewable)(?:$|[/:_.-])/i;
+const AD_PLAYBOOK_UNSAFE_ENDPOINT_RE =
+  /(?:^|[/:_.-])(?:account|auth|checkout|graphql|login|order|payment|profile|search|settings|signin|signup|user)(?:$|[/:_.-])/i;
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -199,12 +236,78 @@ const bumpCount = (counts, key) => {
 };
 
 const normalizeAdSignal = (signal) => ({
+  cosmetic: Array.isArray(signal.cosmetic)
+    ? signal.cosmetic.map(normalizeAdCosmeticCandidate).filter(Boolean).slice(0, 4)
+    : [],
   endpoint: String(signal.endpoint || "").slice(0, 160),
   reasons: Array.isArray(signal.reasons)
     ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
     : [],
+  resourceType: normalizeAdResourceType(signal.resourceType),
   source: String(signal.source || "unknown").slice(0, 160),
 });
+
+const safePlaybookText = (value, maxLength = 160) =>
+  String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+
+const normalizeAdResourceType = (resourceType) => {
+  const safeType = String(resourceType || "").slice(0, 32);
+  return AD_PLAYBOOK_RESOURCE_TYPES.has(safeType) ? safeType : "";
+};
+
+const selectorTokenFor = (selector) => {
+  const value = String(selector || "");
+  const idMatch = value.match(/^#([^#.[\]\s>+~,]+)/);
+  if (idMatch) return idMatch[1].replace(/\\/g, "");
+  const classMatch = value.match(/^[a-z0-9_-]+\.([^#.[\]\s>+~,]+)/i);
+  return classMatch ? classMatch[1].replace(/\\/g, "") : "";
+};
+
+const selectorTokenIsUnstable = (token) => {
+  const value = String(token || "");
+  if (/^[0-9a-f]{12,}$/i.test(value)) return true;
+  if (/\d{5,}/.test(value)) return true;
+  return value.length >= 24 && /[a-z]/i.test(value) && /\d/.test(value);
+};
+
+const selectorDiagnosticReasonFor = (selector) => {
+  const value = String(selector || "");
+  if (!value || /[,>+~]|\s/.test(value)) return "complex-selector";
+  const token = selectorTokenFor(value).toLowerCase();
+  if (!token) return "unsupported-selector";
+  if (AD_PLAYBOOK_BROAD_SELECTOR_TOKENS.has(token)) return "broad-selector";
+  if (selectorTokenIsUnstable(token)) return "unstable-selector";
+  return "";
+};
+
+const structureDiagnosticReasonFor = (value) => {
+  const safeValue = String(value || "");
+  return safeValue.startsWith("iframe:") ? "" : "weak-structure";
+};
+
+const cosmeticDiagnosticReasonFor = (kind, value, incomingReason) => {
+  if (kind === "selector") return selectorDiagnosticReasonFor(value) || incomingReason;
+  if (kind === "structure") return structureDiagnosticReasonFor(value) || incomingReason;
+  return "unsupported-candidate";
+};
+
+const normalizeAdCosmeticCandidate = (candidate) => {
+  const kind = String((candidate && candidate.kind) || "").slice(0, 32);
+  if (kind !== "selector" && kind !== "structure") return null;
+  const value = safePlaybookText(candidate && candidate.value);
+  if (!value) return null;
+  const incomingReason = safePlaybookText(candidate.reason, 64);
+  const reason = cosmeticDiagnosticReasonFor(kind, value, incomingReason);
+  return {
+    diagnosticOnly: !!(candidate.diagnosticOnly || reason),
+    kind,
+    reason,
+    value,
+  };
+};
 
 const adClassificationFor = (reasons) => {
   if (typeof AD_SIGNALS.classifyReasons === "function") {
@@ -250,16 +353,27 @@ const adReasonSummaries = (reasons, limit = 8) =>
     token,
   }));
 
-const sanitizeAdPlaybookEntry = (entry) => ({
-  hits: Math.max(0, Math.round(entry && entry.hits ? entry.hits : 0)),
-  kind: String((entry && entry.kind) || "entry").slice(0, 32),
-  path: String((entry && entry.path) || "").slice(0, 160),
-  resourceTypes: Array.isArray(entry && entry.resourceTypes)
-    ? entry.resourceTypes.map((type) => String(type).slice(0, 32)).slice(0, 6)
-    : [],
-  score: Math.max(0, Math.min(100, Math.round((entry && entry.score) || 0))),
-  value: String((entry && entry.value) || "").slice(0, 160),
-});
+const sanitizePlaybookResourceTypes = (entry) => {
+  if (!Array.isArray(entry.resourceTypes)) return [];
+  return entry.resourceTypes.map((type) => String(type).slice(0, 32)).slice(0, 6);
+};
+
+const sanitizeAdPlaybookEntry = (entry) => {
+  const safeEntry = entry || {};
+  return {
+    diagnosticOnly: !!safeEntry.diagnosticOnly,
+    firstSeen: safeEntry.firstSeen || 0,
+    hits: Math.max(0, Math.round(safeEntry.hits || 0)),
+    kind: String(safeEntry.kind || "entry").slice(0, 32),
+    lastSeen: safeEntry.lastSeen || 0,
+    path: String(safeEntry.path || "").slice(0, 160),
+    reason: String(safeEntry.reason || "").slice(0, 64),
+    resourceTypes: sanitizePlaybookResourceTypes(safeEntry),
+    score: Math.max(0, Math.min(100, Math.round(safeEntry.score || 0))),
+    status: String(safeEntry.status || "").slice(0, 32),
+    value: String(safeEntry.value || "").slice(0, 160),
+  };
+};
 
 const sortedPlaybookEntries = (entries, limit = 6) =>
   (Array.isArray(entries) ? entries : [])
@@ -280,21 +394,25 @@ const adPlaybookFor = (origin, adPlaybooks = {}) => {
   const playbook = origin ? adPlaybooks[origin] : null;
   if (!playbook) {
     return {
+      cosmeticSafe: false,
       confidence: "learning",
       cosmetic: [],
       disabled: false,
       lastUpdated: 0,
       network: [],
-      version: 1,
+      scripts: [],
+      version: AD_PLAYBOOK_VERSION,
     };
   }
   return {
+    cosmeticSafe: !!playbook.cosmeticSafe,
     confidence: adUiConfidence(playbook.confidence),
     cosmetic: sortedPlaybookEntries(playbook.cosmetic),
     disabled: !!playbook.disabled,
     lastUpdated: playbook.lastUpdated || 0,
     network: sortedPlaybookEntries(playbook.network),
-    version: playbook.version || 1,
+    scripts: sortedPlaybookEntries(playbook.scripts),
+    version: playbook.version || AD_PLAYBOOK_VERSION,
   };
 };
 
@@ -333,6 +451,225 @@ const adEntryDiagnosticsFor = (entry, classification) => {
   };
 };
 
+const playbookScoreFor = ({ baseScore, diagnosticOnly, hits, minHits }) => {
+  const repeatBonus = Math.max(0, hits - minHits + 1) * 5;
+  const score = Math.min(100, Math.max(0, baseScore + Math.min(20, repeatBonus)));
+  if (!diagnosticOnly) return Math.round(score);
+  const likelyThreshold = (AD_SIGNALS.thresholds && AD_SIGNALS.thresholds.likely) || 50;
+  return Math.min(Math.round(score), likelyThreshold - 1);
+};
+
+const entryListFor = (playbook, key) => {
+  if (!Array.isArray(playbook[key])) playbook[key] = [];
+  return playbook[key];
+};
+
+const findPlaybookEntry = (entries, key, value, kind) =>
+  entries.find((entry) => entry && entry[key] === value && entry.kind === kind);
+
+const mergeResourceType = (entry, resourceType) => {
+  if (!resourceType) return;
+  const types = new Set(Array.isArray(entry.resourceTypes) ? entry.resourceTypes : []);
+  types.add(resourceType);
+  entry.resourceTypes = Array.from(types).sort().slice(0, 6);
+};
+
+const upsertPlaybookEntry = ({ baseScore, candidate, entries, minHits, now, valueKey }) => {
+  const kind = candidate.kind || "candidate";
+  const value = candidate[valueKey];
+  let entry = findPlaybookEntry(entries, valueKey, value, kind);
+  if (!entry) {
+    entry = {
+      firstSeen: now,
+      hits: 0,
+      kind,
+      lastSeen: 0,
+      score: 0,
+      [valueKey]: value,
+    };
+    entries.push(entry);
+  }
+  const hits = Math.max(0, Math.round(entry.hits || 0)) + 1;
+  const needsMoreEvidence = hits < minHits;
+  const diagnosticOnly = !!(candidate.diagnosticOnly || needsMoreEvidence);
+  entry.diagnosticOnly = diagnosticOnly;
+  entry.firstSeen ||= now;
+  entry.hits = hits;
+  entry.lastSeen = now;
+  entry.reason = candidate.reason || (needsMoreEvidence ? "needs-repeat-observation" : "");
+  entry.score = playbookScoreFor({ baseScore, diagnosticOnly, hits, minHits });
+  entry.status = diagnosticOnly && entry.reason ? "diagnostic" : "";
+  mergeResourceType(entry, candidate.resourceType);
+};
+
+const decayPlaybookEntries = ({ entries, now, valueKey }) =>
+  (Array.isArray(entries) ? entries : [])
+    .map((entry) => {
+      const sanitized = sanitizeAdPlaybookEntry(entry);
+      const value = safePlaybookText(sanitized[valueKey]);
+      if (!value) return null;
+      const lastSeen = sanitized.lastSeen || sanitized.firstSeen || entry.lastUpdated || 0;
+      if (lastSeen && now - lastSeen > AD_PLAYBOOK_EXPIRE_MS) return null;
+      sanitized[valueKey] = value;
+      if (lastSeen && now - lastSeen > AD_PLAYBOOK_STALE_MS) {
+        sanitized.diagnosticOnly = true;
+        sanitized.hits = Math.max(1, Math.floor((sanitized.hits || 1) / 2));
+        sanitized.reason = "stale";
+        sanitized.score = Math.min(sanitized.score, 49);
+        sanitized.status = "stale";
+      }
+      return sanitized;
+    })
+    .filter(Boolean);
+
+const trimPlaybookEntries = ({ entries, limit }) => {
+  entries.sort(
+    (a, b) =>
+      Number(!!a.diagnosticOnly) - Number(!!b.diagnosticOnly) ||
+      (b.score || 0) - (a.score || 0) ||
+      (b.hits || 0) - (a.hits || 0) ||
+      String(a.value || a.path || "").localeCompare(String(b.value || b.path || ""))
+  );
+  if (entries.length > limit) entries.splice(limit);
+};
+
+const playbookEntryIsActive = (entry, minHits) =>
+  !!entry && !entry.diagnosticOnly && (entry.hits || 0) >= minHits && (entry.score || 0) >= 50;
+
+const recomputeAdPlaybookState = (playbook) => {
+  const activeCosmetic = (playbook.cosmetic || []).filter((entry) =>
+    playbookEntryIsActive(entry, AD_PLAYBOOK_MIN_HITS.cosmetic)
+  );
+  const activeNetwork = (playbook.network || []).filter((entry) =>
+    playbookEntryIsActive(entry, AD_PLAYBOOK_MIN_HITS.network)
+  );
+  const activeScripts = (playbook.scripts || []).filter((entry) =>
+    playbookEntryIsActive(entry, AD_PLAYBOOK_MIN_HITS.scripts)
+  );
+  const activeEntries = [...activeCosmetic, ...activeNetwork, ...activeScripts];
+  const highThreshold = (AD_SIGNALS.thresholds && AD_SIGNALS.thresholds.high) || 80;
+  const maxScore = activeEntries.reduce((max, entry) => Math.max(max, entry.score || 0), 0);
+  playbook.cosmeticSafe = activeCosmetic.some((entry) => entry.score >= highThreshold);
+  if (activeCosmetic.length > 0 && activeNetwork.length > 0 && maxScore >= highThreshold) {
+    playbook.confidence = "high";
+  } else if (activeEntries.length > 0) {
+    playbook.confidence = "likely";
+  } else {
+    playbook.confidence = "learning";
+  }
+};
+
+const endpointCandidateFor = (endpoint, resourceType) => {
+  const path = safePlaybookText(endpoint);
+  if (!path || !path.startsWith("same-origin:/")) return null;
+  if (AD_PLAYBOOK_UNSAFE_ENDPOINT_RE.test(path) || !AD_PLAYBOOK_ENDPOINT_RE.test(path)) return null;
+  return {
+    kind: "endpoint",
+    path,
+    resourceType,
+  };
+};
+
+const scriptCandidateFor = (source) => {
+  const value = safePlaybookText(source);
+  if (!value || !value.startsWith("script:")) return null;
+  return {
+    kind: "source",
+    value,
+  };
+};
+
+const mergeAdPlaybookCandidates = ({ classification, normalized, now, playbook }) => {
+  const confidence = adUiConfidence(classification.confidence);
+  const correlated = confidence === "likely" || confidence === "high";
+  const baseScore = Math.max(classification.score || 0, correlated ? 50 : 0);
+  const cosmetic = entryListFor(playbook, "cosmetic");
+  for (const candidate of normalized.cosmetic) {
+    upsertPlaybookEntry({
+      baseScore,
+      candidate: {
+        ...candidate,
+        diagnosticOnly: candidate.diagnosticOnly || !correlated,
+        reason: candidate.reason || (correlated ? "" : "low-confidence"),
+      },
+      entries: cosmetic,
+      minHits: AD_PLAYBOOK_MIN_HITS.cosmetic,
+      now,
+      valueKey: "value",
+    });
+  }
+
+  const script = correlated ? scriptCandidateFor(normalized.source) : null;
+  if (script) {
+    upsertPlaybookEntry({
+      baseScore,
+      candidate: script,
+      entries: entryListFor(playbook, "scripts"),
+      minHits: AD_PLAYBOOK_MIN_HITS.scripts,
+      now,
+      valueKey: "value",
+    });
+  }
+
+  const endpoint = correlated
+    ? endpointCandidateFor(normalized.endpoint, normalized.resourceType)
+    : null;
+  if (endpoint) {
+    upsertPlaybookEntry({
+      baseScore,
+      candidate: endpoint,
+      entries: entryListFor(playbook, "network"),
+      minHits: AD_PLAYBOOK_MIN_HITS.network,
+      now,
+      valueKey: "path",
+    });
+  }
+};
+
+const prepareAdPlaybook = (existing, now) => {
+  const playbook = existing && typeof existing === "object" ? { ...existing } : {};
+  playbook.version = AD_PLAYBOOK_VERSION;
+  playbook.cosmetic = decayPlaybookEntries({
+    entries: playbook.cosmetic,
+    now,
+    valueKey: "value",
+  });
+  playbook.network = decayPlaybookEntries({
+    entries: playbook.network,
+    now,
+    valueKey: "path",
+  });
+  playbook.scripts = decayPlaybookEntries({
+    entries: playbook.scripts,
+    now,
+    valueKey: "value",
+  });
+  return playbook;
+};
+
+const updateAdPlaybook = ({ adPlaybooks, classification, disabled, normalized, now, origin }) => {
+  const existing = adPlaybooks[origin];
+  const correlated = adUiConfidence(classification.confidence) !== "learning";
+  const hasIncomingCandidate =
+    normalized.cosmetic.length > 0 ||
+    (correlated && !!scriptCandidateFor(normalized.source)) ||
+    (correlated && !!endpointCandidateFor(normalized.endpoint, normalized.resourceType));
+  if (!existing && (disabled || !hasIncomingCandidate)) return false;
+  const playbook = prepareAdPlaybook(existing, now);
+  playbook.disabled = !!disabled;
+  if (!disabled) {
+    mergeAdPlaybookCandidates({ classification, normalized, now, playbook });
+  }
+  trimPlaybookEntries({ entries: playbook.cosmetic, limit: AD_PLAYBOOK_CAPS.cosmetic });
+  trimPlaybookEntries({ entries: playbook.network, limit: AD_PLAYBOOK_CAPS.network });
+  trimPlaybookEntries({ entries: playbook.scripts, limit: AD_PLAYBOOK_CAPS.scripts });
+  recomputeAdPlaybookState(playbook);
+  playbook.lastUpdated = now;
+  adPlaybooks[origin] = playbook;
+  trimLogOrigins(adPlaybooks, AD_PLAYBOOK_CAPS.origins || AD_LOG_CAPS.origins);
+  return true;
+};
+
 const adDiagnosticsFor = ({ adLog = {}, adPlaybooks = {}, adPrefs = {}, origin }) => {
   const entry = storedEntryForOrigin(origin, adLog);
   const classification = adClassificationFor((entry && entry.reasons) || {});
@@ -350,7 +687,15 @@ const adDiagnosticsFor = ({ adLog = {}, adPlaybooks = {}, adPrefs = {}, origin }
 
 const recordAdSignal = async (origin, signal) => {
   if (!origin || !signal || typeof signal !== "object") return;
-  const { ad_log = {} } = await chrome.storage.local.get({ ad_log: {} });
+  const {
+    ad_log = {},
+    ad_playbooks = {},
+    ad_prefs = {},
+  } = await chrome.storage.local.get({
+    ad_log: {},
+    ad_playbooks: {},
+    ad_prefs: {},
+  });
   const now = Date.now();
   const entry = ad_log[origin] || {
     confidence: "learning",
@@ -385,7 +730,15 @@ const recordAdSignal = async (origin, signal) => {
   entry.scoreReasons = Array.from(classification.scoreReasons || []).slice(0, 16);
   ad_log[origin] = entry;
   trimLogOrigins(ad_log, AD_LOG_CAPS.origins);
-  await chrome.storage.local.set({ ad_log });
+  updateAdPlaybook({
+    adPlaybooks: ad_playbooks,
+    classification,
+    disabled: adSitePrefsFor(origin, ad_prefs).cleanupDisabled,
+    normalized,
+    now,
+    origin,
+  });
+  await chrome.storage.local.set({ ad_log, ad_playbooks });
 };
 
 const recordAdaptiveSignal = async (origin, signal) => {
@@ -993,32 +1346,44 @@ const handleSetDiagnostics = (msg, _sender, sendResponse) => {
 const setAdCleanupDisabled = async (origin, disabled) => {
   const normalized = normalizeOrigin(origin);
   if (!normalized) return null;
-  const { ad_prefs = {} } = await chrome.storage.local.get({ ad_prefs: {} });
+  const { ad_prefs = {}, ad_playbooks = {} } = await chrome.storage.local.get({
+    ad_playbooks: {},
+    ad_prefs: {},
+  });
+  const now = Date.now();
   const sites = { ...(ad_prefs.sites || ad_prefs.site || {}) };
   if (disabled) {
     sites[normalized] = {
       ...(sites[normalized] || {}),
       cleanupDisabled: true,
-      lastUpdated: Date.now(),
+      lastUpdated: now,
     };
   } else {
     const existing = { ...(sites[normalized] || {}) };
     delete existing.cleanupDisabled;
     delete existing.disabled;
     if (Object.keys(existing).length > 0) {
-      sites[normalized] = { ...existing, lastUpdated: Date.now() };
+      sites[normalized] = { ...existing, lastUpdated: now };
     } else {
       delete sites[normalized];
     }
   }
+  if (ad_playbooks[normalized]) {
+    ad_playbooks[normalized] = {
+      ...ad_playbooks[normalized],
+      disabled: !!disabled,
+      lastUpdated: now,
+      version: AD_PLAYBOOK_VERSION,
+    };
+  }
   const nextPrefs = {
     ...ad_prefs,
-    lastUpdated: Date.now(),
+    lastUpdated: now,
     sites,
-    version: 1,
+    version: AD_PLAYBOOK_VERSION,
   };
   delete nextPrefs.site;
-  await chrome.storage.local.set({ ad_prefs: nextPrefs });
+  await chrome.storage.local.set({ ad_playbooks, ad_prefs: nextPrefs });
   return adSitePrefsFor(normalized, nextPrefs);
 };
 

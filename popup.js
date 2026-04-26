@@ -274,7 +274,8 @@ const formatPlaybookEntries = (entries, valueKey) => {
       const value = entry[valueKey] || entry.value || "entry";
       const score = typeof entry.score === "number" ? `score ${fmt(entry.score)}` : "score 0";
       const hits = entry.hits ? `, ${fmt(entry.hits)} hit${entry.hits === 1 ? "" : "s"}` : "";
-      return `${value} (${score}${hits})`;
+      const diagnostic = entry.diagnosticOnly ? ", diagnostics-only" : "";
+      return `${value} (${score}${hits}${diagnostic})`;
     })
     .join(", ");
 };
@@ -474,21 +475,15 @@ const renderAdDiagnostics = (resp) => {
   addDiagnosticRow(box, "Confidence", adConfidenceLabel(ad && ad.confidence));
   addDiagnosticRow(box, "Score", fmt((ad && ad.score) || 0));
   addDiagnosticRow(box, "Reasons", formatAdReasons(ad && ad.reasons));
+  const playbook = ad && ad.playbook ? ad.playbook : {};
   addDiagnosticRow(
     box,
     "Endpoints",
     formatCountEntries(ad && Array.isArray(ad.endpoints) ? ad.endpoints : [])
   );
-  addDiagnosticRow(
-    box,
-    "Cosmetic",
-    formatPlaybookEntries(ad && ad.playbook && ad.playbook.cosmetic, "value")
-  );
-  addDiagnosticRow(
-    box,
-    "Network",
-    formatPlaybookEntries(ad && ad.playbook && ad.playbook.network, "path")
-  );
+  addDiagnosticRow(box, "Cosmetic", formatPlaybookEntries(playbook.cosmetic, "value"));
+  addDiagnosticRow(box, "Network", formatPlaybookEntries(playbook.network, "path"));
+  addDiagnosticRow(box, "Scripts", formatPlaybookEntries(playbook.scripts, "value"));
   addDiagnosticRow(
     box,
     "Cleanup",

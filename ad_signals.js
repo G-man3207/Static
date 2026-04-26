@@ -60,8 +60,28 @@
   const CAPS = Object.freeze({
     endpoints: 50,
     origins: 100,
+    playbookCosmetic: 24,
+    playbookNetwork: 24,
+    playbookScripts: 16,
     reasons: 50,
     sources: 50,
+  });
+
+  const PLAYBOOKS = Object.freeze({
+    caps: Object.freeze({
+      cosmetic: CAPS.playbookCosmetic,
+      network: CAPS.playbookNetwork,
+      origins: CAPS.origins,
+      scripts: CAPS.playbookScripts,
+    }),
+    expireMs: 90 * 24 * 60 * 60 * 1000,
+    minHits: Object.freeze({
+      cosmetic: 2,
+      network: 2,
+      scripts: 2,
+    }),
+    staleMs: 30 * 24 * 60 * 60 * 1000,
+    version: 1,
   });
 
   const SIZES = Object.freeze([
@@ -195,6 +215,7 @@
     confidence: CONFIDENCE,
     confidenceForReasons,
     groups: GROUPS,
+    playbooks: PLAYBOOKS,
     scoreLimits: SCORE_LIMITS,
     reasons: REASONS,
     scoreForReasons,

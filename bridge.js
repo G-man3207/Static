@@ -241,10 +241,21 @@
         type: "static_ad_signal",
         signal: {
           confidence: String(signal.confidence || "learning").slice(0, 16),
+          cosmetic: Array.isArray(signal.cosmetic)
+            ? signal.cosmetic
+                .map((candidate) => ({
+                  diagnosticOnly: !!(candidate && candidate.diagnosticOnly),
+                  kind: String((candidate && candidate.kind) || "").slice(0, 32),
+                  reason: String((candidate && candidate.reason) || "").slice(0, 64),
+                  value: String((candidate && candidate.value) || "").slice(0, 160),
+                }))
+                .slice(0, 4)
+            : [],
           endpoint: String(signal.endpoint || "").slice(0, 160),
           reasons: Array.isArray(signal.reasons)
             ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
             : [],
+          resourceType: String(signal.resourceType || "").slice(0, 32),
           score: Math.max(0, Math.min(100, Math.round(signal.score || 0))),
           source: String(signal.source || "unknown").slice(0, 160),
         },
