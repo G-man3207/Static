@@ -289,6 +289,20 @@ const formatAdaptiveEndpointDiagnostics = (items) => {
     .join(", ");
 };
 
+const formatAdaptiveCalibration = (calibration) => {
+  if (!calibration) return "observe-only calibration unavailable";
+  const pieces = [
+    calibration.summary || "Adaptive signals remain diagnostics-only.",
+    `${fmt(calibration.scoreMax || 0)} max score; thresholds ${fmt(
+      calibration.minScore || 0
+    )} score / ${fmt(calibration.minHits || 0)} endpoint hits`,
+  ];
+  if (calibration.recoveryRequired) {
+    pieces.push("recovery controls required before blocking");
+  }
+  return pieces.join("; ");
+};
+
 const formatAdReasons = (reasons) => {
   if (!Array.isArray(reasons) || reasons.length === 0) return "none observed";
   return reasons
@@ -384,6 +398,11 @@ const addAdaptivePowerRows = (box, resp) => {
     box,
     "Adaptive endpoint guardrails",
     formatAdaptiveEndpointDiagnostics(resp.adaptiveEndpointDiagnostics)
+  );
+  addDiagnosticRow(
+    box,
+    "Adaptive calibration",
+    formatAdaptiveCalibration(resp.adaptiveCalibration)
   );
   addDiagnosticRow(box, "Adaptive blocking", "Observe-only; no generic adaptive rules active");
 };

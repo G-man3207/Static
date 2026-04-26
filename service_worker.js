@@ -984,6 +984,61 @@ const adaptiveEndpointDiagnosticsForEntry = (entry) =>
       })
   );
 
+const adaptiveCalibrationReasonForEndpoints = ({
+  candidateCount,
+  learningCount,
+  rejectedCount,
+}) => {
+  if (candidateCount > 0) return "endpoint:narrow-candidate-observed";
+  if (learningCount > 0) return "endpoint:needs-more-local-evidence";
+  if (rejectedCount > 0) return "endpoint:no-safe-rule-shape";
+  return "endpoint:none-observed";
+};
+
+const adaptiveCalibrationSummaryFor = ({ candidateCount, learningCount, rejectedCount }) => {
+  if (candidateCount > 0) {
+    return `${candidateCount} narrow endpoint candidate${
+      candidateCount === 1 ? "" : "s"
+    } observed; recovery controls required before any adaptive blocking.`;
+  }
+  if (learningCount > 0) {
+    return "Endpoint evidence is still learning; no adaptive blocking candidate is actionable.";
+  }
+  if (rejectedCount > 0) {
+    return "Observed endpoints are diagnostics-only because their rule shapes are too risky.";
+  }
+  return "No endpoint candidate was derived from the observed adaptive signals.";
+};
+
+const adaptiveCalibrationForEntry = (entry, endpointDiagnostics = null) => {
+  if (!entry) return null;
+  const diagnostics = endpointDiagnostics || adaptiveEndpointDiagnosticsForEntry(entry);
+  const candidateCount = diagnostics.filter((item) => item.status === "candidate").length;
+  const learningCount = diagnostics.filter((item) => item.status === "learning").length;
+  const rejectedCount = diagnostics.filter((item) => item.status === "rejected").length;
+  const scoreMax = Math.max(0, Math.round(entry.scoreMax || 0));
+  const reasons = [
+    "generic-adaptive-blocking:observe-only",
+    scoreMax >= ADAPTIVE_ENDPOINT_MIN_SCORE
+      ? "score:strong-local-signal"
+      : "score:needs-stronger-correlation",
+    adaptiveCalibrationReasonForEndpoints({ candidateCount, learningCount, rejectedCount }),
+    "recovery:required-before-blocking",
+  ];
+  return {
+    blockingMode: "observe-only",
+    candidateCount,
+    learningCount,
+    minHits: ADAPTIVE_ENDPOINT_MIN_HITS,
+    minScore: ADAPTIVE_ENDPOINT_MIN_SCORE,
+    reasons,
+    recoveryRequired: true,
+    rejectedCount,
+    scoreMax,
+    summary: adaptiveCalibrationSummaryFor({ candidateCount, learningCount, rejectedCount }),
+  };
+};
+
 const adNetworkEntryIsSessionEligible = (entry) =>
   !!entry &&
   entry.kind === "endpoint" &&
@@ -2192,25 +2247,33 @@ const handleAdSignal = (msg, sender) => {
 
 const storedEntryForOrigin = (origin, log) => (origin ? log[origin] : null);
 
-const adaptiveDiagnosticsFor = (entry) => ({
-  adaptiveCategories: entry ? entry.categories || {} : {},
-  adaptiveDetected: !!entry,
-  adaptiveEndpointDiagnostics: entry ? adaptiveEndpointDiagnosticsForEntry(entry) : [],
-  adaptiveEndpoints: entry ? countEntries(entry.endpoints, 4) : [],
-  adaptiveReasons: entry ? countEntries(entry.reasons, 8) : [],
-  adaptiveScore: entry ? entry.scoreMax || 0 : 0,
-  adaptiveSources: entry ? countEntries(entry.sources, 4) : [],
-});
+const adaptiveDiagnosticsFor = (entry) => {
+  const endpointDiagnostics = entry ? adaptiveEndpointDiagnosticsForEntry(entry) : [];
+  return {
+    adaptiveCalibration: entry ? adaptiveCalibrationForEntry(entry, endpointDiagnostics) : null,
+    adaptiveCategories: entry ? entry.categories || {} : {},
+    adaptiveDetected: !!entry,
+    adaptiveEndpointDiagnostics: endpointDiagnostics,
+    adaptiveEndpoints: entry ? countEntries(entry.endpoints, 4) : [],
+    adaptiveReasons: entry ? countEntries(entry.reasons, 8) : [],
+    adaptiveScore: entry ? entry.scoreMax || 0 : 0,
+    adaptiveSources: entry ? countEntries(entry.sources, 4) : [],
+  };
+};
 
 const adaptiveLogWithDiagnostics = (adaptiveLog = {}) =>
   Object.fromEntries(
-    Object.entries(adaptiveLog || {}).map(([origin, entry]) => [
-      origin,
-      {
-        ...entry,
-        endpointDiagnostics: adaptiveEndpointDiagnosticsForEntry(entry),
-      },
-    ])
+    Object.entries(adaptiveLog || {}).map(([origin, entry]) => {
+      const endpointDiagnostics = adaptiveEndpointDiagnosticsForEntry(entry);
+      return [
+        origin,
+        {
+          ...entry,
+          calibration: adaptiveCalibrationForEntry(entry, endpointDiagnostics),
+          endpointDiagnostics,
+        },
+      ];
+    })
   );
 
 const tabOriginFor = async (tabId) => {

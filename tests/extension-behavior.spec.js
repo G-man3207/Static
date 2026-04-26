@@ -1212,6 +1212,10 @@ test("popup clears current-site adaptive signals without changing modes or DNR r
   await expect(popupPage.locator("#power-diagnostics")).toContainText("canvas");
   await expect(popupPage.locator("#power-diagnostics")).toContainText("Adaptive sources");
   await expect(popupPage.locator("#power-diagnostics")).toContainText("Adaptive endpoints");
+  await expect(popupPage.locator("#power-diagnostics")).toContainText("Adaptive calibration");
+  await expect(popupPage.locator("#power-diagnostics")).toContainText(
+    "recovery controls required before blocking"
+  );
   await expect(popupPage.locator("#power-diagnostics")).toContainText(
     "Observe-only; no generic adaptive rules active"
   );
@@ -1380,6 +1384,9 @@ test("adaptive endpoint guardrails stay observe-only and reject unsafe rule shap
   await expect(powerDiagnostics).toContainText("Adaptive endpoint guardrails");
   await expect(powerDiagnostics).toContainText("/collect/fingerprint/*");
   await expect(powerDiagnostics).toContainText("narrow candidate");
+  await expect(powerDiagnostics).toContainText("Adaptive calibration");
+  await expect(powerDiagnostics).toContainText("1 narrow endpoint candidate observed");
+  await expect(powerDiagnostics).toContainText("recovery controls required before blocking");
   await expect(powerDiagnostics).toContainText("unsafe path token");
   await expect(powerDiagnostics).toContainText("path is too broad");
   await expect(powerDiagnostics).toContainText("unsupported protocol");
@@ -1403,6 +1410,14 @@ test("adaptive endpoint guardrails stay observe-only and reject unsafe rule shap
   await expect(guardrails).toContainText("narrow candidate");
   await expect(guardrails).toContainText("unsafe path token");
   await expect(guardrails).not.toContainText("stale");
+  const calibration = logPage.locator(".reason-guide").filter({
+    hasText: "Adaptive calibration",
+  });
+  await expect(calibration).toBeVisible();
+  await expect(calibration).toContainText("1 narrow endpoint candidate observed");
+  await expect(calibration).toContainText(
+    "Generic adaptive blocking stays observe-only until recovery controls exist"
+  );
 });
 
 test("Adaptive observe-only logging ignores canvas-heavy apps without corroborating signals", async ({

@@ -650,6 +650,46 @@ const buildAdaptiveEndpointDiagnostics = (items) => {
   return box;
 };
 
+const adaptiveCalibrationLines = (calibration) => {
+  if (!calibration) {
+    return ["Adaptive calibration metadata was not available for this origin."];
+  }
+  const lines = [
+    calibration.summary || "Adaptive signals remain diagnostics-only.",
+    `${fmt(calibration.scoreMax || 0)} max score; calibration thresholds are ${fmt(
+      calibration.minScore || 0
+    )} score and ${fmt(calibration.minHits || 0)} endpoint hits.`,
+  ];
+  if (calibration.recoveryRequired) {
+    lines.push("Generic adaptive blocking stays observe-only until recovery controls exist.");
+  }
+  return lines;
+};
+
+const buildAdaptiveCalibration = (calibration) => {
+  const box = document.createElement("div");
+  box.className = "reason-guide";
+  const title = document.createElement("div");
+  title.className = "drift-detail-title";
+  title.textContent = "Adaptive calibration";
+  box.appendChild(title);
+  const list = document.createElement("ul");
+  list.className = "drift-reasons";
+  for (const line of adaptiveCalibrationLines(calibration)) {
+    const li = document.createElement("li");
+    li.textContent = line;
+    list.appendChild(li);
+  }
+  const reasons = Array.isArray(calibration && calibration.reasons) ? calibration.reasons : [];
+  if (reasons.length > 0) {
+    const li = document.createElement("li");
+    li.textContent = `Calibration reasons: ${reasons.slice(0, 6).join(", ")}.`;
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  return box;
+};
+
 const appendAdaptiveClearControl = (box, origin) => {
   if (!origin) return;
   const actions = document.createElement("div");
@@ -714,6 +754,7 @@ const buildAdaptiveDetail = (adaptive, origin) => {
   const reasonGuide = buildAdaptiveReasonGuide(reasons);
   if (reasonGuide) box.appendChild(reasonGuide);
   box.appendChild(buildAdaptiveEndpointDiagnostics(adaptive.endpointDiagnostics));
+  box.appendChild(buildAdaptiveCalibration(adaptive.calibration));
   appendAdaptiveClearControl(box, origin);
   return box;
 };

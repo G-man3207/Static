@@ -10,11 +10,12 @@ Static rules block known endpoints before they run. Adaptive blocking is the sec
 rotation and self-hosted collectors: observe behavior, classify locally, and eventually block only
 when confidence is high enough.
 
-The current adaptive implementation is observe-only: Stage 1 logging plus Stage 2 diagnostics UI.
-It records compact local signals and never creates generic adaptive DNR rules. Generic adaptive
-blocking stages are intentionally unimplemented until calibration and recovery controls are strong
-enough. Separate opt-in Device signal poisoning can weaken many high-entropy Signal guide surfaces
-by returning stable per-site decoys instead of blocking the reads.
+The current adaptive implementation is observe-only: Stage 1 logging plus Stage 2 diagnostics UI
+with local endpoint guardrails and calibration summaries. It records compact local signals and never
+creates generic adaptive DNR rules. Generic adaptive blocking stages are intentionally unimplemented
+until calibration and recovery controls are strong enough. Separate opt-in Device signal poisoning
+can weaken many high-entropy Signal guide surfaces by returning stable per-site decoys instead of
+blocking the reads.
 
 ## Threat Model
 
@@ -113,6 +114,8 @@ Stage 2: UI calibration.
 
 - Show "Adaptive signals observed" with reasons.
 - Allow current-site adaptive signals to be cleared without clearing unrelated local logs or modes.
+- Show local endpoint guardrails and calibration status so candidate-looking endpoints remain
+  explicitly observe-only until recovery controls exist.
 - Use positive and negative fixtures to tune thresholds.
 - Keep user-facing language explicitly probabilistic.
 
