@@ -270,6 +270,25 @@ const formatCountEntries = (entries) => {
   return entries.map(([name, count]) => `${name} ${fmt(count)}`).join(", ");
 };
 
+const adaptiveEndpointStatusLabel = (status) => {
+  if (status === "candidate") return "narrow candidate";
+  if (status === "learning") return "learning";
+  return "rejected";
+};
+
+const formatAdaptiveEndpointDiagnostics = (items) => {
+  if (!Array.isArray(items) || items.length === 0) return "none";
+  return items
+    .slice(0, 4)
+    .map((item) => {
+      const label = item.path || item.endpoint || "endpoint";
+      const count = item.count ? `, ${fmt(item.count)} hit${item.count === 1 ? "" : "s"}` : "";
+      const reason = item.reason ? `, ${item.reason}` : "";
+      return `${label} (${adaptiveEndpointStatusLabel(item.status)}${count}${reason})`;
+    })
+    .join(", ");
+};
+
 const formatAdReasons = (reasons) => {
   if (!Array.isArray(reasons) || reasons.length === 0) return "none observed";
   return reasons
@@ -361,6 +380,11 @@ const addAdaptivePowerRows = (box, resp) => {
   addDiagnosticRow(box, "Adaptive reasons", formatCountEntries(resp.adaptiveReasons));
   addDiagnosticRow(box, "Adaptive sources", formatCountEntries(resp.adaptiveSources));
   addDiagnosticRow(box, "Adaptive endpoints", formatCountEntries(resp.adaptiveEndpoints));
+  addDiagnosticRow(
+    box,
+    "Adaptive endpoint guardrails",
+    formatAdaptiveEndpointDiagnostics(resp.adaptiveEndpointDiagnostics)
+  );
   addDiagnosticRow(box, "Adaptive blocking", "Observe-only; no generic adaptive rules active");
 };
 

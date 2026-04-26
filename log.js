@@ -616,6 +616,40 @@ const buildAdaptiveReasonGuide = (reasons) => {
   return guide;
 };
 
+const adaptiveEndpointStatusLabel = (status) => {
+  if (status === "candidate") return "narrow candidate";
+  if (status === "learning") return "learning";
+  return "rejected";
+};
+
+const buildAdaptiveEndpointDiagnostics = (items) => {
+  const box = document.createElement("div");
+  box.className = "reason-guide";
+  const title = document.createElement("div");
+  title.className = "drift-detail-title";
+  title.textContent = "Adaptive endpoint guardrails";
+  box.appendChild(title);
+  const list = document.createElement("ul");
+  list.className = "drift-reasons";
+  const entries = Array.isArray(items) ? items : [];
+  if (entries.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = "No endpoint candidates were derived from the observed adaptive signals.";
+    list.appendChild(li);
+  } else {
+    for (const item of entries.slice(0, 8)) {
+      const li = document.createElement("li");
+      const label = item.path || item.endpoint || "endpoint";
+      const count = item.count ? `, ${fmt(item.count)} hit${item.count === 1 ? "" : "s"}` : "";
+      const reason = item.reason ? `, ${item.reason}` : "";
+      li.textContent = `${label} (${adaptiveEndpointStatusLabel(item.status)}${count}${reason})`;
+      list.appendChild(li);
+    }
+  }
+  box.appendChild(list);
+  return box;
+};
+
 const appendAdaptiveClearControl = (box, origin) => {
   if (!origin) return;
   const actions = document.createElement("div");
@@ -679,6 +713,7 @@ const buildAdaptiveDetail = (adaptive, origin) => {
   box.appendChild(list);
   const reasonGuide = buildAdaptiveReasonGuide(reasons);
   if (reasonGuide) box.appendChild(reasonGuide);
+  box.appendChild(buildAdaptiveEndpointDiagnostics(adaptive.endpointDiagnostics));
   appendAdaptiveClearControl(box, origin);
   return box;
 };

@@ -1322,6 +1322,89 @@ test("log viewer clears one origin's adaptive signals without clearing other loc
   expect(rules).toEqual({ dynamic: [], session: [] });
 });
 
+test("adaptive endpoint guardrails stay observe-only and reject unsafe rule shapes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.evaluate(
+    (id) => fetch(`chrome-extension://${id}/manifest.json`).catch(() => {}),
+    PROBED_ID
+  );
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get({ probe_log: {} }).then(({ probe_log }) => !!probe_log[origin]),
+        server.origin
+      )
+    )
+    .toBe(true);
+  const now = Date.now();
+  await extension.serviceWorker.evaluate(
+    ({ now, origin }) =>
+      chrome.storage.local.set({
+        adaptive_log: {
+          [origin]: {
+            categories: { "anti-bot": 4 },
+            endpointDiagnostics: [{ endpoint: "stale", status: "candidate" }],
+            endpoints: {
+              [`${origin}/api/user/:token`]: 4,
+              [`${origin}/collect/fingerprint/:token`]: 3,
+              [`${origin}/js/`]: 4,
+              [`${origin.replace(/^http/, "ws")}/socket/:token`]: 2,
+            },
+            lastUpdated: now,
+            reasons: {
+              canvas: 1,
+              crypto: 1,
+              navigator: 1,
+              network: 4,
+            },
+            scoreMax: 9,
+            sources: { "runtime:settimeout": 1 },
+            total: 4,
+          },
+        },
+      }),
+    { now, origin: server.origin }
+  );
+
+  await page.bringToFront();
+  const tabId = await activeTabId(extension);
+  const popupPage = await openPopupForActiveTab(extension, tabId);
+  await openPopupAdvancedControls(popupPage);
+  await popupPage.getByText("Power diagnostics").click();
+  const powerDiagnostics = popupPage.locator("#power-diagnostics");
+  await expect(powerDiagnostics).toContainText("Adaptive endpoint guardrails");
+  await expect(powerDiagnostics).toContainText("/collect/fingerprint/*");
+  await expect(powerDiagnostics).toContainText("narrow candidate");
+  await expect(powerDiagnostics).toContainText("unsafe path token");
+  await expect(powerDiagnostics).toContainText("path is too broad");
+  await expect(powerDiagnostics).toContainText("unsupported protocol");
+  await expect(powerDiagnostics).toContainText("Observe-only; no generic adaptive rules active");
+  await expect(powerDiagnostics).not.toContainText("stale");
+
+  const rules = await extension.serviceWorker.evaluate(async () => ({
+    dynamic: await chrome.declarativeNetRequest.getDynamicRules(),
+    session: await chrome.declarativeNetRequest.getSessionRules(),
+  }));
+  expect(rules).toEqual({ dynamic: [], session: [] });
+
+  const logPage = await extension.context.newPage();
+  await logPage.goto(`chrome-extension://${extension.extensionId}/log.html`);
+  await logPage.getByText(server.origin).click();
+  const guardrails = logPage.locator(".reason-guide").filter({
+    hasText: "Adaptive endpoint guardrails",
+  });
+  await expect(guardrails).toBeVisible();
+  await expect(guardrails).toContainText("/collect/fingerprint/*");
+  await expect(guardrails).toContainText("narrow candidate");
+  await expect(guardrails).toContainText("unsafe path token");
+  await expect(guardrails).not.toContainText("stale");
+});
+
 test("Adaptive observe-only logging ignores canvas-heavy apps without corroborating signals", async ({
   extension,
   server,

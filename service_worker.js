@@ -91,6 +91,24 @@ const AD_PLAYBOOK_UNSAFE_ENDPOINT_RE =
 const AD_SESSION_COSMETIC_PENDING_MS = 10 * 60 * 1000;
 const AD_DYNAMIC_DISABLE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const AD_DYNAMIC_PROMOTION_MIN_HITS = Math.max(4, (AD_PLAYBOOK_MIN_HITS.network || 2) * 2);
+const ADAPTIVE_ENDPOINT_DIAGNOSTIC_CAP = 6;
+const ADAPTIVE_ENDPOINT_MIN_HITS = 2;
+const ADAPTIVE_ENDPOINT_MIN_SCORE = 9;
+const ADAPTIVE_ENDPOINT_COLLECTOR_RE =
+  /(?:^|[/:_.-])(?:abr|bot|challenge|collect|collector|datadome|fingerprint|fp|fraud|px|sensor|sift|telemetry|trace)(?:$|[/:_.-])/i;
+const ADAPTIVE_ENDPOINT_UNSAFE_RE =
+  /(?:^|[/:_.-])(?:account|api|auth|cart|checkout|graphql|login|order|payment|profile|search|settings|signin|signup|user)(?:$|[/:_.-])/i;
+const ADAPTIVE_ENDPOINT_BROAD_SEGMENTS = new Set([
+  "asset",
+  "assets",
+  "cdn",
+  "js",
+  "script",
+  "scripts",
+  "static",
+  "tag",
+  "tags",
+]);
 
 const adSessionState = new Map(); // origin -> same-browser-session cosmetic candidates
 const serviceWorkerAdSessionId = (() => {
@@ -864,6 +882,107 @@ const adSessionRuleKeyForCondition = (condition = {}) =>
 const adSessionRuleKeyForRule = (rule) => adSessionRuleKeyForCondition(rule && rule.condition);
 
 const adSessionRuleKeyForCandidate = (rule) => adSessionRuleKeyForCondition(rule.condition);
+
+const adaptiveEndpointPathSegments = (path) =>
+  String(path || "")
+    .split("/")
+    .filter(Boolean);
+
+const adaptiveEndpointIsBroadCommonPath = (pathSpec) => {
+  const segments = adaptiveEndpointPathSegments(pathSpec && pathSpec.path);
+  return (
+    pathSpec &&
+    pathSpec.exact &&
+    segments.length <= 1 &&
+    ADAPTIVE_ENDPOINT_BROAD_SEGMENTS.has((segments[0] || "").toLowerCase())
+  );
+};
+
+const adaptiveEndpointDiagnosticFor = ({ count, endpoint, scoreMax }) => {
+  const safeEndpoint = String(endpoint || "").slice(0, 160);
+  const base = {
+    count: Math.max(0, Math.round(count || 0)),
+    endpoint: safeEndpoint,
+    path: "",
+    reason: "",
+    status: "rejected",
+  };
+  let parsed;
+  try {
+    parsed = new URL(safeEndpoint);
+  } catch {
+    return {
+      ...base,
+      reason: "unparseable endpoint label",
+    };
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return {
+      ...base,
+      reason: "unsupported protocol for adaptive DNR calibration",
+    };
+  }
+
+  if (ADAPTIVE_ENDPOINT_UNSAFE_RE.test(parsed.pathname)) {
+    return {
+      ...base,
+      reason: "unsafe path token; diagnostics-only",
+    };
+  }
+
+  const pathSpec = dnrPathFilterForEndpoint(parsed.pathname);
+  if (!pathSpec || adaptiveEndpointIsBroadCommonPath(pathSpec)) {
+    return {
+      ...base,
+      reason: "path is too broad for a narrow adaptive rule",
+    };
+  }
+
+  const path = `${pathSpec.path}${pathSpec.exact ? "" : "*"}`;
+  if (!ADAPTIVE_ENDPOINT_COLLECTOR_RE.test(parsed.pathname)) {
+    return {
+      ...base,
+      path,
+      reason: "no collector-like path token",
+    };
+  }
+
+  if (scoreMax < ADAPTIVE_ENDPOINT_MIN_SCORE) {
+    return {
+      ...base,
+      path,
+      reason: "needs a stronger local adaptive score",
+      status: "learning",
+    };
+  }
+
+  if (base.count < ADAPTIVE_ENDPOINT_MIN_HITS) {
+    return {
+      ...base,
+      path,
+      reason: "needs repeated endpoint evidence",
+      status: "learning",
+    };
+  }
+
+  return {
+    ...base,
+    path,
+    reason: "narrow redacted collector path; observe-only until adaptive recovery controls exist",
+    status: "candidate",
+  };
+};
+
+const adaptiveEndpointDiagnosticsForEntry = (entry) =>
+  countEntries(entry && entry.endpoints, ADAPTIVE_ENDPOINT_DIAGNOSTIC_CAP).map(
+    ([endpoint, count]) =>
+      adaptiveEndpointDiagnosticFor({
+        count,
+        endpoint,
+        scoreMax: entry && entry.scoreMax ? entry.scoreMax : 0,
+      })
+  );
 
 const adNetworkEntryIsSessionEligible = (entry) =>
   !!entry &&
@@ -2076,11 +2195,23 @@ const storedEntryForOrigin = (origin, log) => (origin ? log[origin] : null);
 const adaptiveDiagnosticsFor = (entry) => ({
   adaptiveCategories: entry ? entry.categories || {} : {},
   adaptiveDetected: !!entry,
+  adaptiveEndpointDiagnostics: entry ? adaptiveEndpointDiagnosticsForEntry(entry) : [],
   adaptiveEndpoints: entry ? countEntries(entry.endpoints, 4) : [],
   adaptiveReasons: entry ? countEntries(entry.reasons, 8) : [],
   adaptiveScore: entry ? entry.scoreMax || 0 : 0,
   adaptiveSources: entry ? countEntries(entry.sources, 4) : [],
 });
+
+const adaptiveLogWithDiagnostics = (adaptiveLog = {}) =>
+  Object.fromEntries(
+    Object.entries(adaptiveLog || {}).map(([origin, entry]) => [
+      origin,
+      {
+        ...entry,
+        endpointDiagnostics: adaptiveEndpointDiagnosticsForEntry(entry),
+      },
+    ])
+  );
 
 const tabOriginFor = async (tabId) => {
   try {
@@ -2736,7 +2867,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       fingerprintMode: fingerprint_mode,
       origins: probe_log,
       replayDetections: replay_log,
-      adaptiveSignals: adaptive_log,
+      adaptiveSignals: adaptiveLogWithDiagnostics(adaptive_log),
       adBehavior: ad_log,
       adDynamicRecovery,
       adDynamicRules,
