@@ -290,7 +290,8 @@ const formatPlaybookEntries = (entries, valueKey) => {
       const score = typeof entry.score === "number" ? `score ${fmt(entry.score)}` : "score 0";
       const hits = entry.hits ? `, ${fmt(entry.hits)} hit${entry.hits === 1 ? "" : "s"}` : "";
       const diagnostic = entry.diagnosticOnly ? ", diagnostics-only" : "";
-      return `${value} (${score}${hits}${diagnostic})`;
+      const status = entry.status ? `, ${entry.status}` : "";
+      return `${value} (${score}${hits}${diagnostic}${status})`;
     })
     .join(", ");
 };
@@ -398,6 +399,9 @@ const adPlaybookState = (ad) => (ad && ad.playbook ? ad.playbook : {});
 
 const adEndpointState = (ad) => (ad && Array.isArray(ad.endpoints) ? ad.endpoints : []);
 
+const adSessionNetworkState = (ad) =>
+  ad && Array.isArray(ad.sessionNetwork) ? ad.sessionNetwork : [];
+
 const adCleanupModeState = (resp, ad) => (resp && resp.adCleanupMode) || (ad && ad.cleanupMode);
 
 const adCleanupDisabledText = (ad) =>
@@ -503,6 +507,7 @@ const renderAdDiagnostics = (resp) => {
   addDiagnosticRow(box, "Endpoints", formatCountEntries(adEndpointState(ad)));
   addDiagnosticRow(box, "Cosmetic", formatPlaybookEntries(playbook.cosmetic, "value"));
   addDiagnosticRow(box, "Network", formatPlaybookEntries(playbook.network, "path"));
+  addDiagnosticRow(box, "Session blocks", formatPlaybookEntries(adSessionNetworkState(ad), "path"));
   addDiagnosticRow(box, "Scripts", formatPlaybookEntries(playbook.scripts, "value"));
   addDiagnosticRow(box, "Cleanup mode", adCleanupModeLabel(adCleanupModeState(resp, ad)));
   addDiagnosticRow(box, "Cleanup", adCleanupDisabledText(ad));

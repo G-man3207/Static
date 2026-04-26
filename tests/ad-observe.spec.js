@@ -26,8 +26,27 @@ const dnrRuleCounts = (extension) =>
     };
   });
 
+const dnrSessionRules = (extension) =>
+  extension.serviceWorker.evaluate(() => chrome.declarativeNetRequest.getSessionRules());
+
 const adThresholds = (extension) =>
   extension.serviceWorker.evaluate(() => globalThis.__static_ad_signals__.thresholds);
+
+const setCleanupMode = (extension, mode) =>
+  extension.serviceWorker.evaluate(
+    (nextMode) =>
+      chrome.storage.local.get({ ad_prefs: {} }).then(({ ad_prefs }) =>
+        chrome.storage.local.set({
+          ad_prefs: {
+            ...ad_prefs,
+            lastUpdated: Date.now(),
+            mode: nextMode,
+            version: 1,
+          },
+        })
+      ),
+    mode
+  );
 
 const activeTabId = (extension) =>
   extension.serviceWorker.evaluate(() =>
@@ -47,6 +66,16 @@ const openPopupForActiveTab = async (extension, tabId) => {
 const openPopupAdvancedControls = async (popupPage) => {
   await popupPage.locator("#advanced-controls > summary").click();
   await expect(popupPage.locator("#advanced-controls")).toHaveAttribute("open", "");
+};
+
+const sendExtensionMessage = async (extension, message) => {
+  const extensionPage = await extension.context.newPage();
+  try {
+    await extensionPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+    return await extensionPage.evaluate((msg) => chrome.runtime.sendMessage(msg), message);
+  } finally {
+    await extensionPage.close();
+  }
 };
 
 test("correlated ad chain reaches high confidence without adding DNR rules", async ({
@@ -128,6 +157,107 @@ test("repeated high-confidence observations learn a capped versioned playbook", 
   expect(JSON.stringify(playbook)).not.toContain("1234567890abcdef1234567890abcdef");
   expect(JSON.stringify(playbook)).not.toContain("secret-token");
   expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+});
+
+test("session DNR quarantine creates narrow temporary rules only after repeated opt-in evidence", async ({
+  extension,
+  server,
+}) => {
+  await setCleanupMode(extension, "cosmetic");
+  const page = await extension.context.newPage();
+
+  await page.goto(server.url("/ad-dnr-fetch.html"));
+  await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+
+  await page.goto(server.url("/ad-dnr-fetch.html"));
+  await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 1 });
+
+  const [rule] = await dnrSessionRules(extension);
+  const host = new URL(server.origin).hostname;
+  expect(rule).toMatchObject({
+    action: { type: "block" },
+    condition: {
+      initiatorDomains: [host],
+      requestDomains: [host],
+      resourceTypes: ["xmlhttprequest"],
+    },
+    priority: 1,
+  });
+  expect(rule.condition.urlFilter).toBe(`|${server.origin}/collect/impression/`);
+  expect(rule.condition.urlFilter).not.toContain("1234567890abcdef1234567890abcdef");
+  expect(rule.condition.urlFilter).not.toContain("secret-token");
+
+  await page.goto(server.url("/ad-dnr-fetch-check.html"));
+  await expect.poll(() => page.evaluate(() => window.__adDnrFetchStatus)).toBe("blocked");
+
+  await page.goto(server.url("/ad-dnr-fetch.html"));
+  await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  await page.bringToFront();
+  const tabId = await activeTabId(extension);
+  const popupPage = await openPopupForActiveTab(extension, tabId);
+  await openPopupAdvancedControls(popupPage);
+  await popupPage.getByText("Ad behavior diagnostics").click();
+  await expect(popupPage.locator("#ad-diagnostics")).toContainText("Session blocks");
+  await expect(popupPage.locator("#ad-diagnostics")).toContainText(
+    "same-origin:/collect/impression/*"
+  );
+
+  const logPage = await extension.context.newPage();
+  await logPage.goto(`chrome-extension://${extension.extensionId}/log.html`);
+  await expect(logPage.getByText(server.origin)).toBeVisible();
+  await logPage.getByText(server.origin).click();
+  await expect(logPage.getByText("Session network blocks")).toBeVisible();
+  await expect(logPage.getByText("same-origin:/collect/impression/*")).toBeVisible();
+});
+
+test("session DNR quarantine skips unsafe API-looking endpoints", async ({ extension, server }) => {
+  await setCleanupMode(extension, "cosmetic");
+  const page = await extension.context.newPage();
+  for (let i = 0; i < 2; i++) {
+    await page.goto(server.url("/ad-dnr-api.html"));
+    await expect.poll(() => page.evaluate(() => window.__adDnrApiDone === true)).toBe(true);
+  }
+
+  const playbook = await adPlaybookFor(extension, server.origin);
+  expect(playbook && playbook.network).toEqual([]);
+  expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+});
+
+test("per-site disable and clear learned ad data remove session DNR quarantine rules", async ({
+  extension,
+  server,
+}) => {
+  await setCleanupMode(extension, "cosmetic");
+  const page = await extension.context.newPage();
+  for (let i = 0; i < 2; i++) {
+    await page.goto(server.url("/ad-dnr-fetch.html"));
+    await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  }
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 1 });
+
+  await sendExtensionMessage(extension, {
+    disabled: true,
+    origin: server.origin,
+    type: "static_set_ad_cleanup_disabled",
+  });
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+
+  await sendExtensionMessage(extension, {
+    disabled: false,
+    origin: server.origin,
+    type: "static_set_ad_cleanup_disabled",
+  });
+  await page.goto(server.url("/ad-dnr-fetch.html"));
+  await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 1 });
+
+  await sendExtensionMessage(extension, {
+    origin: server.origin,
+    type: "static_clear_ad_site_data",
+  });
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
 });
 
 test("broad cosmetic selectors stay diagnostics-only while structures can be learned", async ({

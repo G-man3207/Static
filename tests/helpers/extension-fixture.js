@@ -93,6 +93,98 @@ const fixtureFiles = {
     );
     window.__adObserveDone = true;
   `,
+  "/ad-dnr-fetch.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div id="dnr-ad-slot"></div>
+      <script src="/assets/ad/dnr-fetch-loader-1234567890abcdef1234567890abcdef.js?token=secret-token"></script>
+    </body>
+  `,
+  "/assets/ad/dnr-fetch-loader-1234567890abcdef1234567890abcdef.js": `
+    (async () => {
+      window.googletag = {
+        defineSlot() {
+          return {
+            addService() {
+              return this;
+            },
+          };
+        },
+        pubads() {
+          return {};
+        },
+      };
+      window.googletag.defineSlot("/1234/dnr", [300, 250], "dnr-ad-slot").addService(
+        window.googletag.pubads()
+      );
+      const iframe = document.createElement("iframe");
+      iframe.width = "300";
+      iframe.height = "250";
+      iframe.src = "/creative/dnr-widget.html?creative=private-token";
+      document.getElementById("dnr-ad-slot").appendChild(iframe);
+      try {
+        await fetch(
+          "/collect/impression/fetch-1234567890abcdef1234567890abcdef?token=secret-token"
+        );
+        window.__adDnrFetchTraining = "resolved";
+      } catch {
+        window.__adDnrFetchTraining = "blocked";
+      }
+      window.__adDnrFetchDone = true;
+    })();
+  `,
+  "/ad-dnr-fetch-check.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <script>
+        fetch("/collect/impression/fetch-later-1234567890abcdef1234567890abcdef")
+          .then(() => {
+            window.__adDnrFetchStatus = "resolved";
+          })
+          .catch(() => {
+            window.__adDnrFetchStatus = "blocked";
+          });
+      </script>
+    </body>
+  `,
+  "/ad-dnr-api.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div id="dnr-api-slot"></div>
+      <script src="/assets/ad/dnr-api-loader-1234567890abcdef1234567890abcdef.js?token=secret-token"></script>
+    </body>
+  `,
+  "/assets/ad/dnr-api-loader-1234567890abcdef1234567890abcdef.js": `
+    (async () => {
+      window.googletag = {
+        defineSlot() {
+          return {
+            addService() {
+              return this;
+            },
+          };
+        },
+        pubads() {
+          return {};
+        },
+      };
+      window.googletag.defineSlot("/1234/dnr-api", [300, 250], "dnr-api-slot").addService(
+        window.googletag.pubads()
+      );
+      const iframe = document.createElement("iframe");
+      iframe.width = "300";
+      iframe.height = "250";
+      iframe.src = "/creative/dnr-api-widget.html?creative=private-token";
+      document.getElementById("dnr-api-slot").appendChild(iframe);
+      await fetch(
+        "/api/ads/impression/api-1234567890abcdef1234567890abcdef?token=secret-token"
+      ).catch(() => {});
+      window.__adDnrApiDone = true;
+    })();
+  `,
   "/ad-session-first.html": `
     <!doctype html>
     <meta charset="utf-8">

@@ -737,17 +737,34 @@ const adCleanupText = (origin, playbook, prefs) => {
     : "Ad cleanup is not disabled for this origin.";
 };
 
-const adDetailLines = ({ ad, endpoints, origin, playbook, prefs, score, sources }) =>
+const adSessionNetworkText = (sessionNetwork) => {
+  const count = Array.isArray(sessionNetwork) ? sessionNetwork.length : 0;
+  return count > 0
+    ? `${fmt(count)} learned network block${count === 1 ? "" : "s"} active for this browser session.`
+    : "No learned network blocks active for this browser session.";
+};
+
+const adDetailLines = ({
+  ad,
+  endpoints,
+  origin,
+  playbook,
+  prefs,
+  score,
+  sessionNetwork,
+  sources,
+}) =>
   [
     `Local score: ${fmt(score || 0)}.`,
     `Top reason tokens: ${topAdReasonText(ad && ad.reasons)}`,
     adEndpointEvidenceText(endpoints),
+    adSessionNetworkText(sessionNetwork),
     adSourceText(sources),
     adCleanupText(origin, playbook, prefs),
   ].filter(Boolean);
 
-const buildAdDetail = (origin, ad, playbook, prefs) => {
-  if (!ad && !playbook) return null;
+const buildAdDetail = ({ ad, origin, playbook, prefs, sessionNetwork = [] }) => {
+  if (!ad && !playbook && sessionNetwork.length === 0) return null;
   const box = document.createElement("div");
   box.className = "drift-detail";
   const confidence = adConfidenceForEntry(ad || playbook);
@@ -761,7 +778,16 @@ const buildAdDetail = (origin, ad, playbook, prefs) => {
   const endpoints = sortedCountEntries(ad && ad.endpoints);
   const sources = sortedCountEntries(ad && ad.sources);
   const score = adScoreValue(ad);
-  const lines = adDetailLines({ ad, endpoints, origin, playbook, prefs, score, sources });
+  const lines = adDetailLines({
+    ad,
+    endpoints,
+    origin,
+    playbook,
+    prefs,
+    score,
+    sessionNetwork,
+    sources,
+  });
   for (const line of lines) {
     const li = document.createElement("li");
     li.textContent = line;
@@ -774,6 +800,7 @@ const buildAdDetail = (origin, ad, playbook, prefs) => {
   box.appendChild(
     buildAdPlaybookList("Learned endpoint entries", playbook && playbook.network, "path")
   );
+  box.appendChild(buildAdPlaybookList("Session network blocks", sessionNetwork, "path"));
   box.appendChild(
     buildAdPlaybookList("Learned script labels", playbook && playbook.scripts, "value")
   );
@@ -883,7 +910,13 @@ const buildOriginDetail = ({ drift, entry, origin, rank, severity }) => {
   }
   const adaptive = buildAdaptiveDetail(entry.__adaptive);
   if (adaptive) box.appendChild(adaptive);
-  const ad = buildAdDetail(origin, entry.__ad, entry.__adPlaybook, entry.__adPrefs);
+  const ad = buildAdDetail({
+    ad: entry.__ad,
+    origin,
+    playbook: entry.__adPlaybook,
+    prefs: entry.__adPrefs,
+    sessionNetwork: entry.__adSessionRules,
+  });
   if (ad) box.appendChild(ad);
   const diagnostics = buildDiagnosticDetail(entry.__diagnostics);
   if (diagnostics) box.appendChild(diagnostics);
@@ -919,6 +952,7 @@ const entryFilterValues = (entry) => {
   const adaptive = entry.__adaptive || {};
   const ad = entry.__ad || {};
   const adPlaybook = entry.__adPlaybook || {};
+  const adSessionRules = entry.__adSessionRules || [];
   return [
     ...Object.keys(adaptive.categories || {}),
     ...Object.keys(adaptive.reasons || {}),
@@ -927,6 +961,7 @@ const entryFilterValues = (entry) => {
     ...Object.keys(ad.endpoints || {}),
     ...Object.keys(ad.sources || {}),
     ...adPlaybookFilterValues(adPlaybook),
+    ...adSessionRules.map((rule) => rule.path || ""),
   ];
 };
 
@@ -962,6 +997,7 @@ const originNamesForData = (data) =>
     ...Object.keys(data.adBehavior || {}),
     ...Object.keys(data.adPlaybooks || {}),
     ...Object.keys(data.diagnostics || {}),
+    ...(data.adSessionRules || []).map((rule) => rule.origin).filter(Boolean),
   ]);
 
 const lastUpdatedForEntry = ({ adaptive, ad, adPlaybook, diagnostic, entry }) =>
@@ -979,12 +1015,14 @@ const rankedEntriesForData = (data) => {
   const adPlaybooks = data.adPlaybooks || {};
   const diagnostics = data.diagnostics || {};
   const adPrefs = data.adPrefs || {};
+  const adSessionRules = data.adSessionRules || [];
   return [...originNamesForData(data)].map((origin) => {
     const entry = origins[origin] || { idCounts: {}, lastUpdated: 0 };
     const adaptive = adaptiveSignals[origin];
     const ad = adBehavior[origin];
     const adPlaybook = adPlaybooks[origin];
     const diagnostic = diagnostics[origin];
+    const sessionRules = adSessionRules.filter((rule) => rule && rule.origin === origin);
     return rankedEntryFor(origin, {
       ...entry,
       lastUpdated: lastUpdatedForEntry({ adaptive, ad, adPlaybook, diagnostic, entry }),
@@ -992,6 +1030,7 @@ const rankedEntriesForData = (data) => {
       __ad: ad,
       __adPlaybook: adPlaybook,
       __adPrefs: adPrefs,
+      __adSessionRules: sessionRules,
       __diagnostics: diagnostic,
     });
   });

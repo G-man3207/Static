@@ -59,6 +59,7 @@ const AD_PLAYBOOK_EXPIRE_MS = AD_PLAYBOOK_CONFIG.expireMs || 90 * 24 * 60 * 60 *
 const AD_CLEANUP_MODES = new Set(["off", "diagnostic", "cosmetic"]);
 const AD_SESSION_RULE_ID_MIN = 8000000;
 const AD_SESSION_RULE_ID_MAX = 8999999;
+const AD_SESSION_RULE_CAP = 64;
 const AD_PLAYBOOK_RESOURCE_TYPES = new Set([
   "image",
   "other",
@@ -80,7 +81,7 @@ const AD_PLAYBOOK_BROAD_SELECTOR_TOKENS = new Set([
 const AD_PLAYBOOK_ENDPOINT_RE =
   /(?:^|[/:_.-])(?:ad|ads|adserver|auction|beacon|bid|creative|impression|pixel|viewability|viewable)(?:$|[/:_.-])/i;
 const AD_PLAYBOOK_UNSAFE_ENDPOINT_RE =
-  /(?:^|[/:_.-])(?:account|auth|checkout|graphql|login|order|payment|profile|search|settings|signin|signup|user)(?:$|[/:_.-])/i;
+  /(?:^|[/:_.-])(?:account|api|auth|checkout|graphql|login|order|payment|profile|search|settings|signin|signup|user)(?:$|[/:_.-])/i;
 const AD_SESSION_COSMETIC_PENDING_MS = 10 * 60 * 1000;
 
 const adSessionState = new Map(); // origin -> same-browser-session cosmetic candidates
@@ -739,6 +740,234 @@ const mergeAdCosmeticConfigEntries = (...entryLists) => {
     .slice(0, AD_PLAYBOOK_CAPS.cosmetic);
 };
 
+const adHighScoreThreshold = () => (AD_SIGNALS.thresholds && AD_SIGNALS.thresholds.high) || 80;
+
+const adSessionRuleIdIsManaged = (id) =>
+  Number.isInteger(id) && id >= AD_SESSION_RULE_ID_MIN && id <= AD_SESSION_RULE_ID_MAX;
+
+const adSessionRuleIsManaged = (rule) => !!rule && adSessionRuleIdIsManaged(rule.id);
+
+const dnrDomainForOrigin = (origin) => {
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    return host.replace(/^\[(.*)\]$/, "$1");
+  } catch {
+    return "";
+  }
+};
+
+const safeDnrResourceTypesFor = (entry) =>
+  Array.from(
+    new Set(
+      (Array.isArray(entry && entry.resourceTypes) ? entry.resourceTypes : [])
+        .map((type) => normalizeAdResourceType(type))
+        .filter(Boolean)
+    )
+  ).sort();
+
+const sameOriginEndpointPath = (endpoint) => {
+  const path = safePlaybookText(endpoint);
+  return path.startsWith("same-origin:/") ? path.slice("same-origin:".length) : "";
+};
+
+const redactedPathHasPlaceholder = (segment) => String(segment || "").startsWith(":");
+
+const dnrPathFilterForEndpoint = (path) => {
+  if (!path || !path.startsWith("/") || path === "/" || /[\s|^*]/.test(path)) return null;
+  const segments = path.split("/").slice(1).filter(Boolean);
+  if (segments.length === 0) return null;
+  const placeholderIndex = segments.findIndex(redactedPathHasPlaceholder);
+  const staticSegments = placeholderIndex >= 0 ? segments.slice(0, placeholderIndex) : segments;
+  if (staticSegments.length === 0) return null;
+  if (placeholderIndex >= 0 && staticSegments.length < 2) return null;
+  if (staticSegments.some((segment) => redactedPathHasPlaceholder(segment))) return null;
+  return {
+    exact: placeholderIndex < 0,
+    path: `/${staticSegments.join("/")}${placeholderIndex >= 0 ? "/" : ""}`,
+  };
+};
+
+const adSessionUrlFilterFor = (origin, pathSpec) =>
+  `|${origin}${pathSpec.path}${pathSpec.exact ? "^" : ""}`;
+
+const adSessionRuleKeyForCondition = (condition = {}) =>
+  [
+    condition.urlFilter || "",
+    (condition.initiatorDomains || []).slice().sort().join(","),
+    (condition.requestDomains || []).slice().sort().join(","),
+    (condition.resourceTypes || []).slice().sort().join(","),
+  ].join("\n");
+
+const adSessionRuleKeyForRule = (rule) => adSessionRuleKeyForCondition(rule && rule.condition);
+
+const adSessionRuleKeyForCandidate = (rule) => adSessionRuleKeyForCondition(rule.condition);
+
+const adNetworkEntryIsSessionEligible = (entry) =>
+  !!entry &&
+  entry.kind === "endpoint" &&
+  !entry.diagnosticOnly &&
+  (entry.hits || 0) >= AD_PLAYBOOK_MIN_HITS.network &&
+  (entry.score || 0) >= adHighScoreThreshold();
+
+const adSessionRuleCandidateForEntry = (origin, entry) => {
+  if (!adNetworkEntryIsSessionEligible(entry)) return null;
+  const host = dnrDomainForOrigin(origin);
+  const endpointPath = sameOriginEndpointPath(entry.path);
+  const resourceTypes = safeDnrResourceTypesFor(entry);
+  if (!host || resourceTypes.length === 0 || !endpointPath) return null;
+  if (AD_PLAYBOOK_UNSAFE_ENDPOINT_RE.test(endpointPath)) return null;
+  if (!AD_PLAYBOOK_ENDPOINT_RE.test(endpointPath)) return null;
+  const pathSpec = dnrPathFilterForEndpoint(endpointPath);
+  if (!pathSpec) return null;
+  const rule = {
+    action: { type: "block" },
+    condition: {
+      initiatorDomains: [host],
+      requestDomains: [host],
+      resourceTypes,
+      urlFilter: adSessionUrlFilterFor(origin, pathSpec),
+    },
+    priority: 1,
+  };
+  return {
+    key: adSessionRuleKeyForCandidate(rule),
+    rule,
+  };
+};
+
+const adSessionRuleCandidatesForPlaybook = (origin, playbook) =>
+  (Array.isArray(playbook && playbook.network) ? playbook.network : [])
+    .map((entry) => adSessionRuleCandidateForEntry(origin, sanitizeAdPlaybookEntry(entry)))
+    .filter(Boolean)
+    .slice(0, AD_PLAYBOOK_CAPS.network);
+
+const nextAdSessionRuleId = ({ addRules, removeRuleIds, sessionRules }) => {
+  const used = new Set(
+    sessionRules.filter((rule) => !removeRuleIds.has(rule.id)).map((rule) => rule.id)
+  );
+  for (const rule of addRules) used.add(rule.id);
+  const maxUsed = Math.max(AD_SESSION_RULE_ID_MIN - 1, ...used);
+  const start = Math.min(Math.max(maxUsed + 1, AD_SESSION_RULE_ID_MIN), AD_SESSION_RULE_ID_MAX);
+  for (let id = start; id <= AD_SESSION_RULE_ID_MAX; id++) {
+    if (!used.has(id)) return id;
+  }
+  for (let id = AD_SESSION_RULE_ID_MIN; id < start; id++) {
+    if (!used.has(id)) return id;
+  }
+  return null;
+};
+
+const evictAdSessionRules = ({ addRules, candidates, removeRuleIds, sessionRules }) => {
+  const candidateKeys = new Set(candidates.map((candidate) => candidate.key));
+  let overLimit = sessionRules.length - removeRuleIds.size + addRules.length - AD_SESSION_RULE_CAP;
+  if (overLimit <= 0) return;
+  const sortedRules = sessionRules
+    .filter((rule) => !removeRuleIds.has(rule.id))
+    .sort((a, b) => a.id - b.id);
+  for (const rule of sortedRules) {
+    if (overLimit <= 0) return;
+    if (candidateKeys.has(adSessionRuleKeyForRule(rule))) continue;
+    removeRuleIds.add(rule.id);
+    overLimit--;
+  }
+  for (const rule of sortedRules) {
+    if (overLimit <= 0) return;
+    if (removeRuleIds.has(rule.id)) continue;
+    removeRuleIds.add(rule.id);
+    overLimit--;
+  }
+};
+
+const applyAdSessionRuleCandidates = async (candidates) => {
+  if (candidates.length === 0) return 0;
+  try {
+    const allRules = await chrome.declarativeNetRequest.getSessionRules();
+    const sessionRules = allRules.filter(adSessionRuleIsManaged);
+    const existingKeys = new Set(sessionRules.map(adSessionRuleKeyForRule));
+    const removeRuleIds = new Set();
+    const addRules = [];
+    for (const candidate of candidates) {
+      if (existingKeys.has(candidate.key)) continue;
+      const id = nextAdSessionRuleId({ addRules, removeRuleIds, sessionRules });
+      if (!id) break;
+      addRules.push({ ...candidate.rule, id });
+    }
+    evictAdSessionRules({ addRules, candidates, removeRuleIds, sessionRules });
+    if (addRules.length === 0 && removeRuleIds.size === 0) return 0;
+    await chrome.declarativeNetRequest.updateSessionRules({
+      addRules,
+      removeRuleIds: Array.from(removeRuleIds),
+    });
+    return addRules.length;
+  } catch {
+    return 0;
+  }
+};
+
+const adSessionRulesActiveForOrigin = ({ adPrefs, origin, playbook }) =>
+  adCleanupModeFor(adPrefs) === "cosmetic" &&
+  !adSitePrefsFor(origin, adPrefs).cleanupDisabled &&
+  !(playbook && playbook.disabled);
+
+const syncAdSessionRulesForOrigin = async ({ adPrefs, origin, playbook }) => {
+  if (!origin) return 0;
+  if (!adSessionRulesActiveForOrigin({ adPrefs, origin, playbook })) {
+    return clearAdSessionRulesForOrigin(origin);
+  }
+  const candidates = adSessionRuleCandidatesForPlaybook(origin, playbook);
+  if (candidates.length === 0) return clearAdSessionRulesForOrigin(origin);
+  return applyAdSessionRuleCandidates(candidates);
+};
+
+const adSessionUrlFilterParts = (urlFilter) => {
+  const exact = String(urlFilter || "").endsWith("^");
+  const withoutStart = String(urlFilter || "").replace(/^\|/, "");
+  const urlText = exact ? withoutStart.slice(0, -1) : withoutStart;
+  try {
+    const parsed = new URL(urlText);
+    return {
+      exact,
+      origin: parsed.origin,
+      path: `same-origin:${parsed.pathname}${exact ? "" : "*"}`,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const adSessionRuleSummaryForRule = (rule) => {
+  const condition = (rule && rule.condition) || {};
+  const parts = adSessionUrlFilterParts(condition.urlFilter);
+  if (!parts) return null;
+  return {
+    diagnosticOnly: false,
+    firstSeen: 0,
+    hits: 0,
+    kind: "session-rule",
+    lastSeen: 0,
+    origin: parts.origin,
+    path: parts.path,
+    resourceTypes: safeDnrResourceTypesFor(condition),
+    ruleId: rule.id,
+    score: adHighScoreThreshold(),
+    status: "session",
+  };
+};
+
+const adSessionRuleSummariesForOrigin = async (origin) => {
+  try {
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    return rules
+      .filter(adSessionRuleIsManaged)
+      .map(adSessionRuleSummaryForRule)
+      .filter((summary) => summary && (!origin || summary.origin === origin))
+      .sort((a, b) => b.ruleId - a.ruleId)
+      .slice(0, AD_SESSION_RULE_CAP);
+  } catch {
+    return [];
+  }
+};
+
 const endpointCandidateFor = (endpoint, resourceType) => {
   const path = safePlaybookText(endpoint);
   if (!path || !path.startsWith("same-origin:/")) return null;
@@ -850,7 +1079,13 @@ const updateAdPlaybook = ({ adPlaybooks, classification, disabled, normalized, n
   return true;
 };
 
-const adDiagnosticsFor = ({ adLog = {}, adPlaybooks = {}, adPrefs = {}, origin }) => {
+const adDiagnosticsFor = ({
+  adLog = {},
+  adPlaybooks = {},
+  adPrefs = {},
+  origin,
+  sessionNetwork = [],
+}) => {
   const entry = storedEntryForOrigin(origin, adLog);
   const classification = adClassificationFor((entry && entry.reasons) || {});
   const entryDiagnostics = adEntryDiagnosticsFor(entry, classification);
@@ -863,6 +1098,7 @@ const adDiagnosticsFor = ({ adLog = {}, adPlaybooks = {}, adPrefs = {}, origin }
     lastUpdated: Math.max(entryDiagnostics.updatedAt, playbook.lastUpdated || 0),
     playbook,
     prefs,
+    sessionNetwork,
   };
 };
 
@@ -954,6 +1190,11 @@ const recordAdSignal = async (origin, signal) => {
     origin,
   });
   await chrome.storage.local.set({ ad_log, ad_playbooks });
+  await syncAdSessionRulesForOrigin({
+    adPrefs: ad_prefs,
+    origin,
+    playbook: ad_playbooks[origin],
+  });
   if (sessionChanged) await broadcastAdCosmeticUpdate(origin);
 };
 
@@ -1387,6 +1628,16 @@ const handleAdSignal = (msg, sender) => {
 
 const storedEntryForOrigin = (origin, log) => (origin ? log[origin] : null);
 
+const tabOriginFor = async (tabId) => {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const origin = originFromUrl(tab && tab.url);
+    return origin && origin !== "null" ? origin : null;
+  } catch {
+    return null;
+  }
+};
+
 const loggedOriginsFor = (stored) =>
   new Set([
     ...Object.keys(stored.probe_log),
@@ -1401,10 +1652,12 @@ const diagnosticEventCountFor = (entry) => (entry ? (entry.events || []).length 
 
 const detailsResponseFor = async (tabId, stored) => {
   const state = perTabState.get(tabId);
-  const origin = state ? state.origin : null;
+  const origin = (state && state.origin) || (await tabOriginFor(tabId));
+  if (state && origin) state.origin = origin;
   const originProbeEntry = storedEntryForOrigin(origin, stored.probe_log);
   const adaptiveEntry = storedEntryForOrigin(origin, stored.adaptive_log);
   const diagnosticEntry = storedEntryForOrigin(origin, stored.diagnostic_log);
+  const adSessionNetwork = await adSessionRuleSummariesForOrigin(origin);
   const selectedPersonaIds =
     originProbeEntry && stored.noise_enabled ? await personaFor(origin) : [];
   const loggedOrigins = loggedOriginsFor(stored);
@@ -1425,6 +1678,7 @@ const detailsResponseFor = async (tabId, stored) => {
       adPlaybooks: stored.ad_playbooks,
       adPrefs: stored.ad_prefs,
       origin,
+      sessionNetwork: adSessionNetwork,
     }),
     diagnosticEvents: diagnosticEventCountFor(diagnosticEntry),
     diagnosticOrigins: Object.keys(stored.diagnostic_log).length,
@@ -1605,6 +1859,7 @@ const handleSetAdCleanupMode = (msg, _sender, sendResponse) => {
         version: AD_PLAYBOOK_VERSION,
       },
     });
+    if (mode !== "cosmetic") await clearAllAdSessionRules();
     await broadcastConfigUpdate();
     sendResponse({ mode, ok: true });
   })();
@@ -1652,7 +1907,10 @@ const setAdCleanupDisabled = async (origin, disabled) => {
   };
   delete nextPrefs.site;
   await chrome.storage.local.set({ ad_playbooks, ad_prefs: nextPrefs });
-  if (disabled) clearAdSessionStateForOrigin(normalized);
+  if (disabled) {
+    clearAdSessionStateForOrigin(normalized);
+    await clearAdSessionRulesForOrigin(normalized);
+  }
   await broadcastAdCosmeticUpdate(normalized);
   return adSitePrefsFor(normalized, nextPrefs);
 };
@@ -1666,19 +1924,15 @@ const handleSetAdCleanupDisabled = (msg, _sender, sendResponse) => {
 };
 
 const sessionRuleMatchesOrigin = (rule, origin) => {
-  if (!rule || rule.id < AD_SESSION_RULE_ID_MIN || rule.id > AD_SESSION_RULE_ID_MAX) return false;
+  if (!adSessionRuleIsManaged(rule)) return false;
   const condition = rule.condition || {};
   const domains = [
     ...(condition.initiatorDomains || []),
     ...(condition.excludedInitiatorDomains || []),
   ];
   if (domains.length === 0) return false;
-  try {
-    const host = new URL(origin).hostname;
-    return domains.some((domain) => domain === host || domain.endsWith(`.${host}`));
-  } catch {
-    return false;
-  }
+  const host = dnrDomainForOrigin(origin);
+  return !!host && domains.some((domain) => domain === host);
 };
 
 const clearAdSessionRulesForOrigin = async (origin) => {
@@ -1687,6 +1941,19 @@ const clearAdSessionRulesForOrigin = async (origin) => {
     const removeRuleIds = rules
       .filter((rule) => sessionRuleMatchesOrigin(rule, origin))
       .map((rule) => rule.id);
+    if (removeRuleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+    }
+    return removeRuleIds.length;
+  } catch {
+    return 0;
+  }
+};
+
+const clearAllAdSessionRules = async () => {
+  try {
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    const removeRuleIds = rules.filter(adSessionRuleIsManaged).map((rule) => rule.id);
     if (removeRuleIds.length > 0) {
       await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
     }
@@ -1751,6 +2018,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       fingerprint_mode: "off",
       cumulative: 0,
     });
+    const adSessionRules = await adSessionRuleSummariesForOrigin(null);
     sendResponse({
       schema: "static.probe-log.v1",
       exportedAt: new Date().toISOString(),
@@ -1764,6 +2032,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       adBehavior: ad_log,
       adPlaybooks: ad_playbooks,
       adPrefs: ad_prefs,
+      adSessionRules,
     });
   })();
   return true;
@@ -1773,6 +2042,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
   (async () => {
     cachedSecretPromise = null;
     clearAllAdSessionState();
+    await clearAllAdSessionRules();
     await serialize(() =>
       chrome.storage.local.remove([
         "probe_log",
