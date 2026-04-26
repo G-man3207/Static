@@ -57,9 +57,15 @@ const AD_PLAYBOOK_VERSION = AD_PLAYBOOK_CONFIG.version || 1;
 const AD_PLAYBOOK_STALE_MS = AD_PLAYBOOK_CONFIG.staleMs || 30 * 24 * 60 * 60 * 1000;
 const AD_PLAYBOOK_EXPIRE_MS = AD_PLAYBOOK_CONFIG.expireMs || 90 * 24 * 60 * 60 * 1000;
 const AD_CLEANUP_MODES = new Set(["off", "diagnostic", "cosmetic"]);
+const AD_BROWSER_SESSION_STORAGE_KEY = "ad_browser_session_id";
 const AD_SESSION_RULE_ID_MIN = 8000000;
 const AD_SESSION_RULE_ID_MAX = 8999999;
 const AD_SESSION_RULE_CAP = 64;
+const AD_DYNAMIC_RULE_ID_MIN = 9000000;
+const AD_DYNAMIC_RULE_ID_MAX = 9099999;
+const AD_DYNAMIC_RULE_CAP = 32;
+const AD_DYNAMIC_METADATA_CAP = AD_DYNAMIC_RULE_CAP * 2;
+const AD_DYNAMIC_PROMOTION_MIN_SESSIONS = 2;
 const AD_PLAYBOOK_RESOURCE_TYPES = new Set([
   "image",
   "other",
@@ -83,8 +89,21 @@ const AD_PLAYBOOK_ENDPOINT_RE =
 const AD_PLAYBOOK_UNSAFE_ENDPOINT_RE =
   /(?:^|[/:_.-])(?:account|api|auth|checkout|graphql|login|order|payment|profile|search|settings|signin|signup|user)(?:$|[/:_.-])/i;
 const AD_SESSION_COSMETIC_PENDING_MS = 10 * 60 * 1000;
+const AD_DYNAMIC_DISABLE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+const AD_DYNAMIC_PROMOTION_MIN_HITS = Math.max(4, (AD_PLAYBOOK_MIN_HITS.network || 2) * 2);
 
 const adSessionState = new Map(); // origin -> same-browser-session cosmetic candidates
+const serviceWorkerAdSessionId = (() => {
+  try {
+    const parts = new Uint32Array(2);
+    crypto.getRandomValues(parts);
+    return `worker-${Array.from(parts)
+      .map((part) => part.toString(36))
+      .join("-")}`;
+  } catch {
+    return `worker-${Date.now().toString(36)}`;
+  }
+})();
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -342,6 +361,36 @@ const normalizeOrigin = (origin) => {
   }
 };
 
+const randomAdBrowserSessionId = () => {
+  try {
+    const parts = new Uint32Array(3);
+    crypto.getRandomValues(parts);
+    return `session-${Array.from(parts)
+      .map((part) => part.toString(36))
+      .join("-")}`;
+  } catch {
+    return `session-${Date.now().toString(36)}`;
+  }
+};
+
+const adBrowserSessionStorage = () =>
+  chrome.storage && chrome.storage.session ? chrome.storage.session : null;
+
+const currentAdBrowserSessionId = async () => {
+  const storage = adBrowserSessionStorage();
+  if (!storage) return serviceWorkerAdSessionId;
+  try {
+    const stored = await storage.get({ [AD_BROWSER_SESSION_STORAGE_KEY]: "" });
+    const existing = stored[AD_BROWSER_SESSION_STORAGE_KEY];
+    if (typeof existing === "string" && existing) return existing.slice(0, 80);
+    const next = randomAdBrowserSessionId();
+    await storage.set({ [AD_BROWSER_SESSION_STORAGE_KEY]: next });
+    return next;
+  } catch {
+    return serviceWorkerAdSessionId;
+  }
+};
+
 const countEntries = (counts, limit = 8) =>
   Object.entries(counts || {})
     .filter(([, count]) => typeof count === "number" && count > 0)
@@ -374,10 +423,14 @@ const sanitizeAdPlaybookEntry = (entry) => {
     hits: Math.max(0, Math.round(safeEntry.hits || 0)),
     kind: String(safeEntry.kind || "entry").slice(0, 32),
     lastSeen: safeEntry.lastSeen || 0,
+    origin: String(safeEntry.origin || "").slice(0, 160),
     path: String(safeEntry.path || "").slice(0, 160),
+    promotedAt: safeEntry.promotedAt || 0,
     reason: String(safeEntry.reason || "").slice(0, 64),
     resourceTypes: sanitizePlaybookResourceTypes(safeEntry),
+    ruleId: Number.isInteger(safeEntry.ruleId) ? safeEntry.ruleId : 0,
     score: Math.max(0, Math.min(100, Math.round(safeEntry.score || 0))),
+    sessionCount: Math.max(0, Math.round(safeEntry.sessionCount || 0)),
     status: String(safeEntry.status || "").slice(0, 32),
     value: String(safeEntry.value || "").slice(0, 160),
   };
@@ -394,7 +447,9 @@ const adSitePrefsFor = (origin, adPrefs = {}) => {
   const site = (origin && sites[origin]) || {};
   return {
     cleanupDisabled: !!(site.cleanupDisabled || site.disabled),
+    lastDisabledAt: site.lastDisabledAt || site.disabledAt || 0,
     lastUpdated: site.lastUpdated || 0,
+    networkDemotedUntil: site.networkDemotedUntil || 0,
   };
 };
 
@@ -835,11 +890,21 @@ const adSessionRuleCandidateForEntry = (origin, entry) => {
   };
 };
 
-const adSessionRuleCandidatesForPlaybook = (origin, playbook) =>
+const adNetworkRuleCandidateRecordsForPlaybook = (origin, playbook) =>
   (Array.isArray(playbook && playbook.network) ? playbook.network : [])
-    .map((entry) => adSessionRuleCandidateForEntry(origin, sanitizeAdPlaybookEntry(entry)))
+    .map((entry) => sanitizeAdPlaybookEntry(entry))
+    .map((entry) => {
+      const candidate = adSessionRuleCandidateForEntry(origin, entry);
+      return candidate ? { ...candidate, entry } : null;
+    })
     .filter(Boolean)
     .slice(0, AD_PLAYBOOK_CAPS.network);
+
+const adSessionRuleCandidatesForPlaybook = (origin, playbook) =>
+  adNetworkRuleCandidateRecordsForPlaybook(origin, playbook).map(({ key, rule }) => ({
+    key,
+    rule,
+  }));
 
 const nextAdSessionRuleId = ({ addRules, removeRuleIds, sessionRules }) => {
   const used = new Set(
@@ -968,6 +1033,241 @@ const adSessionRuleSummariesForOrigin = async (origin) => {
   }
 };
 
+const adDynamicRuleIdIsManaged = (id) =>
+  Number.isInteger(id) && id >= AD_DYNAMIC_RULE_ID_MIN && id <= AD_DYNAMIC_RULE_ID_MAX;
+
+const adDynamicRuleIsManaged = (rule) => !!rule && adDynamicRuleIdIsManaged(rule.id);
+
+const adDynamicRuleMapFor = (adDynamicState) => {
+  if (!(adDynamicState && typeof adDynamicState === "object")) return {};
+  return adDynamicState.rules && typeof adDynamicState.rules === "object"
+    ? adDynamicState.rules
+    : {};
+};
+
+const ensureAdDynamicState = (adDynamicState) => {
+  const state = adDynamicState && typeof adDynamicState === "object" ? adDynamicState : {};
+  state.version = AD_PLAYBOOK_VERSION;
+  if (!(state.rules && typeof state.rules === "object")) state.rules = {};
+  return state;
+};
+
+const adDynamicOriginsForState = (adDynamicState) =>
+  Object.values(adDynamicRuleMapFor(adDynamicState))
+    .map((meta) => normalizeOrigin(meta && meta.origin))
+    .filter(Boolean);
+
+const adRecentDisableFor = (origin, adPrefs, now) => {
+  const prefs = adSitePrefsFor(origin, adPrefs);
+  if (prefs.networkDemotedUntil && prefs.networkDemotedUntil > now) return true;
+  return !!(
+    prefs.lastDisabledAt &&
+    now - prefs.lastDisabledAt >= 0 &&
+    now - prefs.lastDisabledAt < AD_DYNAMIC_DISABLE_COOLDOWN_MS
+  );
+};
+
+const adDynamicRulesActiveForOrigin = ({ adPrefs, now, origin, playbook }) =>
+  adCleanupModeFor(adPrefs) === "cosmetic" &&
+  !adSitePrefsFor(origin, adPrefs).cleanupDisabled &&
+  !(playbook && playbook.disabled) &&
+  !adRecentDisableFor(origin, adPrefs, now);
+
+const adDynamicMetaIsBlocked = (meta, now) =>
+  !!(
+    (meta.demotedUntil && meta.demotedUntil > now) ||
+    (meta.breakageUntil && meta.breakageUntil > now)
+  );
+
+const adDynamicMetaIsEligible = (meta, now) =>
+  !!meta &&
+  !adDynamicMetaIsBlocked(meta, now) &&
+  (meta.sessionCount || 0) >= AD_DYNAMIC_PROMOTION_MIN_SESSIONS &&
+  (meta.hits || 0) >= AD_DYNAMIC_PROMOTION_MIN_HITS &&
+  (meta.score || 0) >= adHighScoreThreshold() &&
+  (!meta.lastSeen || now - meta.lastSeen <= AD_PLAYBOOK_STALE_MS);
+
+const adDynamicRuleCandidateForMeta = (_key, meta) => {
+  const origin = normalizeOrigin(meta && meta.origin);
+  const host = dnrDomainForOrigin(origin);
+  const endpointPath = sameOriginEndpointPath(meta && meta.path);
+  const resourceTypes = safeDnrResourceTypesFor(meta);
+  if (!origin || !host || !endpointPath || resourceTypes.length === 0) return null;
+  if (AD_PLAYBOOK_UNSAFE_ENDPOINT_RE.test(endpointPath)) return null;
+  if (!AD_PLAYBOOK_ENDPOINT_RE.test(endpointPath)) return null;
+  const pathSpec = dnrPathFilterForEndpoint(endpointPath);
+  if (!pathSpec) return null;
+  const rule = {
+    action: { type: "block" },
+    condition: {
+      initiatorDomains: [host],
+      requestDomains: [host],
+      resourceTypes,
+      urlFilter: adSessionUrlFilterFor(origin, pathSpec),
+    },
+    priority: 1,
+  };
+  return {
+    key: adSessionRuleKeyForCandidate(rule),
+    meta,
+    rule,
+  };
+};
+
+const compareAdDynamicCandidates = (a, b) =>
+  (b.meta.lastSeen || 0) - (a.meta.lastSeen || 0) ||
+  (b.meta.sessionCount || 0) - (a.meta.sessionCount || 0) ||
+  (b.meta.hits || 0) - (a.meta.hits || 0) ||
+  (b.meta.score || 0) - (a.meta.score || 0) ||
+  a.key.localeCompare(b.key);
+
+const adDynamicRuleCandidatesForState = ({ adDynamicState, adPlaybooks, adPrefs, now }) =>
+  Object.entries(adDynamicRuleMapFor(adDynamicState))
+    .map(([key, meta]) => {
+      const origin = normalizeOrigin(meta && meta.origin);
+      const playbook = origin ? adPlaybooks[origin] : null;
+      if (!adDynamicRulesActiveForOrigin({ adPrefs, now, origin, playbook })) return null;
+      if (!adDynamicMetaIsEligible(meta, now)) return null;
+      return adDynamicRuleCandidateForMeta(key, meta);
+    })
+    .filter(Boolean)
+    .sort(compareAdDynamicCandidates)
+    .slice(0, AD_DYNAMIC_RULE_CAP);
+
+const nextAdDynamicRuleId = ({ addRules, dynamicRules, removeRuleIds }) => {
+  const used = new Set(
+    dynamicRules.filter((rule) => !removeRuleIds.has(rule.id)).map((rule) => rule.id)
+  );
+  for (const rule of addRules) used.add(rule.id);
+  for (let id = AD_DYNAMIC_RULE_ID_MIN; id <= AD_DYNAMIC_RULE_ID_MAX; id++) {
+    if (!used.has(id)) return id;
+  }
+  return null;
+};
+
+const markAdDynamicMetadataStatuses = ({ candidates, dynamicRules, state }) => {
+  const desiredKeys = new Set(candidates.map((candidate) => candidate.key));
+  const rules = adDynamicRuleMapFor(state);
+  let changed = false;
+  for (const [key, meta] of Object.entries(rules)) {
+    if (desiredKeys.has(key)) continue;
+    if (meta.status === "persistent" || meta.ruleId) {
+      delete meta.ruleId;
+      meta.status = "candidate";
+      changed = true;
+    }
+  }
+  const activeByKey = new Map(dynamicRules.map((rule) => [adSessionRuleKeyForRule(rule), rule]));
+  for (const candidate of candidates) {
+    const active = activeByKey.get(candidate.key);
+    if (!active) continue;
+    const promotedAt = candidate.meta.promotedAt || Date.now();
+    if (
+      candidate.meta.promotedAt !== promotedAt ||
+      candidate.meta.ruleId !== active.id ||
+      candidate.meta.status !== "persistent"
+    ) {
+      changed = true;
+    }
+    candidate.meta.promotedAt = promotedAt;
+    candidate.meta.ruleId = active.id;
+    candidate.meta.status = "persistent";
+  }
+  return changed;
+};
+
+const applyAdDynamicRuleCandidates = async ({ candidates, state }) => {
+  try {
+    const allRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const dynamicRules = allRules.filter(adDynamicRuleIsManaged);
+    const existingByKey = new Map(
+      dynamicRules.map((rule) => [adSessionRuleKeyForRule(rule), rule])
+    );
+    const desiredKeys = new Set(candidates.map((candidate) => candidate.key));
+    const removeRuleIds = new Set(
+      dynamicRules
+        .filter((rule) => !desiredKeys.has(adSessionRuleKeyForRule(rule)))
+        .map((rule) => rule.id)
+    );
+    const addRules = [];
+    for (const candidate of candidates) {
+      const existing = existingByKey.get(candidate.key);
+      if (existing && !removeRuleIds.has(existing.id)) continue;
+      const id = nextAdDynamicRuleId({ addRules, dynamicRules, removeRuleIds });
+      if (!id) break;
+      addRules.push({ ...candidate.rule, id });
+    }
+    if (addRules.length > 0 || removeRuleIds.size > 0) {
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        addRules,
+        removeRuleIds: Array.from(removeRuleIds),
+      });
+    }
+    const updatedRules =
+      addRules.length > 0 || removeRuleIds.size > 0
+        ? await chrome.declarativeNetRequest.getDynamicRules()
+        : allRules;
+    const statusChanged = markAdDynamicMetadataStatuses({
+      candidates,
+      dynamicRules: updatedRules.filter(adDynamicRuleIsManaged),
+      state,
+    });
+    return addRules.length > 0 || removeRuleIds.size > 0 || statusChanged;
+  } catch {
+    return false;
+  }
+};
+
+const syncAdDynamicRules = async ({ adDynamicState, adPlaybooks, adPrefs }) => {
+  const state = ensureAdDynamicState(adDynamicState);
+  const now = Date.now();
+  const candidates = adDynamicRuleCandidatesForState({
+    adDynamicState: state,
+    adPlaybooks,
+    adPrefs,
+    now,
+  });
+  const changed = await applyAdDynamicRuleCandidates({ candidates, state });
+  if (changed) state.lastUpdated = now;
+  return changed;
+};
+
+const adDynamicRuleSummaryForRule = (rule, state) => {
+  const condition = (rule && rule.condition) || {};
+  const parts = adSessionUrlFilterParts(condition.urlFilter);
+  if (!parts) return null;
+  const meta = adDynamicRuleMapFor(state)[adSessionRuleKeyForRule(rule)] || {};
+  return {
+    diagnosticOnly: false,
+    firstSeen: meta.firstSeen || 0,
+    hits: meta.hits || 0,
+    kind: "dynamic-rule",
+    lastSeen: meta.lastSeen || 0,
+    origin: parts.origin,
+    path: parts.path,
+    promotedAt: meta.promotedAt || 0,
+    resourceTypes: safeDnrResourceTypesFor(condition),
+    ruleId: rule.id,
+    score: meta.score || adHighScoreThreshold(),
+    sessionCount: meta.sessionCount || 0,
+    status: "persistent",
+  };
+};
+
+const adDynamicRuleSummariesForOrigin = async (origin, state) => {
+  try {
+    const rules = await chrome.declarativeNetRequest.getDynamicRules();
+    return rules
+      .filter(adDynamicRuleIsManaged)
+      .map((rule) => adDynamicRuleSummaryForRule(rule, state))
+      .filter((summary) => summary && (!origin || summary.origin === origin))
+      .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0) || b.ruleId - a.ruleId)
+      .slice(0, AD_DYNAMIC_RULE_CAP);
+  } catch {
+    return [];
+  }
+};
+
 const endpointCandidateFor = (endpoint, resourceType) => {
   const path = safePlaybookText(endpoint);
   if (!path || !path.startsWith("same-origin:/")) return null;
@@ -986,6 +1286,90 @@ const scriptCandidateFor = (source) => {
     kind: "source",
     value,
   };
+};
+
+const adDynamicCandidateRecordForSignal = ({ normalized, origin, playbook }) => {
+  const endpoint = endpointCandidateFor(normalized.endpoint, normalized.resourceType);
+  if (!endpoint) return null;
+  const entries = Array.isArray(playbook && playbook.network) ? playbook.network : [];
+  const entry = entries
+    .map((candidate) => sanitizeAdPlaybookEntry(candidate))
+    .find(
+      (candidate) =>
+        candidate.kind === "endpoint" &&
+        candidate.path === endpoint.path &&
+        safeDnrResourceTypesFor(candidate).includes(endpoint.resourceType)
+    );
+  if (!entry) return null;
+  const ruleCandidate = adSessionRuleCandidateForEntry(origin, entry);
+  return ruleCandidate ? { ...ruleCandidate, entry } : null;
+};
+
+const upsertAdDynamicEvidenceMeta = ({ candidate, now, origin, sessionId, state }) => {
+  const rules = adDynamicRuleMapFor(state);
+  const existing = rules[candidate.key] || {};
+  const meta = {
+    ...existing,
+    firstSeen: existing.firstSeen || now,
+    key: candidate.key,
+    kind: "endpoint",
+    lastSeen: now,
+    origin,
+    path: candidate.entry.path,
+    resourceTypes: safeDnrResourceTypesFor(candidate.entry),
+    score: Math.max(existing.score || 0, candidate.entry.score || 0),
+    version: AD_PLAYBOOK_VERSION,
+  };
+  meta.hits = Math.max(existing.hits || 0, candidate.entry.hits || 0);
+  if (existing.lastSessionId !== sessionId) {
+    meta.sessionCount = Math.max(0, Math.round(existing.sessionCount || 0)) + 1;
+    meta.lastSessionId = sessionId;
+  } else {
+    meta.sessionCount = Math.max(1, Math.round(existing.sessionCount || 1));
+  }
+  if (!meta.promotedAt) meta.status = "candidate";
+  rules[candidate.key] = meta;
+};
+
+const trimAdDynamicMetadata = (state, now) => {
+  const rules = adDynamicRuleMapFor(state);
+  for (const [key, meta] of Object.entries(rules)) {
+    const lastSeen = meta.lastSeen || meta.firstSeen || 0;
+    if (lastSeen && now - lastSeen > AD_PLAYBOOK_EXPIRE_MS) delete rules[key];
+  }
+  const entries = Object.entries(rules).sort(
+    (a, b) =>
+      Number(!!b[1].promotedAt) - Number(!!a[1].promotedAt) ||
+      (b[1].lastSeen || 0) - (a[1].lastSeen || 0) ||
+      (b[1].hits || 0) - (a[1].hits || 0)
+  );
+  for (const [key] of entries.slice(AD_DYNAMIC_METADATA_CAP)) delete rules[key];
+};
+
+const updateAdDynamicPromotionState = ({
+  adDynamicState,
+  adPrefs,
+  classification,
+  normalized,
+  now,
+  origin,
+  playbook,
+  sessionId,
+}) => {
+  if (
+    adUiConfidence(classification && classification.confidence) !== "high" ||
+    ((classification && classification.score) || 0) < adHighScoreThreshold()
+  ) {
+    return false;
+  }
+  if (!adSessionRulesActiveForOrigin({ adPrefs, origin, playbook })) return false;
+  const state = ensureAdDynamicState(adDynamicState);
+  const candidate = adDynamicCandidateRecordForSignal({ normalized, origin, playbook });
+  if (!candidate) return false;
+  upsertAdDynamicEvidenceMeta({ candidate, now, origin, sessionId, state });
+  trimAdDynamicMetadata(state, now);
+  state.lastUpdated = now;
+  return true;
 };
 
 const mergeAdPlaybookCandidates = ({ classification, normalized, now, playbook }) => {
@@ -1083,6 +1467,7 @@ const adDiagnosticsFor = ({
   adLog = {},
   adPlaybooks = {},
   adPrefs = {},
+  dynamicNetwork = [],
   origin,
   sessionNetwork = [],
 }) => {
@@ -1098,6 +1483,7 @@ const adDiagnosticsFor = ({
     lastUpdated: Math.max(entryDiagnostics.updatedAt, playbook.lastUpdated || 0),
     playbook,
     prefs,
+    persistentNetwork: dynamicNetwork,
     sessionNetwork,
   };
 };
@@ -1155,10 +1541,12 @@ const updateAdLogEntry = ({ entry, normalized, now }) => {
 const recordAdSignal = async (origin, signal) => {
   if (!origin || !signal || typeof signal !== "object") return;
   const {
+    ad_dynamic_rules = {},
     ad_log = {},
     ad_playbooks = {},
     ad_prefs = {},
   } = await chrome.storage.local.get({
+    ad_dynamic_rules: {},
     ad_log: {},
     ad_playbooks: {},
     ad_prefs: {},
@@ -1189,12 +1577,32 @@ const recordAdSignal = async (origin, signal) => {
     now,
     origin,
   });
-  await chrome.storage.local.set({ ad_log, ad_playbooks });
+  const sessionId = await currentAdBrowserSessionId();
+  updateAdDynamicPromotionState({
+    adDynamicState: ad_dynamic_rules,
+    adPrefs: ad_prefs,
+    classification,
+    normalized,
+    now,
+    origin,
+    playbook: ad_playbooks[origin],
+    sessionId,
+  });
+  await chrome.storage.local.set({ ad_dynamic_rules, ad_log, ad_playbooks });
   await syncAdSessionRulesForOrigin({
     adPrefs: ad_prefs,
     origin,
     playbook: ad_playbooks[origin],
   });
+  if (
+    await syncAdDynamicRules({
+      adDynamicState: ad_dynamic_rules,
+      adPlaybooks: ad_playbooks,
+      adPrefs: ad_prefs,
+    })
+  ) {
+    await chrome.storage.local.set({ ad_dynamic_rules });
+  }
   if (sessionChanged) await broadcastAdCosmeticUpdate(origin);
 };
 
@@ -1645,6 +2053,7 @@ const loggedOriginsFor = (stored) =>
     ...Object.keys(stored.adaptive_log),
     ...Object.keys(stored.ad_log),
     ...Object.keys(stored.ad_playbooks),
+    ...adDynamicOriginsForState(stored.ad_dynamic_rules),
     ...Object.keys(stored.diagnostic_log),
   ]);
 
@@ -1658,6 +2067,7 @@ const detailsResponseFor = async (tabId, stored) => {
   const adaptiveEntry = storedEntryForOrigin(origin, stored.adaptive_log);
   const diagnosticEntry = storedEntryForOrigin(origin, stored.diagnostic_log);
   const adSessionNetwork = await adSessionRuleSummariesForOrigin(origin);
+  const adDynamicNetwork = await adDynamicRuleSummariesForOrigin(origin, stored.ad_dynamic_rules);
   const selectedPersonaIds =
     originProbeEntry && stored.noise_enabled ? await personaFor(origin) : [];
   const loggedOrigins = loggedOriginsFor(stored);
@@ -1677,6 +2087,7 @@ const detailsResponseFor = async (tabId, stored) => {
       adLog: stored.ad_log,
       adPlaybooks: stored.ad_playbooks,
       adPrefs: stored.ad_prefs,
+      dynamicNetwork: adDynamicNetwork,
       origin,
       sessionNetwork: adSessionNetwork,
     }),
@@ -1705,6 +2116,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
+      ad_dynamic_rules: {},
       ad_log: {},
       ad_playbooks: {},
       ad_prefs: {},
@@ -1850,55 +2262,126 @@ const handleSetDiagnostics = (msg, _sender, sendResponse) => {
 const handleSetAdCleanupMode = (msg, _sender, sendResponse) => {
   (async () => {
     const mode = AD_CLEANUP_MODES.has(msg.mode) ? msg.mode : "off";
-    const { ad_prefs = {} } = await chrome.storage.local.get({ ad_prefs: {} });
-    await chrome.storage.local.set({
-      ad_prefs: {
-        ...ad_prefs,
-        lastUpdated: Date.now(),
-        mode,
-        version: AD_PLAYBOOK_VERSION,
-      },
+    const {
+      ad_dynamic_rules = {},
+      ad_playbooks = {},
+      ad_prefs = {},
+    } = await chrome.storage.local.get({
+      ad_dynamic_rules: {},
+      ad_playbooks: {},
+      ad_prefs: {},
     });
-    if (mode !== "cosmetic") await clearAllAdSessionRules();
+    const nextPrefs = {
+      ...ad_prefs,
+      lastUpdated: Date.now(),
+      mode,
+      version: AD_PLAYBOOK_VERSION,
+    };
+    await chrome.storage.local.set({ ad_prefs: nextPrefs });
+    if (mode !== "cosmetic") {
+      await clearAllAdSessionRules();
+      await clearAllAdDynamicRules();
+      if (
+        await syncAdDynamicRules({
+          adDynamicState: ad_dynamic_rules,
+          adPlaybooks: ad_playbooks,
+          adPrefs: nextPrefs,
+        })
+      ) {
+        await chrome.storage.local.set({ ad_dynamic_rules });
+      }
+    } else if (
+      await syncAdDynamicRules({
+        adDynamicState: ad_dynamic_rules,
+        adPlaybooks: ad_playbooks,
+        adPrefs: nextPrefs,
+      })
+    ) {
+      await chrome.storage.local.set({ ad_dynamic_rules });
+    }
     await broadcastConfigUpdate();
     sendResponse({ mode, ok: true });
   })();
   return true;
 };
 
+const adSitesForCleanupDisabled = ({ adPrefs, disabled, now, origin }) => {
+  const sites = { ...(adPrefs.sites || adPrefs.site || {}) };
+  if (disabled) {
+    sites[origin] = {
+      ...(sites[origin] || {}),
+      cleanupDisabled: true,
+      lastDisabledAt: now,
+      lastUpdated: now,
+      networkDemotedUntil: now + AD_DYNAMIC_DISABLE_COOLDOWN_MS,
+    };
+    return sites;
+  }
+  const existing = { ...(sites[origin] || {}) };
+  delete existing.cleanupDisabled;
+  delete existing.disabled;
+  if (existing.lastDisabledAt && !existing.networkDemotedUntil) {
+    existing.networkDemotedUntil = existing.lastDisabledAt + AD_DYNAMIC_DISABLE_COOLDOWN_MS;
+  }
+  if (Object.keys(existing).length > 0) {
+    sites[origin] = { ...existing, lastUpdated: now };
+  } else {
+    delete sites[origin];
+  }
+  return sites;
+};
+
+const markAdPlaybookCleanupDisabled = ({ adPlaybooks, disabled, now, origin }) => {
+  if (!adPlaybooks[origin]) return;
+  adPlaybooks[origin] = {
+    ...adPlaybooks[origin],
+    disabled: !!disabled,
+    lastUpdated: now,
+    version: AD_PLAYBOOK_VERSION,
+  };
+};
+
+const syncAdDynamicRulesAfterCleanupToggle = async ({
+  adDynamicState,
+  adPlaybooks,
+  adPrefs,
+  disabled,
+  now,
+  origin,
+}) => {
+  if (disabled) {
+    clearAdSessionStateForOrigin(origin);
+    await clearAdSessionRulesForOrigin(origin);
+    await clearAdDynamicRulesForOrigin(origin, {
+      adDynamicState,
+      markDemoted: true,
+      now,
+    });
+    return;
+  }
+  await syncAdDynamicRules({ adDynamicState, adPlaybooks, adPrefs });
+};
+
 const setAdCleanupDisabled = async (origin, disabled) => {
   const normalized = normalizeOrigin(origin);
   if (!normalized) return null;
-  const { ad_prefs = {}, ad_playbooks = {} } = await chrome.storage.local.get({
+  const {
+    ad_dynamic_rules = {},
+    ad_prefs = {},
+    ad_playbooks = {},
+  } = await chrome.storage.local.get({
+    ad_dynamic_rules: {},
     ad_playbooks: {},
     ad_prefs: {},
   });
   const now = Date.now();
-  const sites = { ...(ad_prefs.sites || ad_prefs.site || {}) };
-  if (disabled) {
-    sites[normalized] = {
-      ...(sites[normalized] || {}),
-      cleanupDisabled: true,
-      lastUpdated: now,
-    };
-  } else {
-    const existing = { ...(sites[normalized] || {}) };
-    delete existing.cleanupDisabled;
-    delete existing.disabled;
-    if (Object.keys(existing).length > 0) {
-      sites[normalized] = { ...existing, lastUpdated: now };
-    } else {
-      delete sites[normalized];
-    }
-  }
-  if (ad_playbooks[normalized]) {
-    ad_playbooks[normalized] = {
-      ...ad_playbooks[normalized],
-      disabled: !!disabled,
-      lastUpdated: now,
-      version: AD_PLAYBOOK_VERSION,
-    };
-  }
+  const sites = adSitesForCleanupDisabled({ adPrefs: ad_prefs, disabled, now, origin: normalized });
+  markAdPlaybookCleanupDisabled({
+    adPlaybooks: ad_playbooks,
+    disabled,
+    now,
+    origin: normalized,
+  });
   const nextPrefs = {
     ...ad_prefs,
     lastUpdated: now,
@@ -1906,11 +2389,15 @@ const setAdCleanupDisabled = async (origin, disabled) => {
     version: AD_PLAYBOOK_VERSION,
   };
   delete nextPrefs.site;
-  await chrome.storage.local.set({ ad_playbooks, ad_prefs: nextPrefs });
-  if (disabled) {
-    clearAdSessionStateForOrigin(normalized);
-    await clearAdSessionRulesForOrigin(normalized);
-  }
+  await syncAdDynamicRulesAfterCleanupToggle({
+    adDynamicState: ad_dynamic_rules,
+    adPlaybooks: ad_playbooks,
+    adPrefs: nextPrefs,
+    disabled,
+    now,
+    origin: normalized,
+  });
+  await chrome.storage.local.set({ ad_dynamic_rules, ad_playbooks, ad_prefs: nextPrefs });
   await broadcastAdCosmeticUpdate(normalized);
   return adSitePrefsFor(normalized, nextPrefs);
 };
@@ -1923,8 +2410,8 @@ const handleSetAdCleanupDisabled = (msg, _sender, sendResponse) => {
   return true;
 };
 
-const sessionRuleMatchesOrigin = (rule, origin) => {
-  if (!adSessionRuleIsManaged(rule)) return false;
+const dnrRuleMatchesOrigin = (rule, origin, managedRule) => {
+  if (!managedRule(rule)) return false;
   const condition = rule.condition || {};
   const domains = [
     ...(condition.initiatorDomains || []),
@@ -1935,6 +2422,9 @@ const sessionRuleMatchesOrigin = (rule, origin) => {
   return !!host && domains.some((domain) => domain === host);
 };
 
+const sessionRuleMatchesOrigin = (rule, origin) =>
+  dnrRuleMatchesOrigin(rule, origin, adSessionRuleIsManaged);
+
 const clearAdSessionRulesForOrigin = async (origin) => {
   try {
     const rules = await chrome.declarativeNetRequest.getSessionRules();
@@ -1943,6 +2433,65 @@ const clearAdSessionRulesForOrigin = async (origin) => {
       .map((rule) => rule.id);
     if (removeRuleIds.length > 0) {
       await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+    }
+    return removeRuleIds.length;
+  } catch {
+    return 0;
+  }
+};
+
+const dynamicRuleMatchesOrigin = (rule, origin) =>
+  dnrRuleMatchesOrigin(rule, origin, adDynamicRuleIsManaged);
+
+const markAdDynamicMetadataForOrigin = ({ deleteMetadata, markDemoted, now, origin, state }) => {
+  const rules = adDynamicRuleMapFor(state);
+  let changed = false;
+  for (const [key, meta] of Object.entries(rules)) {
+    if (normalizeOrigin(meta && meta.origin) !== origin) continue;
+    changed = true;
+    if (deleteMetadata) {
+      delete rules[key];
+      continue;
+    }
+    delete meta.ruleId;
+    meta.status = "candidate";
+    if (markDemoted) {
+      meta.breakageCount = Math.max(0, Math.round(meta.breakageCount || 0)) + 1;
+      meta.demotedUntil = now + AD_DYNAMIC_DISABLE_COOLDOWN_MS;
+    }
+  }
+  if (changed) state.lastUpdated = now;
+  return changed;
+};
+
+const clearAdDynamicRulesForOrigin = async (
+  origin,
+  { adDynamicState = null, deleteMetadata = false, markDemoted = false, now = Date.now() } = {}
+) => {
+  const state = adDynamicState ? ensureAdDynamicState(adDynamicState) : null;
+  try {
+    const rules = await chrome.declarativeNetRequest.getDynamicRules();
+    const removeRuleIds = rules
+      .filter((rule) => dynamicRuleMatchesOrigin(rule, origin))
+      .map((rule) => rule.id);
+    if (removeRuleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds });
+    }
+    if (state) {
+      markAdDynamicMetadataForOrigin({ deleteMetadata, markDemoted, now, origin, state });
+    }
+    return removeRuleIds.length;
+  } catch {
+    return 0;
+  }
+};
+
+const clearAllAdDynamicRules = async () => {
+  try {
+    const rules = await chrome.declarativeNetRequest.getDynamicRules();
+    const removeRuleIds = rules.filter(adDynamicRuleIsManaged).map((rule) => rule.id);
+    if (removeRuleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds });
     }
     return removeRuleIds.length;
   } catch {
@@ -1965,22 +2514,45 @@ const clearAllAdSessionRules = async () => {
 
 const clearAdDataForOrigin = async (origin) => {
   const normalized = normalizeOrigin(origin);
-  if (!normalized) return { cleared: false, origin: null, removedSessionRules: 0 };
-  const { ad_log = {}, ad_playbooks = {} } = await chrome.storage.local.get({
+  if (!normalized) {
+    return { cleared: false, origin: null, removedDynamicRules: 0, removedSessionRules: 0 };
+  }
+  const {
+    ad_dynamic_rules = {},
+    ad_log = {},
+    ad_playbooks = {},
+  } = await chrome.storage.local.get({
+    ad_dynamic_rules: {},
     ad_log: {},
     ad_playbooks: {},
   });
   const hadLog = !!ad_log[normalized];
   const hadPlaybook = !!ad_playbooks[normalized];
+  const hadDynamicMetadata = adDynamicOriginsForState(ad_dynamic_rules).includes(normalized);
   delete ad_log[normalized];
   delete ad_playbooks[normalized];
   const hadSessionState = clearAdSessionStateForOrigin(normalized);
+  markAdDynamicMetadataForOrigin({
+    deleteMetadata: true,
+    now: Date.now(),
+    origin: normalized,
+    state: ensureAdDynamicState(ad_dynamic_rules),
+  });
   await chrome.storage.local.set({ ad_log, ad_playbooks });
   const removedSessionRules = await clearAdSessionRulesForOrigin(normalized);
+  const removedDynamicRules = await clearAdDynamicRulesForOrigin(normalized);
+  await chrome.storage.local.set({ ad_dynamic_rules });
   await broadcastAdCosmeticUpdate(normalized);
   return {
-    cleared: hadLog || hadPlaybook || hadSessionState || removedSessionRules > 0,
+    cleared:
+      hadLog ||
+      hadPlaybook ||
+      hadDynamicMetadata ||
+      hadSessionState ||
+      removedSessionRules > 0 ||
+      removedDynamicRules > 0,
     origin: normalized,
+    removedDynamicRules,
     removedSessionRules,
   };
 };
@@ -1993,12 +2565,41 @@ const handleClearAdSiteData = (msg, _sender, sendResponse) => {
   return true;
 };
 
+const clearAdPersistentNetworkForOrigin = async (origin) => {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return { cleared: false, origin: null, removedDynamicRules: 0 };
+  const { ad_dynamic_rules = {} } = await chrome.storage.local.get({ ad_dynamic_rules: {} });
+  const hadDynamicMetadata = adDynamicOriginsForState(ad_dynamic_rules).includes(normalized);
+  markAdDynamicMetadataForOrigin({
+    deleteMetadata: true,
+    now: Date.now(),
+    origin: normalized,
+    state: ensureAdDynamicState(ad_dynamic_rules),
+  });
+  const removedDynamicRules = await clearAdDynamicRulesForOrigin(normalized);
+  await chrome.storage.local.set({ ad_dynamic_rules });
+  return {
+    cleared: hadDynamicMetadata || removedDynamicRules > 0,
+    origin: normalized,
+    removedDynamicRules,
+  };
+};
+
+const handleClearAdPersistentNetwork = (msg, _sender, sendResponse) => {
+  (async () => {
+    const result = await serialize(() => clearAdPersistentNetworkForOrigin(msg.origin));
+    sendResponse({ ok: !!(result && result.origin), ...result });
+  })();
+  return true;
+};
+
 const handleExportLog = (_msg, _sender, sendResponse) => {
   (async () => {
     const {
       probe_log = {},
       replay_log = {},
       adaptive_log = {},
+      ad_dynamic_rules = {},
       ad_log = {},
       ad_playbooks = {},
       ad_prefs = {},
@@ -2010,6 +2611,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
+      ad_dynamic_rules: {},
       ad_log: {},
       ad_playbooks: {},
       ad_prefs: {},
@@ -2019,6 +2621,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       cumulative: 0,
     });
     const adSessionRules = await adSessionRuleSummariesForOrigin(null);
+    const adDynamicRules = await adDynamicRuleSummariesForOrigin(null, ad_dynamic_rules);
     sendResponse({
       schema: "static.probe-log.v1",
       exportedAt: new Date().toISOString(),
@@ -2030,6 +2633,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       replayDetections: replay_log,
       adaptiveSignals: adaptive_log,
       adBehavior: ad_log,
+      adDynamicRules,
       adPlaybooks: ad_playbooks,
       adPrefs: ad_prefs,
       adSessionRules,
@@ -2043,11 +2647,13 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
     cachedSecretPromise = null;
     clearAllAdSessionState();
     await clearAllAdSessionRules();
+    await clearAllAdDynamicRules();
     await serialize(() =>
       chrome.storage.local.remove([
         "probe_log",
         "replay_log",
         "adaptive_log",
+        "ad_dynamic_rules",
         "ad_log",
         "ad_playbooks",
         "diagnostic_log",
@@ -2066,6 +2672,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
 const messageHandlers = {
   static_ad_signal: handleAdSignal,
   static_adaptive_signal: handleAdaptiveSignal,
+  static_clear_ad_persistent_network: handleClearAdPersistentNetwork,
   static_clear_ad_site_data: handleClearAdSiteData,
   static_clear_log: handleClearLog,
   static_export_log: handleExportLog,
@@ -2081,6 +2688,35 @@ const messageHandlers = {
   static_set_noise: handleSetNoise,
   static_set_replay: handleSetReplay,
 };
+
+const syncStoredAdDynamicRules = async () => {
+  const {
+    ad_dynamic_rules = {},
+    ad_playbooks = {},
+    ad_prefs = {},
+  } = await chrome.storage.local.get({
+    ad_dynamic_rules: {},
+    ad_playbooks: {},
+    ad_prefs: {},
+  });
+  if (
+    await syncAdDynamicRules({
+      adDynamicState: ad_dynamic_rules,
+      adPlaybooks: ad_playbooks,
+      adPrefs: ad_prefs,
+    })
+  ) {
+    await chrome.storage.local.set({ ad_dynamic_rules });
+  }
+};
+
+syncStoredAdDynamicRules().catch(() => {});
+chrome.runtime.onStartup.addListener(() => {
+  serialize(syncStoredAdDynamicRules);
+});
+chrome.runtime.onInstalled.addListener(() => {
+  serialize(syncStoredAdDynamicRules);
+});
 
 // ─── Message router ───────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

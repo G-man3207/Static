@@ -289,9 +289,12 @@ const formatPlaybookEntries = (entries, valueKey) => {
       const value = entry[valueKey] || entry.value || "entry";
       const score = typeof entry.score === "number" ? `score ${fmt(entry.score)}` : "score 0";
       const hits = entry.hits ? `, ${fmt(entry.hits)} hit${entry.hits === 1 ? "" : "s"}` : "";
+      const sessions = entry.sessionCount
+        ? `, ${fmt(entry.sessionCount)} session${entry.sessionCount === 1 ? "" : "s"}`
+        : "";
       const diagnostic = entry.diagnosticOnly ? ", diagnostics-only" : "";
       const status = entry.status ? `, ${entry.status}` : "";
-      return `${value} (${score}${hits}${diagnostic}${status})`;
+      return `${value} (${score}${hits}${sessions}${diagnostic}${status})`;
     })
     .join(", ");
 };
@@ -402,6 +405,9 @@ const adEndpointState = (ad) => (ad && Array.isArray(ad.endpoints) ? ad.endpoint
 const adSessionNetworkState = (ad) =>
   ad && Array.isArray(ad.sessionNetwork) ? ad.sessionNetwork : [];
 
+const adPersistentNetworkState = (ad) =>
+  ad && Array.isArray(ad.persistentNetwork) ? ad.persistentNetwork : [];
+
 const adCleanupModeState = (resp, ad) => (resp && resp.adCleanupMode) || (ad && ad.cleanupMode);
 
 const adCleanupDisabledText = (ad) =>
@@ -449,6 +455,14 @@ const renderAdControls = (container, resp) => {
   clear.disabled = !(origin && ad && (ad.observed || ad.playbook.lastUpdated));
   controls.appendChild(clear);
 
+  const clearPersistent = document.createElement("button");
+  clearPersistent.className = "ad-clear-btn";
+  clearPersistent.id = "clear-ad-persistent-network";
+  clearPersistent.type = "button";
+  clearPersistent.textContent = "Clear persistent learned network rules for this site";
+  clearPersistent.disabled = !(origin && adPersistentNetworkState(ad).length > 0);
+  controls.appendChild(clearPersistent);
+
   checkbox.addEventListener("change", () => {
     const desired = checkbox.checked;
     checkbox.disabled = true;
@@ -482,6 +496,20 @@ const renderAdControls = (container, resp) => {
     }
   });
 
+  clearPersistent.addEventListener("click", async () => {
+    clearPersistent.disabled = true;
+    try {
+      await chrome.runtime.sendMessage({
+        origin,
+        type: "static_clear_ad_persistent_network",
+      });
+      await refreshDetails();
+    } catch (e) {
+      console.error("[Static] clear persistent ad network rules failed", e);
+      clearPersistent.disabled = false;
+    }
+  });
+
   container.appendChild(controls);
 };
 
@@ -508,6 +536,11 @@ const renderAdDiagnostics = (resp) => {
   addDiagnosticRow(box, "Cosmetic", formatPlaybookEntries(playbook.cosmetic, "value"));
   addDiagnosticRow(box, "Network", formatPlaybookEntries(playbook.network, "path"));
   addDiagnosticRow(box, "Session blocks", formatPlaybookEntries(adSessionNetworkState(ad), "path"));
+  addDiagnosticRow(
+    box,
+    "Persistent blocks",
+    formatPlaybookEntries(adPersistentNetworkState(ad), "path")
+  );
   addDiagnosticRow(box, "Scripts", formatPlaybookEntries(playbook.scripts, "value"));
   addDiagnosticRow(box, "Cleanup mode", adCleanupModeLabel(adCleanupModeState(resp, ad)));
   addDiagnosticRow(box, "Cleanup", adCleanupDisabledText(ad));

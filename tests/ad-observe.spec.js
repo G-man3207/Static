@@ -29,6 +29,16 @@ const dnrRuleCounts = (extension) =>
 const dnrSessionRules = (extension) =>
   extension.serviceWorker.evaluate(() => chrome.declarativeNetRequest.getSessionRules());
 
+const dnrDynamicRules = (extension) =>
+  extension.serviceWorker.evaluate(() => chrome.declarativeNetRequest.getDynamicRules());
+
+const adDynamicState = (extension) =>
+  extension.serviceWorker.evaluate(() =>
+    chrome.storage.local
+      .get({ ad_dynamic_rules: {} })
+      .then(({ ad_dynamic_rules }) => ad_dynamic_rules)
+  );
+
 const adThresholds = (extension) =>
   extension.serviceWorker.evaluate(() => globalThis.__static_ad_signals__.thresholds);
 
@@ -77,6 +87,13 @@ const sendExtensionMessage = async (extension, message) => {
     await extensionPage.close();
   }
 };
+
+const rotateAdBrowserSession = (extension) =>
+  extension.serviceWorker.evaluate(() => {
+    if (!chrome.storage.session) return null;
+    const next = `test-session-${Date.now()}-${Math.random()}`;
+    return chrome.storage.session.set({ ad_browser_session_id: next }).then(() => next);
+  });
 
 test("correlated ad chain reaches high confidence without adding DNR rules", async ({
   extension,
@@ -223,6 +240,121 @@ test("session DNR quarantine skips unsafe API-looking endpoints", async ({ exten
   const playbook = await adPlaybookFor(extension, server.origin);
   expect(playbook && playbook.network).toEqual([]);
   expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+});
+
+test("persistent local promotion requires repeated endpoint evidence across browser sessions", async ({
+  extension,
+  server,
+}) => {
+  await setCleanupMode(extension, "cosmetic");
+  const page = await extension.context.newPage();
+
+  for (let i = 0; i < 4; i++) {
+    await page.goto(server.url("/ad-dnr-fetch.html"));
+    await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  }
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 1 });
+
+  await rotateAdBrowserSession(extension);
+  await page.goto(server.url("/ad-dnr-fetch.html"));
+  await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 1, session: 1 });
+
+  const [rule] = await dnrDynamicRules(extension);
+  const host = new URL(server.origin).hostname;
+  expect(rule).toMatchObject({
+    action: { type: "block" },
+    condition: {
+      initiatorDomains: [host],
+      requestDomains: [host],
+      resourceTypes: ["xmlhttprequest"],
+    },
+    priority: 1,
+  });
+  expect(rule.condition.urlFilter).toBe(`|${server.origin}/collect/impression/`);
+  expect(rule.condition.urlFilter).not.toContain("1234567890abcdef1234567890abcdef");
+  expect(rule.condition.urlFilter).not.toContain("secret-token");
+
+  const dynamicState = await adDynamicState(extension);
+  const [meta] = Object.values(dynamicState.rules || {}).filter(
+    (entry) => entry.origin === server.origin
+  );
+  expect(meta).toMatchObject({
+    hits: expect.any(Number),
+    kind: "endpoint",
+    path: "same-origin:/collect/impression/:token",
+    resourceTypes: ["xmlhttprequest"],
+    sessionCount: 2,
+    status: "persistent",
+  });
+  expect(meta.hits).toBeGreaterThanOrEqual(4);
+
+  await page.bringToFront();
+  const tabId = await activeTabId(extension);
+  const popupPage = await openPopupForActiveTab(extension, tabId);
+  await openPopupAdvancedControls(popupPage);
+  await popupPage.getByText("Ad behavior diagnostics").click();
+  await expect(popupPage.locator("#ad-diagnostics")).toContainText("Persistent blocks");
+  await expect(popupPage.locator("#ad-diagnostics")).toContainText(
+    "same-origin:/collect/impression/*"
+  );
+
+  const logPage = await extension.context.newPage();
+  await logPage.goto(`chrome-extension://${extension.extensionId}/log.html`);
+  await logPage.getByText(server.origin).click();
+  await expect(logPage.getByText("Persistent network blocks")).toBeVisible();
+  await expect(
+    logPage.getByText(/same-origin:\/collect\/impression\/\* \(dynamic-rule/)
+  ).toBeVisible();
+
+  await popupPage.locator("#clear-ad-persistent-network").click();
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 1 });
+  const clearedDynamicState = await adDynamicState(extension);
+  expect(
+    Object.values(clearedDynamicState.rules || {}).some((entry) => entry.origin === server.origin)
+  ).toBe(false);
+});
+
+test("disable and clear site data remove persistent learned ad DNR rules", async ({
+  extension,
+  server,
+}) => {
+  await setCleanupMode(extension, "cosmetic");
+  const page = await extension.context.newPage();
+  for (let i = 0; i < 4; i++) {
+    await page.goto(server.url("/ad-dnr-fetch.html"));
+    await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  }
+  await rotateAdBrowserSession(extension);
+  await page.goto(server.url("/ad-dnr-fetch.html"));
+  await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 1, session: 1 });
+
+  await sendExtensionMessage(extension, {
+    disabled: true,
+    origin: server.origin,
+    type: "static_set_ad_cleanup_disabled",
+  });
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+
+  await sendExtensionMessage(extension, {
+    disabled: false,
+    origin: server.origin,
+    type: "static_set_ad_cleanup_disabled",
+  });
+  await page.goto(server.url("/ad-dnr-fetch.html"));
+  await expect.poll(() => page.evaluate(() => window.__adDnrFetchDone === true)).toBe(true);
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 1 });
+
+  await sendExtensionMessage(extension, {
+    origin: server.origin,
+    type: "static_clear_ad_site_data",
+  });
+  await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+  const dynamicState = await adDynamicState(extension);
+  expect(
+    Object.values(dynamicState.rules || {}).some((entry) => entry.origin === server.origin)
+  ).toBe(false);
 });
 
 test("per-site disable and clear learned ad data remove session DNR quarantine rules", async ({
