@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- shared extension fixture catalog is intentionally centralized */
 const { expect, test: base } = require("@playwright/test");
 const { datadogFixtureFiles } = require("./datadog-fixtures");
 const { launchExtension } = require("./extension");
@@ -153,6 +154,88 @@ const fixtureFiles = {
     <!doctype html>
     <meta charset="utf-8">
     <body>ordinary widget</body>
+  `,
+  "/ad-cosmetic-slot.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      #top, #below { height: 40px; padding: 8px; background: #f5f5f5; }
+      #ad-slot { width: 300px; min-height: 250px; margin: 20px 0; background: #fee; }
+      #ad-slot iframe { border: 0; display: block; width: 300px; height: 250px; }
+      #sticky-ad { position: fixed; right: 12px; bottom: 12px; width: 300px; height: 250px; background: #fee; z-index: 10; }
+      #sticky-ad iframe { border: 0; width: 300px; height: 250px; }
+    </style>
+    <body>
+      <div id="top">top content</div>
+      <div id="ad-slot" class="ad-slot">
+        <iframe id="ad-frame" width="300" height="250" title="Advertisement" src="/ad-creative.html"></iframe>
+      </div>
+      <div id="below">below content</div>
+      <div id="sticky-ad" class="sticky-ad">
+        <iframe id="sticky-ad-frame" width="300" height="250" title="Advertisement" src="/ad-creative.html"></iframe>
+      </div>
+    </body>
+  `,
+  "/ad-cosmetic-empty-frame.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <style>
+      #empty-ad-slot { width: 300px; height: 250px; background: #fee; }
+      #empty-ad-frame { border: 0; width: 300px; height: 250px; }
+    </style>
+    <body>
+      <div id="empty-ad-slot" class="ad-slot">
+        <iframe id="empty-ad-frame" width="300" height="250" title="Advertisement" src="about:blank"></iframe>
+      </div>
+    </body>
+  `,
+  "/ad-cosmetic-false-positives.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      .boundary { margin: 8px; padding: 10px; border: 1px solid #ddd; background: #fff; }
+      #sticky-nav { position: sticky; top: 0; z-index: 2; background: #eef; }
+      #cookie-banner { position: fixed; left: 0; right: 0; bottom: 0; background: #ffe; }
+      iframe { border: 0; display: block; width: 300px; height: 250px; }
+    </style>
+    <body>
+      <section id="comments-widget" class="boundary comments-widget">Reader comments</section>
+      <section id="product-card" class="boundary product-card">Adidas running shoe</section>
+      <section id="video-card" class="boundary video-card">
+        <iframe width="300" height="250" title="Training video" src="/video-player.html"></iframe>
+      </section>
+      <section id="dashboard-panel" class="boundary dashboard-panel">
+        <iframe width="300" height="250" title="Dashboard chart" src="/dashboard-widget.html"></iframe>
+      </section>
+      <nav id="sticky-nav" class="boundary sticky-nav">Sticky navigation</nav>
+      <div id="cookie-banner" class="boundary cookie-banner" role="dialog">Cookie preferences</div>
+      <section id="recommendations" class="boundary recommendations">Recommended articles</section>
+      <section id="legit-300x250" class="boundary content-card">
+        <iframe width="300" height="250" title="Content module" src="/content-300x250.html"></iframe>
+      </section>
+    </body>
+  `,
+  "/ad-creative.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>creative</body>
+  `,
+  "/video-player.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>video player</body>
+  `,
+  "/dashboard-widget.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>dashboard widget</body>
+  `,
+  "/content-300x250.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>legitimate content</body>
   `,
   "/ad-score-iframe-only.html": `
     <!doctype html>

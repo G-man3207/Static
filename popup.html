@@ -389,6 +389,7 @@
         line-height: 1.4;
       }
       .diagnostics-row,
+      .ad-cleanup-row,
       .fingerprint-row,
       .replay-row {
         display: flex;
@@ -399,12 +400,14 @@
         border-top: 1px solid var(--border);
       }
       .diagnostics-row .col,
+      .ad-cleanup-row .col,
       .fingerprint-row .col,
       .replay-row .col {
         flex: 1;
         min-width: 0;
       }
       .diagnostics-row .ttl,
+      .ad-cleanup-row .ttl,
       .fingerprint-row .ttl,
       .replay-row .ttl {
         display: flex;
@@ -415,6 +418,7 @@
         color: var(--text);
       }
       .diagnostics-row .desc,
+      .ad-cleanup-row .desc,
       .fingerprint-row .desc,
       .replay-row .desc {
         font-size: 10px;
@@ -809,6 +813,41 @@
             />
             <span class="switch-bg"></span>
           </label>
+        </div>
+        <div class="ad-cleanup-row">
+          <div class="col">
+            <div class="ttl" id="ad-cleanup-title">
+              <span id="ad-cleanup-title-text">Ad cleanup</span>
+              <button
+                class="help-tip"
+                id="ad-cleanup-help"
+                type="button"
+                data-tip="Uses only local high-confidence learned playbook entries. Cosmetic mode may hide likely ad containers; diagnostic mode only shows evidence."
+                aria-label="Ad cleanup details"
+                aria-describedby="ad-cleanup-help-text"
+              >
+                ?
+              </button>
+              <span class="sr-only" id="ad-cleanup-help-text"
+                >Uses only local high-confidence learned playbook entries. Cosmetic mode may hide
+                likely ad containers; diagnostic mode only shows evidence.</span
+              >
+            </div>
+            <div class="desc" id="ad-cleanup-desc">
+              Optional cosmetic cleanup for learned ad slots. It does not block requests or create
+              network rules.
+            </div>
+          </div>
+          <select
+            class="replay-select"
+            id="ad-cleanup-mode"
+            aria-labelledby="ad-cleanup-title-text"
+            aria-describedby="ad-cleanup-desc"
+          >
+            <option value="off">Off</option>
+            <option value="diagnostic">Diagnostic</option>
+            <option value="cosmetic">Cosmetic</option>
+          </select>
         </div>
         <div class="fingerprint-row">
           <div class="col">

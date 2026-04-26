@@ -75,7 +75,7 @@
     },
     {
       "matches": ["<all_urls>"],
-      "js": ["lists.js", "bridge.js", "dom_scrubber.js"],
+      "js": ["lists.js", "bridge.js", "dom_scrubber.js", "ad_cosmetic.js"],
       "run_at": "document_start",
       "world": "ISOLATED",
       "all_frames": true,

@@ -169,6 +169,15 @@ const setSelectValue = (select, value) => {
   select.value = value;
 };
 
+const setInputDisabled = (input, disabled) => {
+  input.disabled = disabled;
+};
+
+const setAdCleanupSelectMode = (select, mode) => {
+  select.dataset.currentMode = mode;
+  setSelectValue(select, mode);
+};
+
 const setReplayMode = (mode) => {
   replayState.replayMode = mode;
   renderReplayIndicators();
@@ -213,6 +222,12 @@ const adConfidenceLabel = (confidence) => {
   if (confidence === "high") return "High";
   if (confidence === "likely") return "Likely";
   return "Learning";
+};
+
+const adCleanupModeLabel = (mode) => {
+  if (mode === "cosmetic") return "Cosmetic";
+  if (mode === "diagnostic") return "Diagnostic";
+  return "Off";
 };
 
 const renderAdNotice = (resp) => {
@@ -379,6 +394,15 @@ const renderPowerDiagnostics = (resp) => {
 
 const currentAdState = (resp) => (resp && resp.ad ? resp.ad : null);
 
+const adPlaybookState = (ad) => (ad && ad.playbook ? ad.playbook : {});
+
+const adEndpointState = (ad) => (ad && Array.isArray(ad.endpoints) ? ad.endpoints : []);
+
+const adCleanupModeState = (resp, ad) => (resp && resp.adCleanupMode) || (ad && ad.cleanupMode);
+
+const adCleanupDisabledText = (ad) =>
+  ad && ad.cleanupDisabled ? "disabled for this site" : "not disabled for this site";
+
 const refreshDetails = async () => {
   if (typeof activeTabId !== "number") return null;
   try {
@@ -475,20 +499,13 @@ const renderAdDiagnostics = (resp) => {
   addDiagnosticRow(box, "Confidence", adConfidenceLabel(ad && ad.confidence));
   addDiagnosticRow(box, "Score", fmt((ad && ad.score) || 0));
   addDiagnosticRow(box, "Reasons", formatAdReasons(ad && ad.reasons));
-  const playbook = ad && ad.playbook ? ad.playbook : {};
-  addDiagnosticRow(
-    box,
-    "Endpoints",
-    formatCountEntries(ad && Array.isArray(ad.endpoints) ? ad.endpoints : [])
-  );
+  const playbook = adPlaybookState(ad);
+  addDiagnosticRow(box, "Endpoints", formatCountEntries(adEndpointState(ad)));
   addDiagnosticRow(box, "Cosmetic", formatPlaybookEntries(playbook.cosmetic, "value"));
   addDiagnosticRow(box, "Network", formatPlaybookEntries(playbook.network, "path"));
   addDiagnosticRow(box, "Scripts", formatPlaybookEntries(playbook.scripts, "value"));
-  addDiagnosticRow(
-    box,
-    "Cleanup",
-    ad && ad.cleanupDisabled ? "disabled for this site" : "not disabled for this site"
-  );
+  addDiagnosticRow(box, "Cleanup mode", adCleanupModeLabel(adCleanupModeState(resp, ad)));
+  addDiagnosticRow(box, "Cleanup", adCleanupDisabledText(ad));
   renderAdControls(box, resp);
 };
 
@@ -554,6 +571,33 @@ const renderDiagnosticsSection = (resp) => {
     } catch (e) {
       console.error("[Static] diagnostics toggle failed", e);
       setChecked(toggle, !desired);
+    }
+  });
+};
+
+const renderAdCleanupSection = (resp) => {
+  const select = document.getElementById("ad-cleanup-mode");
+  const allowed = new Set(["off", "diagnostic", "cosmetic"]);
+  const initial = resp && allowed.has(resp.adCleanupMode) ? resp.adCleanupMode : "off";
+  setAdCleanupSelectMode(select, initial);
+
+  select.addEventListener("change", async () => {
+    const desired = allowed.has(select.value) ? select.value : "off";
+    const previous = allowed.has(select.dataset.currentMode) ? select.dataset.currentMode : "off";
+    setInputDisabled(select, true);
+    try {
+      const saved = await chrome.runtime.sendMessage({
+        mode: desired,
+        type: "static_set_ad_cleanup_mode",
+      });
+      const next = saved && allowed.has(saved.mode) ? saved.mode : desired;
+      setAdCleanupSelectMode(select, next);
+      await refreshDetails();
+    } catch (e) {
+      console.error("[Static] ad cleanup mode update failed", e);
+      setAdCleanupSelectMode(select, previous);
+    } finally {
+      setInputDisabled(select, false);
     }
   });
 };
@@ -772,6 +816,7 @@ const renderRulesets = (enabledArr, counts) => {
   renderDetails(details);
   renderAdDiagnostics(details);
   renderNoiseSection(details);
+  renderAdCleanupSection(details);
   renderDiagnosticsSection(details);
   renderFingerprintSection(details);
   renderReplaySection(details);

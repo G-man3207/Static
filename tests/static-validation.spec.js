@@ -220,7 +220,7 @@ const expectContentScriptWorlds = (manifest) => {
   const isolatedWorld = manifest.content_scripts.find((script) => script.world === "ISOLATED");
 
   expect(mainWorld.js).toEqual(expectedMainWorldScripts);
-  expect(isolatedWorld.js).toEqual(["lists.js", "bridge.js", "dom_scrubber.js"]);
+  expect(isolatedWorld.js).toEqual(["lists.js", "bridge.js", "dom_scrubber.js", "ad_cosmetic.js"]);
   expect(mainWorld.run_at).toBe("document_start");
   expect(isolatedWorld.run_at).toBe("document_start");
   expect(mainWorld.all_frames).toBe(true);

@@ -56,6 +56,7 @@ const AD_PLAYBOOK_MIN_HITS = AD_PLAYBOOK_CONFIG.minHits || {
 const AD_PLAYBOOK_VERSION = AD_PLAYBOOK_CONFIG.version || 1;
 const AD_PLAYBOOK_STALE_MS = AD_PLAYBOOK_CONFIG.staleMs || 30 * 24 * 60 * 60 * 1000;
 const AD_PLAYBOOK_EXPIRE_MS = AD_PLAYBOOK_CONFIG.expireMs || 90 * 24 * 60 * 60 * 1000;
+const AD_CLEANUP_MODES = new Set(["off", "diagnostic", "cosmetic"]);
 const AD_SESSION_RULE_ID_MIN = 8000000;
 const AD_SESSION_RULE_ID_MAX = 8999999;
 const AD_PLAYBOOK_RESOURCE_TYPES = new Set([
@@ -390,6 +391,9 @@ const adSitePrefsFor = (origin, adPrefs = {}) => {
   };
 };
 
+const adCleanupModeFor = (adPrefs = {}) =>
+  AD_CLEANUP_MODES.has(adPrefs.mode) ? adPrefs.mode : "off";
+
 const adPlaybookFor = (origin, adPlaybooks = {}) => {
   const playbook = origin ? adPlaybooks[origin] : null;
   if (!playbook) {
@@ -492,6 +496,15 @@ const upsertPlaybookEntry = ({ baseScore, candidate, entries, minHits, now, valu
   const hits = Math.max(0, Math.round(entry.hits || 0)) + 1;
   const needsMoreEvidence = hits < minHits;
   const diagnosticOnly = !!(candidate.diagnosticOnly || needsMoreEvidence);
+  const wasActive = playbookEntryIsActive(entry, minHits);
+  if (wasActive && diagnosticOnly && candidate.reason === "low-confidence") {
+    entry.firstSeen ||= now;
+    entry.hits = hits;
+    entry.lastSeen = now;
+    entry.score = Math.max(entry.score || 0, baseScore);
+    mergeResourceType(entry, candidate.resourceType);
+    return;
+  }
   entry.diagnosticOnly = diagnosticOnly;
   entry.firstSeen ||= now;
   entry.hits = hits;
@@ -678,6 +691,7 @@ const adDiagnosticsFor = ({ adLog = {}, adPlaybooks = {}, adPrefs = {}, origin }
   const prefs = adSitePrefsFor(origin, adPrefs);
   return {
     ...entryDiagnostics,
+    cleanupMode: adCleanupModeFor(adPrefs),
     cleanupDisabled: !!(prefs.cleanupDisabled || playbook.disabled),
     lastUpdated: Math.max(entryDiagnostics.updatedAt, playbook.lastUpdated || 0),
     playbook,
@@ -1203,6 +1217,7 @@ const detailsResponseFor = async (tabId, stored) => {
     adaptiveDetected: !!adaptiveEntry,
     adaptiveScore: adaptiveEntry ? adaptiveEntry.scoreMax || 0 : 0,
     adaptiveCategories: adaptiveEntry ? adaptiveEntry.categories || {} : {},
+    adCleanupMode: adCleanupModeFor(stored.ad_prefs),
     ad: adDiagnosticsFor({
       adLog: stored.ad_log,
       adPlaybooks: stored.ad_playbooks,
@@ -1339,6 +1354,24 @@ const handleSetDiagnostics = (msg, _sender, sendResponse) => {
     await chrome.storage.local.set({ diagnostics_mode: enabled });
     await broadcastConfigUpdate();
     sendResponse({ enabled, ok: true });
+  })();
+  return true;
+};
+
+const handleSetAdCleanupMode = (msg, _sender, sendResponse) => {
+  (async () => {
+    const mode = AD_CLEANUP_MODES.has(msg.mode) ? msg.mode : "off";
+    const { ad_prefs = {} } = await chrome.storage.local.get({ ad_prefs: {} });
+    await chrome.storage.local.set({
+      ad_prefs: {
+        ...ad_prefs,
+        lastUpdated: Date.now(),
+        mode,
+        version: AD_PLAYBOOK_VERSION,
+      },
+    });
+    await broadcastConfigUpdate();
+    sendResponse({ mode, ok: true });
   })();
   return true;
 };
@@ -1530,6 +1563,7 @@ const messageHandlers = {
   static_probe_blocked: handleProbeBlocked,
   static_replay_detected: handleReplayDetected,
   static_set_diagnostics: handleSetDiagnostics,
+  static_set_ad_cleanup_mode: handleSetAdCleanupMode,
   static_set_ad_cleanup_disabled: handleSetAdCleanupDisabled,
   static_set_fingerprint: handleSetFingerprint,
   static_set_noise: handleSetNoise,
