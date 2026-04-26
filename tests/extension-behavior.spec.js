@@ -1420,6 +1420,23 @@ test("Adaptive observe-only logging ignores canvas-heavy apps without corroborat
   expect(storage.adaptive_log).toBeUndefined();
 });
 
+test("Adaptive observe-only logging ignores WebAudio apps with routine app fetches", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-audio-workstation.html"));
+  await expect
+    .poll(() => page.evaluate(() => window.__adaptiveAudioWorkstationDone === true))
+    .toBe(true);
+  await page.waitForTimeout(400);
+
+  const storage = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get("adaptive_log")
+  );
+  expect(storage.adaptive_log).toBeUndefined();
+});
+
 test("Adaptive observe-only logging records environment snapshot telemetry with crypto and network", async ({
   extension,
   server,

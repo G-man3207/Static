@@ -562,6 +562,29 @@ const fixtureFiles = {
       window.__canvasAppDone = true;
     </script>
   `,
+  "/adaptive-audio-workstation.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      (async () => {
+        if (typeof OfflineAudioContext === "function") {
+          const context = new OfflineAudioContext(1, 128, 44100);
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          gain.gain.value = 0.2;
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start(0);
+          const buffer = await context.startRendering();
+          buffer.getChannelData(0);
+        }
+        void navigator.hardwareConcurrency;
+        await fetch("/audio/preset.json").catch(() => {});
+        window.__adaptiveAudioWorkstationDone = true;
+      })();
+    </script>
+  `,
+  "/audio/preset.json": `{"name":"default","gain":0.2}`,
   "/adaptive-environment-fingerprint.html": `
     <!doctype html>
     <meta charset="utf-8">

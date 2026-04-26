@@ -65,6 +65,10 @@ The scorer uses multi-signal windows. Single APIs are not enough:
 
 - Canvas/WebGL/audio readback suggests fingerprinting only when paired with navigator or network
   signals.
+- Audio-only readback is calibrated more conservatively than canvas/WebGL readback because
+  legitimate WebAudio tools commonly render offline audio and fetch presets or assets. Without
+  canvas/WebGL or crypto corroboration, audio-only chains need a collector-like endpoint before
+  they produce an adaptive finding.
 - Environment snapshots such as screen, timezone, storage, and high-entropy navigator reads suggest
   fingerprinting only when paired with crypto and network transmission.
 - Crypto plus large network transmission suggests anti-bot/sensor collection only when paired with

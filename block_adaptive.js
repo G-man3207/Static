@@ -6,6 +6,8 @@
   const ADAPTIVE_COOLDOWN_MS = 7000;
   const ADAPTIVE_TRIGGER_SCORE = 7;
   const ADAPTIVE_SOURCE_URL_RE = /\b(?:https?):\/\/[^\s)]+/g;
+  const ADAPTIVE_COLLECTOR_ENDPOINT_RE =
+    /(?:^|[/:_.-])(?:abr|bot|challenge|collect|collector|datadome|fingerprint|fp|fraud|px|sensor|sift|telemetry|trace)(?:$|[/:_.-])/i;
   const STATIC_INTERNAL_OBSERVER_RE =
     /chrome-extension:\/\/[a-p]{32}\/(?:block_ads|block_style_vectors)\.js/i;
   const ADAPTIVE_WEIGHTS = {
@@ -476,10 +478,32 @@
   const scoreForKinds = (kinds) =>
     [...kinds].reduce((sum, name) => sum + (ADAPTIVE_WEIGHTS[name] || 1), 0);
 
+  const entryHasCollectorEndpoint = (entry) => {
+    try {
+      return Object.keys((entry && entry.endpoints) || {}).some((endpoint) =>
+        ADAPTIVE_COLLECTOR_ENDPOINT_RE.test(String(endpoint || ""))
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const audioOnlyReadbackNeedsMoreEvidence = (entry, kinds) => {
+    const hasAudioReadback = kinds.has("audio");
+    const hasCanvasOrWebglReadback = kinds.has("canvas") || kinds.has("webgl");
+    return (
+      hasAudioReadback &&
+      !hasCanvasOrWebglReadback &&
+      !kinds.has("crypto") &&
+      !entryHasCollectorEndpoint(entry)
+    );
+  };
+
   const shouldReportEntry = (entry, kinds, score, now) => {
     const hasNetwork = kinds.has("network");
     const nonNetworkKinds = [...kinds].filter((name) => name !== "network").length;
     const strongReplay = kinds.has("dom_observer") && kinds.has("input_hooks");
+    if (audioOnlyReadbackNeedsMoreEvidence(entry, kinds)) return false;
     return (
       score >= ADAPTIVE_TRIGGER_SCORE &&
       (strongReplay || (hasNetwork && nonNetworkKinds >= 2)) &&
