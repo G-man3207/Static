@@ -2036,6 +2036,15 @@ const handleAdSignal = (msg, sender) => {
 
 const storedEntryForOrigin = (origin, log) => (origin ? log[origin] : null);
 
+const adaptiveDiagnosticsFor = (entry) => ({
+  adaptiveCategories: entry ? entry.categories || {} : {},
+  adaptiveDetected: !!entry,
+  adaptiveEndpoints: entry ? countEntries(entry.endpoints, 4) : [],
+  adaptiveReasons: entry ? countEntries(entry.reasons, 8) : [],
+  adaptiveScore: entry ? entry.scoreMax || 0 : 0,
+  adaptiveSources: entry ? countEntries(entry.sources, 4) : [],
+});
+
 const tabOriginFor = async (tabId) => {
   try {
     const tab = await chrome.tabs.get(tabId);
@@ -2079,9 +2088,7 @@ const detailsResponseFor = async (tabId, stored) => {
     noiseEnabled: stored.noise_enabled,
     replayMode: stored.replay_mode,
     replayDetected: !!(origin && stored.replay_log[origin]),
-    adaptiveDetected: !!adaptiveEntry,
-    adaptiveScore: adaptiveEntry ? adaptiveEntry.scoreMax || 0 : 0,
-    adaptiveCategories: adaptiveEntry ? adaptiveEntry.categories || {} : {},
+    ...adaptiveDiagnosticsFor(adaptiveEntry),
     adCleanupMode: adCleanupModeFor(stored.ad_prefs),
     ad: adDiagnosticsFor({
       adLog: stored.ad_log,

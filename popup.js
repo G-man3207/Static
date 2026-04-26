@@ -348,7 +348,7 @@ const addProbePlaybookRows = (box, playbook) => {
   addDiagnosticRow(box, "Paths", formatCountEntries(playbook.pathKinds));
 };
 
-const addAdaptivePowerRow = (box, resp) => {
+const addAdaptivePowerRows = (box, resp) => {
   if (!resp.adaptiveDetected) return;
   const categories = Object.entries(resp.adaptiveCategories || {})
     .sort((a, b) => b[1] - a[1])
@@ -358,6 +358,10 @@ const addAdaptivePowerRow = (box, resp) => {
     "Adaptive",
     `score ${fmt(resp.adaptiveScore || 0)}${categories.length ? `; ${categories.join(", ")}` : ""}`
   );
+  addDiagnosticRow(box, "Adaptive reasons", formatCountEntries(resp.adaptiveReasons));
+  addDiagnosticRow(box, "Adaptive sources", formatCountEntries(resp.adaptiveSources));
+  addDiagnosticRow(box, "Adaptive endpoints", formatCountEntries(resp.adaptiveEndpoints));
+  addDiagnosticRow(box, "Adaptive blocking", "Observe-only; no generic adaptive rules active");
 };
 
 const renderAdaptiveControls = (container, resp) => {
@@ -419,7 +423,7 @@ const renderPowerDiagnostics = (resp) => {
   addDiagnosticRow(box, "Persona", personaStatusText(diagnostics));
   addNoiseDiagnosticRows(box, diagnostics);
   addProbePlaybookRows(box, playbook);
-  addAdaptivePowerRow(box, resp);
+  addAdaptivePowerRows(box, resp);
   renderAdaptiveControls(box, resp);
   addAdPowerRow(box, resp);
   if (resp.fingerprintMode && resp.fingerprintMode !== "off") {

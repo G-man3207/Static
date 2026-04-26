@@ -1178,6 +1178,13 @@ test("popup clears current-site adaptive signals without changing modes or DNR r
   await openPopupAdvancedControls(popupPage);
   await popupPage.getByText("Power diagnostics").click();
   await expect(popupPage.locator("#power-diagnostics")).toContainText("Adaptive");
+  await expect(popupPage.locator("#power-diagnostics")).toContainText("Adaptive reasons");
+  await expect(popupPage.locator("#power-diagnostics")).toContainText("canvas");
+  await expect(popupPage.locator("#power-diagnostics")).toContainText("Adaptive sources");
+  await expect(popupPage.locator("#power-diagnostics")).toContainText("Adaptive endpoints");
+  await expect(popupPage.locator("#power-diagnostics")).toContainText(
+    "Observe-only; no generic adaptive rules active"
+  );
   await popupPage.locator("#clear-adaptive-site-data").click();
 
   await expect
