@@ -52,6 +52,7 @@ const fingerprintState = {
 };
 const boundHelpTips = new WeakSet();
 let activeHelpTip = null;
+let activeTabId = null;
 let helpTipPopover = null;
 
 const tooltipMargin = 10;
@@ -208,6 +209,23 @@ const renderAdaptiveNotice = (resp) => {
   adaptiveEl.hidden = false;
 };
 
+const adConfidenceLabel = (confidence) => {
+  if (confidence === "high") return "High";
+  if (confidence === "likely") return "Likely";
+  return "Learning";
+};
+
+const renderAdNotice = (resp) => {
+  const adEl = document.getElementById("ad-observed");
+  const ad = resp && resp.ad;
+  if (!(ad && ad.observed)) {
+    adEl.hidden = true;
+    return;
+  }
+  adEl.textContent = `Ad behavior observed: ${adConfidenceLabel(ad.confidence)}`;
+  adEl.hidden = false;
+};
+
 const renderTopIds = (topIds) => {
   const topEl = document.getElementById("top-ids");
   topEl.innerHTML = "";
@@ -237,6 +255,30 @@ const formatCountEntries = (entries) => {
   return entries.map(([name, count]) => `${name} ${fmt(count)}`).join(", ");
 };
 
+const formatAdReasons = (reasons) => {
+  if (!Array.isArray(reasons) || reasons.length === 0) return "none observed";
+  return reasons
+    .slice(0, 5)
+    .map(
+      (reason) =>
+        `${reason.token} ${fmt(reason.count)}${reason.score ? ` (score ${fmt(reason.score)})` : ""}`
+    )
+    .join(", ");
+};
+
+const formatPlaybookEntries = (entries, valueKey) => {
+  if (!Array.isArray(entries) || entries.length === 0) return "none learned";
+  return entries
+    .slice(0, 4)
+    .map((entry) => {
+      const value = entry[valueKey] || entry.value || "entry";
+      const score = typeof entry.score === "number" ? `score ${fmt(entry.score)}` : "score 0";
+      const hits = entry.hits ? `, ${fmt(entry.hits)} hit${entry.hits === 1 ? "" : "s"}` : "";
+      return `${value} (${score}${hits})`;
+    })
+    .join(", ");
+};
+
 const addDiagnosticRow = (container, key, value) => {
   const row = document.createElement("div");
   row.className = "diagnostic-row";
@@ -258,6 +300,57 @@ const personaStatusText = (diagnostics) => {
   return `${fmt(diagnostics.selectedCount)} decoy${diagnostics.selectedCount === 1 ? "" : "s"} armed`;
 };
 
+const addNoiseDiagnosticRows = (box, diagnostics) => {
+  if (!diagnostics) return;
+  addDiagnosticRow(
+    box,
+    "Noise pool",
+    `${fmt(diagnostics.eligibleTotal)} eligible (${fmt(diagnostics.eligibleKnown)} known, ${fmt(
+      diagnostics.eligibleUnknown
+    )} unknown), target ${fmt(diagnostics.targetMin)}-${fmt(diagnostics.targetMax)}`
+  );
+  addDiagnosticRow(
+    box,
+    "ID pressure",
+    `${fmt(diagnostics.uniqueIds)} unique, ${fmt(diagnostics.repeatedIds)} repeated, ${pct(
+      diagnostics.oneShotPressure
+    )} one-shot`
+  );
+  if (diagnostics.selectedIds && diagnostics.selectedIds.length > 0) {
+    addDiagnosticRow(box, "Decoy IDs", diagnostics.selectedIds.join(", "));
+  }
+};
+
+const addProbePlaybookRows = (box, playbook) => {
+  if (!playbook) return;
+  addDiagnosticRow(box, "Latest week", `${playbook.week}; ${fmt(playbook.total)} probes`);
+  addDiagnosticRow(box, "Vectors", formatCountEntries(playbook.vectors));
+  addDiagnosticRow(box, "Paths", formatCountEntries(playbook.pathKinds));
+};
+
+const addAdaptivePowerRow = (box, resp) => {
+  if (!resp.adaptiveDetected) return;
+  const categories = Object.entries(resp.adaptiveCategories || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, count]) => `${category} ${fmt(count)}`);
+  addDiagnosticRow(
+    box,
+    "Adaptive",
+    `score ${fmt(resp.adaptiveScore || 0)}${categories.length ? `; ${categories.join(", ")}` : ""}`
+  );
+};
+
+const addAdPowerRow = (box, resp) => {
+  if (!(resp.ad && resp.ad.observed)) return;
+  addDiagnosticRow(
+    box,
+    "Ads",
+    `${adConfidenceLabel(resp.ad.confidence)}; score ${fmt(resp.ad.score || 0)}; ${formatAdReasons(
+      resp.ad.reasons
+    )}`
+  );
+};
+
 const renderPowerDiagnostics = (resp) => {
   const box = document.getElementById("power-diagnostics");
   box.innerHTML = "";
@@ -274,43 +367,134 @@ const renderPowerDiagnostics = (resp) => {
   const playbook = resp.playbook;
   addDiagnosticRow(box, "Origin", resp.origin);
   addDiagnosticRow(box, "Persona", personaStatusText(diagnostics));
-  if (diagnostics) {
-    addDiagnosticRow(
-      box,
-      "Noise pool",
-      `${fmt(diagnostics.eligibleTotal)} eligible (${fmt(diagnostics.eligibleKnown)} known, ${fmt(
-        diagnostics.eligibleUnknown
-      )} unknown), target ${fmt(diagnostics.targetMin)}-${fmt(diagnostics.targetMax)}`
-    );
-    addDiagnosticRow(
-      box,
-      "ID pressure",
-      `${fmt(diagnostics.uniqueIds)} unique, ${fmt(diagnostics.repeatedIds)} repeated, ${pct(
-        diagnostics.oneShotPressure
-      )} one-shot`
-    );
-    if (diagnostics.selectedIds && diagnostics.selectedIds.length > 0) {
-      addDiagnosticRow(box, "Decoy IDs", diagnostics.selectedIds.join(", "));
-    }
-  }
-  if (playbook) {
-    addDiagnosticRow(box, "Latest week", `${playbook.week}; ${fmt(playbook.total)} probes`);
-    addDiagnosticRow(box, "Vectors", formatCountEntries(playbook.vectors));
-    addDiagnosticRow(box, "Paths", formatCountEntries(playbook.pathKinds));
-  }
-  if (resp.adaptiveDetected) {
-    const categories = Object.entries(resp.adaptiveCategories || {})
-      .sort((a, b) => b[1] - a[1])
-      .map(([category, count]) => `${category} ${fmt(count)}`);
-    addDiagnosticRow(
-      box,
-      "Adaptive",
-      `score ${fmt(resp.adaptiveScore || 0)}${categories.length ? `; ${categories.join(", ")}` : ""}`
-    );
-  }
+  addNoiseDiagnosticRows(box, diagnostics);
+  addProbePlaybookRows(box, playbook);
+  addAdaptivePowerRow(box, resp);
+  addAdPowerRow(box, resp);
   if (resp.fingerprintMode && resp.fingerprintMode !== "off") {
     addDiagnosticRow(box, "Signal poison", resp.fingerprintMode);
   }
+};
+
+const currentAdState = (resp) => (resp && resp.ad ? resp.ad : null);
+
+const refreshDetails = async () => {
+  if (typeof activeTabId !== "number") return null;
+  try {
+    const details = await chrome.runtime.sendMessage({
+      tabId: activeTabId,
+      type: "static_get_details",
+    });
+    renderDetails(details);
+    renderAdDiagnostics(details);
+    return details;
+  } catch {
+    return null;
+  }
+};
+
+const renderAdControls = (container, resp) => {
+  const ad = currentAdState(resp);
+  const origin = resp && resp.origin;
+  const controls = document.createElement("div");
+  controls.className = "ad-controls";
+
+  const row = document.createElement("label");
+  row.className = "ad-control-row";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.id = "ad-cleanup-disabled";
+  checkbox.checked = !!(ad && ad.cleanupDisabled);
+  checkbox.disabled = !origin;
+  const label = document.createElement("span");
+  label.textContent = "Disable ad cleanup for this site";
+  row.appendChild(checkbox);
+  row.appendChild(label);
+  controls.appendChild(row);
+
+  const clear = document.createElement("button");
+  clear.className = "ad-clear-btn";
+  clear.id = "clear-ad-site-data";
+  clear.type = "button";
+  clear.textContent = "Clear learned ad data for this site";
+  clear.disabled = !(origin && ad && (ad.observed || ad.playbook.lastUpdated));
+  controls.appendChild(clear);
+
+  checkbox.addEventListener("change", () => {
+    const desired = checkbox.checked;
+    checkbox.disabled = true;
+    chrome.runtime
+      .sendMessage({
+        disabled: desired,
+        origin,
+        type: "static_set_ad_cleanup_disabled",
+      })
+      .then((saved) => {
+        checkbox.checked = !!(saved && saved.prefs && saved.prefs.cleanupDisabled);
+        return refreshDetails();
+      })
+      .catch((e) => {
+        console.error("[Static] ad cleanup preference update failed", e);
+        checkbox.checked = !desired;
+      })
+      .finally(() => {
+        checkbox.disabled = false;
+      });
+  });
+
+  clear.addEventListener("click", async () => {
+    clear.disabled = true;
+    try {
+      await chrome.runtime.sendMessage({ origin, type: "static_clear_ad_site_data" });
+      await refreshDetails();
+    } catch (e) {
+      console.error("[Static] clear ad site data failed", e);
+      clear.disabled = false;
+    }
+  });
+
+  container.appendChild(controls);
+};
+
+const renderAdDiagnostics = (resp) => {
+  const box = document.getElementById("ad-diagnostics");
+  box.innerHTML = "";
+  const ad = currentAdState(resp);
+
+  if (!(resp && resp.origin)) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No current-site ad diagnostics available on this page.";
+    box.appendChild(empty);
+    renderAdControls(box, resp);
+    return;
+  }
+
+  addDiagnosticRow(box, "Origin", resp.origin);
+  addDiagnosticRow(box, "Confidence", adConfidenceLabel(ad && ad.confidence));
+  addDiagnosticRow(box, "Score", fmt((ad && ad.score) || 0));
+  addDiagnosticRow(box, "Reasons", formatAdReasons(ad && ad.reasons));
+  addDiagnosticRow(
+    box,
+    "Endpoints",
+    formatCountEntries(ad && Array.isArray(ad.endpoints) ? ad.endpoints : [])
+  );
+  addDiagnosticRow(
+    box,
+    "Cosmetic",
+    formatPlaybookEntries(ad && ad.playbook && ad.playbook.cosmetic, "value")
+  );
+  addDiagnosticRow(
+    box,
+    "Network",
+    formatPlaybookEntries(ad && ad.playbook && ad.playbook.network, "path")
+  );
+  addDiagnosticRow(
+    box,
+    "Cleanup",
+    ad && ad.cleanupDisabled ? "disabled for this site" : "not disabled for this site"
+  );
+  renderAdControls(box, resp);
 };
 
 const renderDetails = (resp) => {
@@ -324,6 +508,7 @@ const renderDetails = (resp) => {
   renderCumulative(cumulative);
   renderDriftNotice(resp && resp.drift);
   renderAdaptiveNotice(resp);
+  renderAdNotice(resp);
   renderTopIds(topIds);
   renderPowerDiagnostics(resp);
 };
@@ -576,6 +761,7 @@ const renderRulesets = (enabledArr, counts) => {
 
 (async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
+  activeTabId = tab && typeof tab.id === "number" ? tab.id : null;
   const detailsPromise = tab
     ? chrome.runtime.sendMessage({ type: "static_get_details", tabId: tab.id }).catch(() => null)
     : Promise.resolve(null);
@@ -589,6 +775,7 @@ const renderRulesets = (enabledArr, counts) => {
   ]);
 
   renderDetails(details);
+  renderAdDiagnostics(details);
   renderNoiseSection(details);
   renderDiagnosticsSection(details);
   renderFingerprintSection(details);

@@ -41,6 +41,8 @@ const AD_LOG_CAPS = AD_SIGNALS.caps || {
   reasons: 50,
   sources: 50,
 };
+const AD_SESSION_RULE_ID_MIN = 8000000;
+const AD_SESSION_RULE_ID_MAX = 8999999;
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -204,18 +206,146 @@ const normalizeAdSignal = (signal) => ({
   source: String(signal.source || "unknown").slice(0, 160),
 });
 
-const adScoreFor = (reasons) => {
-  if (typeof AD_SIGNALS.scoreForReasons === "function") {
-    return AD_SIGNALS.scoreForReasons(reasons);
+const adClassificationFor = (reasons) => {
+  if (typeof AD_SIGNALS.classifyReasons === "function") {
+    return AD_SIGNALS.classifyReasons(reasons);
   }
-  return Math.min(100, Object.keys(reasons || {}).length * 2);
+  const score = Math.min(100, Object.keys(reasons || {}).length * 2);
+  return {
+    confidence: score > 0 ? "low" : "learning",
+    score,
+    scoreReasons: [],
+  };
 };
 
-const adConfidenceFor = (reasons) => {
-  if (typeof AD_SIGNALS.confidenceForReasons === "function") {
-    return AD_SIGNALS.confidenceForReasons(reasons);
+const adUiConfidence = (confidence) =>
+  confidence === "high" || confidence === "likely" ? confidence : "learning";
+
+const normalizeOrigin = (origin) => {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.origin === "null") return null;
+    return parsed.origin;
+  } catch {
+    return null;
   }
-  return adScoreFor(reasons) > 0 ? "low" : "learning";
+};
+
+const countEntries = (counts, limit = 8) =>
+  Object.entries(counts || {})
+    .filter(([, count]) => typeof count === "number" && count > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit);
+
+const adReasonScore = (reason) => {
+  const weights = AD_SIGNALS.weights || {};
+  const score = weights[reason];
+  return typeof score === "number" && score > 0 ? score : 0;
+};
+
+const adReasonSummaries = (reasons, limit = 8) =>
+  countEntries(reasons, limit).map(([token, count]) => ({
+    count,
+    score: adReasonScore(token),
+    token,
+  }));
+
+const sanitizeAdPlaybookEntry = (entry) => ({
+  hits: Math.max(0, Math.round(entry && entry.hits ? entry.hits : 0)),
+  kind: String((entry && entry.kind) || "entry").slice(0, 32),
+  path: String((entry && entry.path) || "").slice(0, 160),
+  resourceTypes: Array.isArray(entry && entry.resourceTypes)
+    ? entry.resourceTypes.map((type) => String(type).slice(0, 32)).slice(0, 6)
+    : [],
+  score: Math.max(0, Math.min(100, Math.round((entry && entry.score) || 0))),
+  value: String((entry && entry.value) || "").slice(0, 160),
+});
+
+const sortedPlaybookEntries = (entries, limit = 6) =>
+  (Array.isArray(entries) ? entries : [])
+    .map(sanitizeAdPlaybookEntry)
+    .sort((a, b) => b.score - a.score || b.hits - a.hits)
+    .slice(0, limit);
+
+const adSitePrefsFor = (origin, adPrefs = {}) => {
+  const sites = adPrefs.sites || adPrefs.site || {};
+  const site = (origin && sites[origin]) || {};
+  return {
+    cleanupDisabled: !!(site.cleanupDisabled || site.disabled),
+    lastUpdated: site.lastUpdated || 0,
+  };
+};
+
+const adPlaybookFor = (origin, adPlaybooks = {}) => {
+  const playbook = origin ? adPlaybooks[origin] : null;
+  if (!playbook) {
+    return {
+      confidence: "learning",
+      cosmetic: [],
+      disabled: false,
+      lastUpdated: 0,
+      network: [],
+      version: 1,
+    };
+  }
+  return {
+    confidence: adUiConfidence(playbook.confidence),
+    cosmetic: sortedPlaybookEntries(playbook.cosmetic),
+    disabled: !!playbook.disabled,
+    lastUpdated: playbook.lastUpdated || 0,
+    network: sortedPlaybookEntries(playbook.network),
+    version: playbook.version || 1,
+  };
+};
+
+const adScoreReasonsFor = (entry, classification) => {
+  if (!entry) return [];
+  if (Array.isArray(entry.scoreReasons)) return entry.scoreReasons.slice(0, 16);
+  return Array.from(classification.scoreReasons || []).slice(0, 16);
+};
+
+const adEntryDiagnosticsFor = (entry, classification) => {
+  if (!entry) {
+    return {
+      confidence: "learning",
+      endpoints: [],
+      firstSeen: 0,
+      observed: false,
+      reasons: [],
+      score: 0,
+      scoreReasons: [],
+      sources: [],
+      total: 0,
+      updatedAt: 0,
+    };
+  }
+  return {
+    confidence: adUiConfidence(entry.confidence || classification.confidence),
+    endpoints: countEntries(entry.endpoints, 6),
+    firstSeen: entry.firstSeen || 0,
+    observed: true,
+    reasons: adReasonSummaries(entry.reasons, 8),
+    score: entry.score || classification.score || 0,
+    scoreReasons: adScoreReasonsFor(entry, classification),
+    sources: countEntries(entry.sources, 4),
+    total: entry.total || 0,
+    updatedAt: entry.lastUpdated || 0,
+  };
+};
+
+const adDiagnosticsFor = ({ adLog = {}, adPlaybooks = {}, adPrefs = {}, origin }) => {
+  const entry = storedEntryForOrigin(origin, adLog);
+  const classification = adClassificationFor((entry && entry.reasons) || {});
+  const entryDiagnostics = adEntryDiagnosticsFor(entry, classification);
+  const playbook = adPlaybookFor(origin, adPlaybooks);
+  const prefs = adSitePrefsFor(origin, adPrefs);
+  return {
+    ...entryDiagnostics,
+    cleanupDisabled: !!(prefs.cleanupDisabled || playbook.disabled),
+    lastUpdated: Math.max(entryDiagnostics.updatedAt, playbook.lastUpdated || 0),
+    playbook,
+    prefs,
+  };
 };
 
 const recordAdSignal = async (origin, signal) => {
@@ -249,8 +379,10 @@ const recordAdSignal = async (origin, signal) => {
   entry.reasons = trimCountMap(entry.reasons, AD_LOG_CAPS.reasons);
   entry.endpoints = trimCountMap(entry.endpoints, AD_LOG_CAPS.endpoints);
   entry.sources = trimCountMap(entry.sources, AD_LOG_CAPS.sources);
-  entry.score = adScoreFor(entry.reasons);
-  entry.confidence = adConfidenceFor(entry.reasons);
+  const classification = adClassificationFor(entry.reasons);
+  entry.score = classification.score;
+  entry.confidence = classification.confidence;
+  entry.scoreReasons = Array.from(classification.scoreReasons || []).slice(0, 16);
   ad_log[origin] = entry;
   trimLogOrigins(ad_log, AD_LOG_CAPS.origins);
   await chrome.storage.local.set({ ad_log });
@@ -691,6 +823,8 @@ const loggedOriginsFor = (stored) =>
     ...Object.keys(stored.probe_log),
     ...Object.keys(stored.replay_log),
     ...Object.keys(stored.adaptive_log),
+    ...Object.keys(stored.ad_log),
+    ...Object.keys(stored.ad_playbooks),
     ...Object.keys(stored.diagnostic_log),
   ]);
 
@@ -716,6 +850,12 @@ const detailsResponseFor = async (tabId, stored) => {
     adaptiveDetected: !!adaptiveEntry,
     adaptiveScore: adaptiveEntry ? adaptiveEntry.scoreMax || 0 : 0,
     adaptiveCategories: adaptiveEntry ? adaptiveEntry.categories || {} : {},
+    ad: adDiagnosticsFor({
+      adLog: stored.ad_log,
+      adPlaybooks: stored.ad_playbooks,
+      adPrefs: stored.ad_prefs,
+      origin,
+    }),
     diagnosticEvents: diagnosticEventCountFor(diagnosticEntry),
     diagnosticOrigins: Object.keys(stored.diagnostic_log).length,
     diagnosticsMode: stored.diagnostics_mode,
@@ -741,6 +881,9 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
+      ad_log: {},
+      ad_playbooks: {},
+      ad_prefs: {},
       replay_mode: "off",
     });
     sendResponse(await detailsResponseFor(msg.tabId, stored));
@@ -847,12 +990,114 @@ const handleSetDiagnostics = (msg, _sender, sendResponse) => {
   return true;
 };
 
+const setAdCleanupDisabled = async (origin, disabled) => {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return null;
+  const { ad_prefs = {} } = await chrome.storage.local.get({ ad_prefs: {} });
+  const sites = { ...(ad_prefs.sites || ad_prefs.site || {}) };
+  if (disabled) {
+    sites[normalized] = {
+      ...(sites[normalized] || {}),
+      cleanupDisabled: true,
+      lastUpdated: Date.now(),
+    };
+  } else {
+    const existing = { ...(sites[normalized] || {}) };
+    delete existing.cleanupDisabled;
+    delete existing.disabled;
+    if (Object.keys(existing).length > 0) {
+      sites[normalized] = { ...existing, lastUpdated: Date.now() };
+    } else {
+      delete sites[normalized];
+    }
+  }
+  const nextPrefs = {
+    ...ad_prefs,
+    lastUpdated: Date.now(),
+    sites,
+    version: 1,
+  };
+  delete nextPrefs.site;
+  await chrome.storage.local.set({ ad_prefs: nextPrefs });
+  return adSitePrefsFor(normalized, nextPrefs);
+};
+
+const handleSetAdCleanupDisabled = (msg, _sender, sendResponse) => {
+  (async () => {
+    const prefs = await setAdCleanupDisabled(msg.origin, !!msg.disabled);
+    sendResponse({ ok: !!prefs, prefs });
+  })();
+  return true;
+};
+
+const sessionRuleMatchesOrigin = (rule, origin) => {
+  if (!rule || rule.id < AD_SESSION_RULE_ID_MIN || rule.id > AD_SESSION_RULE_ID_MAX) return false;
+  const condition = rule.condition || {};
+  const domains = [
+    ...(condition.initiatorDomains || []),
+    ...(condition.excludedInitiatorDomains || []),
+  ];
+  if (domains.length === 0) return false;
+  try {
+    const host = new URL(origin).hostname;
+    return domains.some((domain) => domain === host || domain.endsWith(`.${host}`));
+  } catch {
+    return false;
+  }
+};
+
+const clearAdSessionRulesForOrigin = async (origin) => {
+  try {
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    const removeRuleIds = rules
+      .filter((rule) => sessionRuleMatchesOrigin(rule, origin))
+      .map((rule) => rule.id);
+    if (removeRuleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+    }
+    return removeRuleIds.length;
+  } catch {
+    return 0;
+  }
+};
+
+const clearAdDataForOrigin = async (origin) => {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return { cleared: false, origin: null, removedSessionRules: 0 };
+  const { ad_log = {}, ad_playbooks = {} } = await chrome.storage.local.get({
+    ad_log: {},
+    ad_playbooks: {},
+  });
+  const hadLog = !!ad_log[normalized];
+  const hadPlaybook = !!ad_playbooks[normalized];
+  delete ad_log[normalized];
+  delete ad_playbooks[normalized];
+  await chrome.storage.local.set({ ad_log, ad_playbooks });
+  const removedSessionRules = await clearAdSessionRulesForOrigin(normalized);
+  return {
+    cleared: hadLog || hadPlaybook || removedSessionRules > 0,
+    origin: normalized,
+    removedSessionRules,
+  };
+};
+
+const handleClearAdSiteData = (msg, _sender, sendResponse) => {
+  (async () => {
+    const result = await serialize(() => clearAdDataForOrigin(msg.origin));
+    sendResponse({ ok: !!(result && result.origin), ...result });
+  })();
+  return true;
+};
+
 const handleExportLog = (_msg, _sender, sendResponse) => {
   (async () => {
     const {
       probe_log = {},
       replay_log = {},
       adaptive_log = {},
+      ad_log = {},
+      ad_playbooks = {},
+      ad_prefs = {},
       diagnostic_log = {},
       diagnostics_mode = false,
       fingerprint_mode = "off",
@@ -861,6 +1106,9 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
+      ad_log: {},
+      ad_playbooks: {},
+      ad_prefs: {},
       diagnostic_log: {},
       diagnostics_mode: false,
       fingerprint_mode: "off",
@@ -876,6 +1124,9 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       origins: probe_log,
       replayDetections: replay_log,
       adaptiveSignals: adaptive_log,
+      adBehavior: ad_log,
+      adPlaybooks: ad_playbooks,
+      adPrefs: ad_prefs,
     });
   })();
   return true;
@@ -890,6 +1141,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
         "replay_log",
         "adaptive_log",
         "ad_log",
+        "ad_playbooks",
         "diagnostic_log",
         "cumulative",
         "user_secret",
@@ -905,6 +1157,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
 const messageHandlers = {
   static_ad_signal: handleAdSignal,
   static_adaptive_signal: handleAdaptiveSignal,
+  static_clear_ad_site_data: handleClearAdSiteData,
   static_clear_log: handleClearLog,
   static_export_log: handleExportLog,
   static_get_details: handleGetDetails,
@@ -912,6 +1165,7 @@ const messageHandlers = {
   static_probe_blocked: handleProbeBlocked,
   static_replay_detected: handleReplayDetected,
   static_set_diagnostics: handleSetDiagnostics,
+  static_set_ad_cleanup_disabled: handleSetAdCleanupDisabled,
   static_set_fingerprint: handleSetFingerprint,
   static_set_noise: handleSetNoise,
   static_set_replay: handleSetReplay,

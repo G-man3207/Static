@@ -136,6 +136,20 @@
       .adaptive[hidden] {
         display: none;
       }
+      .ad-observed {
+        display: inline-flex;
+        margin-top: 8px;
+        padding: 4px 7px;
+        border: 1px solid #cce2eb;
+        border-radius: 6px;
+        color: #225b74;
+        background: #f2fbff;
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .ad-observed[hidden] {
+        display: none;
+      }
       details {
         margin-top: 10px;
       }
@@ -222,6 +236,11 @@
         gap: 5px;
         padding-top: 2px;
       }
+      .ad-diagnostics {
+        display: grid;
+        gap: 5px;
+        padding-top: 2px;
+      }
       .diagnostic-row {
         display: grid;
         grid-template-columns: 82px minmax(0, 1fr);
@@ -251,6 +270,41 @@
         font-size: 10px;
         font-style: italic;
         padding: 4px 0;
+      }
+      .ad-controls {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+      }
+      .ad-control-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text);
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .ad-control-row input {
+        margin: 0;
+      }
+      .ad-clear-btn {
+        justify-self: start;
+        padding: 5px 8px;
+        color: var(--accent);
+        background: #fff;
+        border: 1px solid #ead0d0;
+        border-radius: 6px;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .ad-clear-btn:disabled {
+        color: var(--text-subtle);
+        border-color: var(--border);
+        cursor: default;
       }
       .section {
         padding: 14px 16px;
@@ -676,6 +730,7 @@
       <div class="cumulative" id="cumulative"></div>
       <div class="drift" id="drift" hidden></div>
       <div class="adaptive" id="adaptive" hidden></div>
+      <div class="ad-observed" id="ad-observed" hidden></div>
     </div>
 
     <details class="advanced-panel" id="advanced-controls">
@@ -694,6 +749,10 @@
         <details>
           <summary>Power diagnostics</summary>
           <div class="power-diagnostics" id="power-diagnostics"></div>
+        </details>
+        <details>
+          <summary>Ad behavior diagnostics</summary>
+          <div class="ad-diagnostics" id="ad-diagnostics"></div>
         </details>
       </div>
 

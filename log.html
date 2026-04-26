@@ -187,6 +187,9 @@
       .drift-cell {
         white-space: nowrap;
       }
+      .ad-cell {
+        white-space: nowrap;
+      }
       .rank-cell {
         width: 48px;
         color: var(--text-subtle);
@@ -246,6 +249,29 @@
       .drift-pill.learning,
       .drift-pill.stable {
         color: var(--text-muted);
+      }
+      .ad-pill {
+        display: inline-flex;
+        align-items: center;
+        min-width: 62px;
+        justify-content: center;
+        padding: 3px 7px;
+        border-radius: 6px;
+        border: 1px solid var(--border-strong);
+        color: var(--text-muted);
+        background: #f6f6f6;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .ad-pill.likely {
+        color: #8a4b00;
+        border-color: #efd4a8;
+        background: #fff7e8;
+      }
+      .ad-pill.high {
+        color: #225b74;
+        border-color: #cce2eb;
+        background: #f2fbff;
       }
       .origin-row {
         cursor: pointer;
@@ -399,7 +425,7 @@
         <div class="header-inner">
           <img src="icons/icon-128.png" alt="" />
           <h1>Probe log</h1>
-          <div class="subtitle">What each site you've visited probed your browser for.</div>
+          <div class="subtitle">Local probe, replay, adaptive, and ad-behavior diagnostics.</div>
         </div>
       </div>
     </header>
@@ -445,6 +471,7 @@
     </main>
 
     <script src="lists.js"></script>
+    <script src="ad_signals.js"></script>
     <script src="log_diagnostics.js"></script>
     <script src="log.js"></script>
   </body>

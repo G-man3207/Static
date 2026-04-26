@@ -4,6 +4,7 @@
 // for that origin. Also handles Export / Clear.
 const fmt = (n) => n.toLocaleString();
 const fmtDate = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
+const AD_SIGNALS = globalThis.__static_ad_signals__ || {};
 const LOG_DIAGNOSTICS = globalThis.__static_log_diagnostics__ || {};
 const SEVERITY_LEVELS = {
   high: { label: "High", rank: 3 },
@@ -361,6 +362,19 @@ const addAdaptiveSeveritySignals = (state, adaptive) => {
   }
 };
 
+const addAdSeveritySignals = (state, ad) => {
+  if (!ad) return;
+  const confidence = adConfidenceForEntry(ad);
+  const score = typeof ad.score === "number" ? ad.score : adScoreForReasons(ad.reasons || {});
+  if (confidence === "high") {
+    addSeverityReason(state, 4, `High-confidence ad behavior observed with score ${fmt(score)}.`);
+  } else if (confidence === "likely") {
+    addSeverityReason(state, 2, `Likely ad behavior observed with score ${fmt(score)}.`);
+  } else if (sumCounts(ad.reasons) > 0) {
+    addSeverityReason(state, 1, `Ad behavior signals are still in learning state.`);
+  }
+};
+
 const addProbeSeveritySignals = (state, entry, drift) => {
   const total = totalProbesFor(entry);
   const unique = Object.keys(entry.idCounts || {}).length;
@@ -395,6 +409,7 @@ const addDiagnosticSeveritySignals = (state, diagnostics) => {
 const severityForEntry = (entry, drift) => {
   const state = { score: 0, reasons: [] };
   addAdaptiveSeveritySignals(state, entry.__adaptive);
+  addAdSeveritySignals(state, entry.__ad);
   addDiagnosticSeveritySignals(state, entry.__diagnostics);
   addProbeSeveritySignals(state, entry, drift);
   const level = severityLevelForScore(state.score);
@@ -422,6 +437,44 @@ const buildAdaptivePill = (adaptive) => {
   const span = document.createElement("span");
   span.className = "drift-pill changed";
   span.textContent = "Adaptive signals";
+  return span;
+};
+
+const adUiConfidence = (confidence) =>
+  confidence === "high" || confidence === "likely" ? confidence : "learning";
+
+const adConfidenceLabel = (confidence) => {
+  if (confidence === "high") return "High";
+  if (confidence === "likely") return "Likely";
+  return "Learning";
+};
+
+const adScoreForReasons = (reasons) => {
+  if (typeof AD_SIGNALS.scoreForReasons === "function") return AD_SIGNALS.scoreForReasons(reasons);
+  return 0;
+};
+
+const adReasonScore = (reason) => {
+  const weights = AD_SIGNALS.weights || {};
+  const score = weights[reason];
+  return typeof score === "number" && score > 0 ? score : 0;
+};
+
+const adConfidenceForEntry = (ad) => {
+  if (!ad) return "learning";
+  if (ad.confidence) return adUiConfidence(ad.confidence);
+  if (typeof AD_SIGNALS.confidenceForReasons === "function") {
+    return adUiConfidence(AD_SIGNALS.confidenceForReasons(ad.reasons || {}));
+  }
+  return "learning";
+};
+
+const buildAdPill = (ad) => {
+  if (!ad) return null;
+  const confidence = adConfidenceForEntry(ad);
+  const span = document.createElement("span");
+  span.className = `ad-pill ${confidence}`;
+  span.textContent = adConfidenceLabel(confidence);
   return span;
 };
 
@@ -605,6 +658,123 @@ const buildAdaptiveDetail = (adaptive) => {
   return box;
 };
 
+const topAdReasonText = (reasons) => {
+  const entries = sortedCountEntries(reasons);
+  if (entries.length === 0) return "No ad reason tokens recorded yet.";
+  return entries
+    .slice(0, 8)
+    .map(([reason, count]) => {
+      const score = adReasonScore(reason);
+      return `${reason} (${fmt(count)}${score ? `, score ${fmt(score)}` : ""})`;
+    })
+    .join(", ");
+};
+
+const playbookEntryLabel = (entry, valueKey) => {
+  const value = entry[valueKey] || entry.value || "entry";
+  const score = typeof entry.score === "number" ? entry.score : 0;
+  const hits = entry.hits ? `, ${fmt(entry.hits)} hit${entry.hits === 1 ? "" : "s"}` : "";
+  return `${value} (${entry.kind || "candidate"}, score ${fmt(score)}${hits})`;
+};
+
+const sortedAdPlaybookEntries = (entries) =>
+  (Array.isArray(entries) ? entries : [])
+    .slice()
+    .sort((a, b) => (b.score || 0) - (a.score || 0) || (b.hits || 0) - (a.hits || 0));
+
+const adPrefsForOrigin = (origin, prefs = {}) => {
+  const sites = prefs.sites || prefs.site || {};
+  const site = (origin && sites[origin]) || {};
+  return {
+    cleanupDisabled: !!(site.cleanupDisabled || site.disabled),
+  };
+};
+
+const buildAdPlaybookList = (titleText, entries, valueKey) => {
+  const box = document.createElement("div");
+  box.className = "reason-guide";
+  const title = document.createElement("div");
+  title.className = "drift-detail-title";
+  title.textContent = titleText;
+  box.appendChild(title);
+  const list = document.createElement("ul");
+  list.className = "drift-reasons";
+  const sorted = sortedAdPlaybookEntries(entries);
+  if (sorted.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = "No learned entries for this origin yet.";
+    list.appendChild(li);
+  } else {
+    for (const entry of sorted.slice(0, 8)) {
+      const li = document.createElement("li");
+      li.textContent = playbookEntryLabel(entry, valueKey);
+      list.appendChild(li);
+    }
+  }
+  box.appendChild(list);
+  return box;
+};
+
+const adScoreValue = (ad) =>
+  ad && typeof ad.score === "number" ? ad.score : adScoreForReasons(ad && ad.reasons);
+
+const adEndpointEvidenceText = (endpoints) => {
+  if (endpoints.length === 0) return "No endpoint evidence recorded yet.";
+  return `Learned endpoint evidence: ${endpoints
+    .slice(0, 5)
+    .map(([endpoint, count]) => `${endpoint} (${fmt(count)})`)
+    .join(", ")}.`;
+};
+
+const adSourceText = (sources) => (sources.length ? `Top source label: ${sources[0][0]}.` : "");
+
+const adCleanupText = (origin, playbook, prefs) => {
+  const sitePrefs = adPrefsForOrigin(origin, prefs);
+  return sitePrefs.cleanupDisabled || (playbook && playbook.disabled)
+    ? "Ad cleanup is disabled for this origin."
+    : "Ad cleanup is not disabled for this origin.";
+};
+
+const adDetailLines = ({ ad, endpoints, origin, playbook, prefs, score, sources }) =>
+  [
+    `Local score: ${fmt(score || 0)}.`,
+    `Top reason tokens: ${topAdReasonText(ad && ad.reasons)}`,
+    adEndpointEvidenceText(endpoints),
+    adSourceText(sources),
+    adCleanupText(origin, playbook, prefs),
+  ].filter(Boolean);
+
+const buildAdDetail = (origin, ad, playbook, prefs) => {
+  if (!ad && !playbook) return null;
+  const box = document.createElement("div");
+  box.className = "drift-detail";
+  const confidence = adConfidenceForEntry(ad || playbook);
+  const title = document.createElement("div");
+  title.className = "drift-detail-title";
+  title.textContent = `Ad behavior observed: ${adConfidenceLabel(confidence)}`;
+  box.appendChild(title);
+
+  const list = document.createElement("ul");
+  list.className = "drift-reasons";
+  const endpoints = sortedCountEntries(ad && ad.endpoints);
+  const sources = sortedCountEntries(ad && ad.sources);
+  const score = adScoreValue(ad);
+  const lines = adDetailLines({ ad, endpoints, origin, playbook, prefs, score, sources });
+  for (const line of lines) {
+    const li = document.createElement("li");
+    li.textContent = line;
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  box.appendChild(
+    buildAdPlaybookList("Learned cosmetic entries", playbook && playbook.cosmetic, "value")
+  );
+  box.appendChild(
+    buildAdPlaybookList("Learned endpoint entries", playbook && playbook.network, "path")
+  );
+  return box;
+};
+
 const eventTime = (event) => (event && event.at ? new Date(event.at).toLocaleTimeString() : "—");
 
 const textOr = (value, fallback) => (value ? value : fallback);
@@ -694,7 +864,7 @@ const buildIdList = (entry) => {
   return box;
 };
 
-const buildOriginDetail = (entry, drift, severity, rank) => {
+const buildOriginDetail = ({ drift, entry, origin, rank, severity }) => {
   const box = document.createElement("div");
   box.className = "id-list";
   box.appendChild(buildSeverityDetail(severity, rank));
@@ -708,6 +878,8 @@ const buildOriginDetail = (entry, drift, severity, rank) => {
   }
   const adaptive = buildAdaptiveDetail(entry.__adaptive);
   if (adaptive) box.appendChild(adaptive);
+  const ad = buildAdDetail(origin, entry.__ad, entry.__adPlaybook, entry.__adPrefs);
+  if (ad) box.appendChild(ad);
   const diagnostics = buildDiagnosticDetail(entry.__diagnostics);
   if (diagnostics) box.appendChild(diagnostics);
   const ids = buildIdList(entry);
@@ -716,36 +888,50 @@ const buildOriginDetail = (entry, drift, severity, rank) => {
   return box;
 };
 
+const diagnosticMatchesFilter = (diagnostics, filter) =>
+  (diagnostics.events || []).some((event) =>
+    [
+      event.type,
+      event.action,
+      event.vector,
+      event.pathKind,
+      event.extensionId,
+      event.extensionPath,
+      event.signal,
+      event.category,
+    ]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(filter))
+  );
+
+const adPlaybookFilterValues = (adPlaybook) => [
+  ...sortedAdPlaybookEntries(adPlaybook.cosmetic).map((entry) => entry.value || ""),
+  ...sortedAdPlaybookEntries(adPlaybook.network).map((entry) => entry.path || ""),
+];
+
+const entryFilterValues = (entry) => {
+  const adaptive = entry.__adaptive || {};
+  const ad = entry.__ad || {};
+  const adPlaybook = entry.__adPlaybook || {};
+  return [
+    ...Object.keys(adaptive.categories || {}),
+    ...Object.keys(adaptive.reasons || {}),
+    ...Object.keys(adaptive.endpoints || {}),
+    ...Object.keys(ad.reasons || {}),
+    ...Object.keys(ad.endpoints || {}),
+    ...Object.keys(ad.sources || {}),
+    ...adPlaybookFilterValues(adPlaybook),
+  ];
+};
+
 const originMatches = (origin, entry, filter) => {
   if (!filter) return true;
   const f = filter.toLowerCase();
   if (origin.toLowerCase().includes(f)) return true;
   if (Object.keys(entry.idCounts || {}).some((id) => id.toLowerCase().includes(f))) return true;
-  const adaptive = entry.__adaptive || {};
   const diagnostics = entry.__diagnostics || {};
-  if (
-    (diagnostics.events || []).some((event) =>
-      [
-        event.type,
-        event.action,
-        event.vector,
-        event.pathKind,
-        event.extensionId,
-        event.extensionPath,
-        event.signal,
-        event.category,
-      ]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(f))
-    )
-  ) {
-    return true;
-  }
-  return [
-    ...Object.keys(adaptive.categories || {}),
-    ...Object.keys(adaptive.reasons || {}),
-    ...Object.keys(adaptive.endpoints || {}),
-  ].some((value) => value.toLowerCase().includes(f));
+  if (diagnosticMatchesFilter(diagnostics, f)) return true;
+  return entryFilterValues(entry).some((value) => value.toLowerCase().includes(f));
 };
 
 let fullData = null;
@@ -767,27 +953,39 @@ const originNamesForData = (data) =>
   new Set([
     ...Object.keys(data.origins || {}),
     ...Object.keys(data.adaptiveSignals || {}),
+    ...Object.keys(data.adBehavior || {}),
+    ...Object.keys(data.adPlaybooks || {}),
     ...Object.keys(data.diagnostics || {}),
   ]);
 
-const lastUpdatedForEntry = (entry, adaptive, diagnostic) =>
+const lastUpdatedForEntry = ({ adaptive, ad, adPlaybook, diagnostic, entry }) =>
   entry.lastUpdated ||
   (adaptive && adaptive.lastUpdated) ||
+  (ad && ad.lastUpdated) ||
+  (adPlaybook && adPlaybook.lastUpdated) ||
   (diagnostic && diagnostic.lastUpdated) ||
   0;
 
 const rankedEntriesForData = (data) => {
   const origins = data.origins || {};
   const adaptiveSignals = data.adaptiveSignals || {};
+  const adBehavior = data.adBehavior || {};
+  const adPlaybooks = data.adPlaybooks || {};
   const diagnostics = data.diagnostics || {};
+  const adPrefs = data.adPrefs || {};
   return [...originNamesForData(data)].map((origin) => {
     const entry = origins[origin] || { idCounts: {}, lastUpdated: 0 };
     const adaptive = adaptiveSignals[origin];
+    const ad = adBehavior[origin];
+    const adPlaybook = adPlaybooks[origin];
     const diagnostic = diagnostics[origin];
     return rankedEntryFor(origin, {
       ...entry,
-      lastUpdated: lastUpdatedForEntry(entry, adaptive, diagnostic),
+      lastUpdated: lastUpdatedForEntry({ adaptive, ad, adPlaybook, diagnostic, entry }),
       __adaptive: adaptive,
+      __ad: ad,
+      __adPlaybook: adPlaybook,
+      __adPrefs: adPrefs,
       __diagnostics: diagnostic,
     });
   });
@@ -814,6 +1012,7 @@ const totalProbeCountForEntries = (entries) => {
 
 const renderSummary = ({
   adaptiveCount,
+  adCount,
   allEntries,
   cumulative,
   diagnosticEventCount,
@@ -826,6 +1025,8 @@ const renderSummary = ({
     grand
   )} total probes recorded  ·  ${fmt(adaptiveCount)} adaptive origin${
     adaptiveCount === 1 ? "" : "s"
+  } observed  ·  ${fmt(adCount)} ad behavior origin${
+    adCount === 1 ? "" : "s"
   } observed  ·  ${fmt(diagnosticEventCount)} QA diagnostic event${
     diagnosticEventCount === 1 ? "" : "s"
   }  ·  ${fmt(cumulative || 0)} probes blocked since install`;
@@ -842,6 +1043,7 @@ const createLogTable = () => {
     "<th class='num'>Unique IDs</th>" +
     "<th class='num'>Total probes</th>" +
     "<th>Probe behavior</th>" +
+    "<th>Ad behavior</th>" +
     "<th>Last seen</th>" +
     "</tr></thead>";
   const tbody = document.createElement("tbody");
@@ -871,24 +1073,29 @@ const appendRankedEntryRow = (tbody, rankedEntry, index) => {
     `<td class='num'>${fmt(unique)}</td>` +
     `<td class='num'>${fmt(total)}</td>` +
     `<td class='drift-cell'></td>` +
+    `<td class='ad-cell'></td>` +
     `<td>${fmtDate(entry.lastUpdated)}</td>`;
   tr.querySelector(".severity-cell").appendChild(buildSeverityPill(severity));
   const driftCell = tr.querySelector(".drift-cell");
   driftCell.appendChild(buildDriftPill(drift));
   appendOptionalPill(driftCell, buildAdaptivePill(entry.__adaptive));
   appendOptionalPill(driftCell, buildDiagnosticPill(entry.__diagnostics));
+  const adCell = tr.querySelector(".ad-cell");
+  const adPill = buildAdPill(entry.__ad || entry.__adPlaybook);
+  if (adPill) adCell.appendChild(adPill);
+  else adCell.textContent = "—";
   tbody.appendChild(tr);
 
   const detailTr = document.createElement("tr");
   detailTr.className = "detail-row";
   const detailTd = document.createElement("td");
-  detailTd.colSpan = 7;
+  detailTd.colSpan = 8;
   detailTr.appendChild(detailTd);
   tbody.appendChild(detailTr);
 
   tr.addEventListener("click", () => {
     if (!detailTd.firstChild) {
-      detailTd.appendChild(buildOriginDetail(entry, drift, severity, rank));
+      detailTd.appendChild(buildOriginDetail({ drift, entry, origin, rank, severity }));
     }
     const list = detailTd.firstChild;
     const open = list.classList.toggle("open");
@@ -920,6 +1127,7 @@ const render = (filter) => {
 
   renderSummary({
     adaptiveCount: Object.keys(fullData.adaptiveSignals || {}).length,
+    adCount: Object.keys(fullData.adBehavior || {}).length,
     allEntries,
     cumulative: fullData.cumulative,
     diagnosticEventCount: diagnosticEventCountForLog(fullData.diagnostics),
