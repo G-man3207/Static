@@ -660,6 +660,8 @@ const adaptiveCalibrationLines = (calibration) => {
       calibration.minScore || 0
     )} score and ${fmt(calibration.minHits || 0)} endpoint hits.`,
   ];
+  if (calibration.siteRecoverySummary) lines.push(calibration.siteRecoverySummary);
+  if (calibration.nextStep) lines.push(calibration.nextStep);
   if (calibration.recoveryRequired) {
     lines.push("Generic adaptive blocking stays observe-only until recovery controls exist.");
   }

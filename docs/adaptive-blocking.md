@@ -11,11 +11,12 @@ rotation and self-hosted collectors: observe behavior, classify locally, and eve
 when confidence is high enough.
 
 The current adaptive implementation is observe-only: Stage 1 logging plus Stage 2 diagnostics UI
-with local endpoint guardrails and calibration summaries. It records compact local signals and never
-creates generic adaptive DNR rules. Generic adaptive blocking stages are intentionally unimplemented
-until calibration and recovery controls are strong enough. Separate opt-in Device signal poisoning
-can weaken many high-entropy Signal guide surfaces by returning stable per-site decoys instead of
-blocking the reads.
+with local endpoint guardrails, calibration summaries, and a local per-site recovery preference that
+can disable future adaptive blocking before any enforcement exists. It records compact local signals
+and never creates generic adaptive DNR rules. Generic adaptive blocking stages are intentionally
+unimplemented until calibration and recovery controls are strong enough. Separate opt-in Device
+signal poisoning can weaken many high-entropy Signal guide surfaces by returning stable per-site
+decoys instead of blocking the reads.
 
 ## Threat Model
 
@@ -141,6 +142,8 @@ Stage 5: Dynamic persistent promotion.
 
 Adaptive blocking must be easy to undo:
 
+- Keep a local per-site "future adaptive blocking disabled" recovery preference and surface that
+  state in calibration diagnostics before any blocking stage ships.
 - Track recently added adaptive rules by origin.
 - If a page exits, reloads repeatedly, or the user disables a rule shortly after creation, mark it as
   possible breakage.

@@ -297,6 +297,8 @@ const formatAdaptiveCalibration = (calibration) => {
       calibration.minScore || 0
     )} score / ${fmt(calibration.minHits || 0)} endpoint hits`,
   ];
+  if (calibration.siteRecoverySummary) pieces.push(calibration.siteRecoverySummary);
+  if (calibration.nextStep) pieces.push(calibration.nextStep);
   if (calibration.recoveryRequired) {
     pieces.push("recovery controls required before blocking");
   }
@@ -413,12 +415,46 @@ const renderAdaptiveControls = (container, resp) => {
   const controls = document.createElement("div");
   controls.className = "diagnostic-controls";
 
+  const disableRow = document.createElement("label");
+  disableRow.className = "ad-control-row";
+  const disable = document.createElement("input");
+  disable.type = "checkbox";
+  disable.id = "adaptive-blocking-disabled";
+  disable.checked = !!(
+    resp.adaptiveBlockingDisabled ||
+    (resp.adaptiveCalibration && resp.adaptiveCalibration.siteBlockingDisabled)
+  );
+  const disableLabel = document.createElement("span");
+  disableLabel.textContent = "Disable future adaptive blocking for this site";
+  disableRow.appendChild(disable);
+  disableRow.appendChild(disableLabel);
+  controls.appendChild(disableRow);
+
   const clear = document.createElement("button");
   clear.className = "diagnostic-clear-btn";
   clear.id = "clear-adaptive-site-data";
   clear.type = "button";
   clear.textContent = "Clear adaptive signals for this site";
   controls.appendChild(clear);
+
+  disable.addEventListener("change", async () => {
+    const desired = disable.checked;
+    setInputDisabled(disable, true);
+    try {
+      const saved = await chrome.runtime.sendMessage({
+        disabled: desired,
+        origin,
+        type: "static_set_adaptive_blocking_disabled",
+      });
+      setChecked(disable, !!(saved && saved.prefs && saved.prefs.blockingDisabled));
+      await refreshDetails();
+    } catch (e) {
+      console.error("[Static] adaptive recovery preference update failed", e);
+      setChecked(disable, !desired);
+    } finally {
+      setInputDisabled(disable, false);
+    }
+  });
 
   clear.addEventListener("click", async () => {
     clear.disabled = true;

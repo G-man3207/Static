@@ -1420,6 +1420,110 @@ test("adaptive endpoint guardrails stay observe-only and reject unsafe rule shap
   );
 });
 
+test("adaptive future blocking disable is local-only and reflected in calibration", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(
+    ({ origin }) =>
+      chrome.storage.local.set({
+        diagnostics_mode: true,
+        fingerprint_mode: "mask",
+        noise_enabled: true,
+        replay_mode: "mask",
+        adaptive_log: {
+          [origin]: {
+            categories: { "anti-bot": 3 },
+            endpoints: {
+              [`${origin}/collect/fingerprint/:token`]: 3,
+            },
+            lastUpdated: Date.now(),
+            reasons: {
+              canvas: 1,
+              crypto: 1,
+              navigator: 1,
+              network: 3,
+            },
+            scoreMax: 9,
+            sources: { "runtime:settimeout": 1 },
+            total: 3,
+          },
+        },
+      }),
+    { origin: server.origin }
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.evaluate(
+    (id) => fetch(`chrome-extension://${id}/manifest.json`).catch(() => {}),
+    PROBED_ID
+  );
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get({ probe_log: {} }).then(({ probe_log }) => !!probe_log[origin]),
+        server.origin
+      )
+    )
+    .toBe(true);
+  await page.bringToFront();
+  const tabId = await activeTabId(extension);
+  const popupPage = await openPopupForActiveTab(extension, tabId);
+  await openPopupAdvancedControls(popupPage);
+  await popupPage.getByText("Power diagnostics").click();
+  const powerDiagnostics = popupPage.locator("#power-diagnostics");
+  const adaptiveDisable = popupPage.locator("#adaptive-blocking-disabled");
+  await expect(powerDiagnostics).toContainText("Adaptive calibration");
+  await expect(powerDiagnostics).toContainText("Per-site future blocking disable is available");
+  await expect(adaptiveDisable).not.toBeChecked();
+
+  await adaptiveDisable.check();
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate((origin) => {
+        return chrome.storage.local
+          .get([
+            "adaptive_prefs",
+            "diagnostics_mode",
+            "fingerprint_mode",
+            "noise_enabled",
+            "replay_mode",
+          ])
+          .then((stored) => ({
+            adaptiveDisabled: !!(
+              stored.adaptive_prefs &&
+              stored.adaptive_prefs.sites &&
+              stored.adaptive_prefs.sites[origin] &&
+              stored.adaptive_prefs.sites[origin].blockingDisabled
+            ),
+            diagnosticsMode: stored.diagnostics_mode,
+            fingerprintMode: stored.fingerprint_mode,
+            noiseEnabled: stored.noise_enabled,
+            replayMode: stored.replay_mode,
+          }));
+      }, server.origin)
+    )
+    .toEqual({
+      adaptiveDisabled: true,
+      diagnosticsMode: true,
+      fingerprintMode: "mask",
+      noiseEnabled: true,
+      replayMode: "mask",
+    });
+
+  await expect(adaptiveDisable).toBeChecked();
+  await expect(powerDiagnostics).toContainText(
+    "Future adaptive blocking is disabled for this site"
+  );
+  const rules = await extension.serviceWorker.evaluate(async () => ({
+    dynamic: await chrome.declarativeNetRequest.getDynamicRules(),
+    session: await chrome.declarativeNetRequest.getSessionRules(),
+  }));
+  expect(rules).toEqual({ dynamic: [], session: [] });
+});
+
 test("Adaptive observe-only logging ignores canvas-heavy apps without corroborating signals", async ({
   extension,
   server,

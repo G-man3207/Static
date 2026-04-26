@@ -109,6 +109,7 @@ const ADAPTIVE_ENDPOINT_BROAD_SEGMENTS = new Set([
   "tag",
   "tags",
 ]);
+const ADAPTIVE_PREFS_VERSION = 1;
 
 const adSessionState = new Map(); // origin -> same-browser-session cosmetic candidates
 const serviceWorkerAdSessionId = (() => {
@@ -1010,31 +1011,68 @@ const adaptiveCalibrationSummaryFor = ({ candidateCount, learningCount, rejected
   return "No endpoint candidate was derived from the observed adaptive signals.";
 };
 
-const adaptiveCalibrationForEntry = (entry, endpointDiagnostics = null) => {
+const adaptiveSitePrefsFor = (origin, adaptivePrefs = {}) => {
+  const sites = adaptivePrefs.sites || adaptivePrefs.site || {};
+  const site = (origin && sites[origin]) || {};
+  return {
+    blockingDisabled: !!(site.blockingDisabled || site.disabled),
+    lastDisabledAt: site.lastDisabledAt || site.disabledAt || 0,
+    lastUpdated: site.lastUpdated || 0,
+  };
+};
+
+const adaptiveRecoveryControlsFor = (sitePrefs = {}) => ({
+  breakageCircuitBreaker: false,
+  clearSiteSignals: true,
+  ruleAttribution: false,
+  siteDisable: true,
+  siteDisabled: !!sitePrefs.blockingDisabled,
+});
+
+const adaptiveRecoverySummaryFor = (sitePrefs = {}) =>
+  sitePrefs.blockingDisabled
+    ? "Future adaptive blocking is disabled for this site."
+    : "Per-site future blocking disable is available; rule attribution and breakage demotion are still missing.";
+
+const adaptiveNextStepFor = (candidateCount) =>
+  candidateCount > 0
+    ? "Add local adaptive rule attribution and breakage demotion before allowing any candidate to block."
+    : "Keep calibrating local evidence before considering adaptive blocking.";
+
+const adaptiveCalibrationForEntry = (entry, endpointDiagnostics = null, sitePrefs = {}) => {
   if (!entry) return null;
   const diagnostics = endpointDiagnostics || adaptiveEndpointDiagnosticsForEntry(entry);
   const candidateCount = diagnostics.filter((item) => item.status === "candidate").length;
   const learningCount = diagnostics.filter((item) => item.status === "learning").length;
   const rejectedCount = diagnostics.filter((item) => item.status === "rejected").length;
   const scoreMax = Math.max(0, Math.round(entry.scoreMax || 0));
+  const recoveryControls = adaptiveRecoveryControlsFor(sitePrefs);
   const reasons = [
     "generic-adaptive-blocking:observe-only",
     scoreMax >= ADAPTIVE_ENDPOINT_MIN_SCORE
       ? "score:strong-local-signal"
       : "score:needs-stronger-correlation",
     adaptiveCalibrationReasonForEndpoints({ candidateCount, learningCount, rejectedCount }),
+    recoveryControls.siteDisabled
+      ? "site:future-adaptive-blocking-disabled"
+      : "site:future-adaptive-blocking-enabled",
     "recovery:required-before-blocking",
   ];
   return {
+    blockingReady: false,
     blockingMode: "observe-only",
     candidateCount,
     learningCount,
     minHits: ADAPTIVE_ENDPOINT_MIN_HITS,
     minScore: ADAPTIVE_ENDPOINT_MIN_SCORE,
+    nextStep: adaptiveNextStepFor(candidateCount),
     reasons,
+    recoveryControls,
     recoveryRequired: true,
     rejectedCount,
     scoreMax,
+    siteBlockingDisabled: recoveryControls.siteDisabled,
+    siteRecoverySummary: adaptiveRecoverySummaryFor(sitePrefs),
     summary: adaptiveCalibrationSummaryFor({ candidateCount, learningCount, rejectedCount }),
   };
 };
@@ -2247,10 +2285,14 @@ const handleAdSignal = (msg, sender) => {
 
 const storedEntryForOrigin = (origin, log) => (origin ? log[origin] : null);
 
-const adaptiveDiagnosticsFor = (entry) => {
+const adaptiveDiagnosticsFor = (entry, adaptivePrefs = {}, origin = null) => {
   const endpointDiagnostics = entry ? adaptiveEndpointDiagnosticsForEntry(entry) : [];
+  const sitePrefs = adaptiveSitePrefsFor(origin, adaptivePrefs);
   return {
-    adaptiveCalibration: entry ? adaptiveCalibrationForEntry(entry, endpointDiagnostics) : null,
+    adaptiveBlockingDisabled: sitePrefs.blockingDisabled,
+    adaptiveCalibration: entry
+      ? adaptiveCalibrationForEntry(entry, endpointDiagnostics, sitePrefs)
+      : null,
     adaptiveCategories: entry ? entry.categories || {} : {},
     adaptiveDetected: !!entry,
     adaptiveEndpointDiagnostics: endpointDiagnostics,
@@ -2261,15 +2303,16 @@ const adaptiveDiagnosticsFor = (entry) => {
   };
 };
 
-const adaptiveLogWithDiagnostics = (adaptiveLog = {}) =>
+const adaptiveLogWithDiagnostics = (adaptiveLog = {}, adaptivePrefs = {}) =>
   Object.fromEntries(
     Object.entries(adaptiveLog || {}).map(([origin, entry]) => {
       const endpointDiagnostics = adaptiveEndpointDiagnosticsForEntry(entry);
+      const sitePrefs = adaptiveSitePrefsFor(origin, adaptivePrefs);
       return [
         origin,
         {
           ...entry,
-          calibration: adaptiveCalibrationForEntry(entry, endpointDiagnostics),
+          calibration: adaptiveCalibrationForEntry(entry, endpointDiagnostics, sitePrefs),
           endpointDiagnostics,
         },
       ];
@@ -2320,7 +2363,7 @@ const detailsResponseFor = async (tabId, stored) => {
     noiseEnabled: stored.noise_enabled,
     replayMode: stored.replay_mode,
     replayDetected: !!(origin && stored.replay_log[origin]),
-    ...adaptiveDiagnosticsFor(adaptiveEntry),
+    ...adaptiveDiagnosticsFor(adaptiveEntry, stored.adaptive_prefs, origin),
     adCleanupMode: adCleanupModeFor(stored.ad_prefs),
     ad: adDiagnosticsFor({
       adLog: stored.ad_log,
@@ -2356,6 +2399,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
+      adaptive_prefs: {},
       ad_dynamic_rules: {},
       ad_log: {},
       ad_playbooks: {},
@@ -2861,6 +2905,60 @@ const removeDiagnosticEventsForOriginType = (diagnosticLog, origin, type) => {
   return removed;
 };
 
+const adaptiveSitesForBlockingDisabled = ({ adaptivePrefs, disabled, now, origin }) => {
+  const sites = { ...(adaptivePrefs.sites || adaptivePrefs.site || {}) };
+  if (disabled) {
+    sites[origin] = {
+      ...(sites[origin] || {}),
+      blockingDisabled: true,
+      lastDisabledAt: now,
+      lastUpdated: now,
+    };
+    return sites;
+  }
+  const existing = { ...(sites[origin] || {}) };
+  delete existing.blockingDisabled;
+  delete existing.disabled;
+  delete existing.disabledAt;
+  delete existing.lastDisabledAt;
+  if (Object.keys(existing).length > 0) {
+    sites[origin] = { ...existing, lastUpdated: now };
+  } else {
+    delete sites[origin];
+  }
+  return sites;
+};
+
+const setAdaptiveBlockingDisabled = async (origin, disabled) => {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return null;
+  const { adaptive_prefs = {} } = await chrome.storage.local.get({ adaptive_prefs: {} });
+  const now = Date.now();
+  const sites = adaptiveSitesForBlockingDisabled({
+    adaptivePrefs: adaptive_prefs,
+    disabled,
+    now,
+    origin: normalized,
+  });
+  const nextPrefs = {
+    ...adaptive_prefs,
+    lastUpdated: now,
+    sites,
+    version: ADAPTIVE_PREFS_VERSION,
+  };
+  delete nextPrefs.site;
+  await chrome.storage.local.set({ adaptive_prefs: nextPrefs });
+  return adaptiveSitePrefsFor(normalized, nextPrefs);
+};
+
+const handleSetAdaptiveBlockingDisabled = (msg, _sender, sendResponse) => {
+  (async () => {
+    const prefs = await setAdaptiveBlockingDisabled(msg.origin, !!msg.disabled);
+    sendResponse({ ok: !!prefs, prefs });
+  })();
+  return true;
+};
+
 const clearAdaptiveDataForOrigin = async (origin) => {
   const normalized = normalizeOrigin(origin);
   if (!normalized) return { cleared: false, origin: null, removedDiagnosticEvents: 0 };
@@ -2897,6 +2995,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       probe_log = {},
       replay_log = {},
       adaptive_log = {},
+      adaptive_prefs = {},
       ad_dynamic_rules = {},
       ad_log = {},
       ad_playbooks = {},
@@ -2909,6 +3008,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
+      adaptive_prefs: {},
       ad_dynamic_rules: {},
       ad_log: {},
       ad_playbooks: {},
@@ -2930,7 +3030,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       fingerprintMode: fingerprint_mode,
       origins: probe_log,
       replayDetections: replay_log,
-      adaptiveSignals: adaptiveLogWithDiagnostics(adaptive_log),
+      adaptiveSignals: adaptiveLogWithDiagnostics(adaptive_log, adaptive_prefs),
       adBehavior: ad_log,
       adDynamicRecovery,
       adDynamicRules,
@@ -2983,6 +3083,7 @@ const messageHandlers = {
   static_probe_blocked: handleProbeBlocked,
   static_replay_detected: handleReplayDetected,
   static_set_diagnostics: handleSetDiagnostics,
+  static_set_adaptive_blocking_disabled: handleSetAdaptiveBlockingDisabled,
   static_set_ad_cleanup_mode: handleSetAdCleanupMode,
   static_set_ad_cleanup_disabled: handleSetAdCleanupDisabled,
   static_set_fingerprint: handleSetFingerprint,

@@ -121,6 +121,9 @@ This is intentionally **observe-only** today:
 - No request bodies, form values, cookies, local storage, or full URLs are stored.
 - Only compact local metadata is recorded: category, score, origin/path endpoint, source label, reasons, counts, and timestamps.
 
+Power diagnostics also includes a local per-site recovery preference to disable future adaptive
+blocking before any generic adaptive enforcement is implemented.
+
 The design, cost model, calibration requirements, and future blocking stages are documented in `docs/adaptive-blocking.md`.
 
 ## Noise mode _(opt-in)_
