@@ -68,6 +68,17 @@
   const adLikeNodes = new WeakSet();
   const imageBeaconUrls = new WeakMap();
   const wrappedMethods = new WeakSet();
+  const pageSignalId = (() => {
+    try {
+      const parts = new Uint32Array(2);
+      crypto.getRandomValues(parts);
+      return `${Date.now().toString(36)}-${Array.from(parts)
+        .map((part) => part.toString(36))
+        .join("")}`;
+    } catch {
+      return `${Date.now().toString(36)}-${String(performance.now()).replace(/\W/g, "")}`;
+    }
+  })();
   let bridgePort = null;
   let domObserver = null;
   let scanTicks = 0;
@@ -360,6 +371,7 @@
       ? signal.cosmetic.map(sanitizeCosmeticCandidate).slice(0, MAX_COSMETIC_CANDIDATES)
       : [],
     endpoint: String(signal.endpoint || "").slice(0, 160),
+    pageId: String(signal.pageId || "").slice(0, 64),
     reasons: Array.isArray(signal.reasons)
       ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
       : [],
@@ -418,6 +430,7 @@
       confidence: confidenceForReasons(reasonCounts),
       cosmetic: Array.isArray(detail.cosmetic) ? detail.cosmetic : [],
       endpoint: detail.endpoint || "",
+      pageId: pageSignalId,
       reasons: [reason],
       resourceType: detail.resourceType || "",
       score: scoreForReasons(reasonCounts),

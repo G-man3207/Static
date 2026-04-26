@@ -227,6 +227,7 @@
           score: Math.max(0, Math.min(100, Math.round(signal.score || 0))),
           source: String(signal.source || "unknown").slice(0, 160),
           endpoint: String(signal.endpoint || "").slice(0, 160),
+          pageId: String(signal.pageId || "").slice(0, 64),
           reasons: Array.isArray(signal.reasons)
             ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
             : [],

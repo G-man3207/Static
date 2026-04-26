@@ -81,6 +81,9 @@ const AD_PLAYBOOK_ENDPOINT_RE =
   /(?:^|[/:_.-])(?:ad|ads|adserver|auction|beacon|bid|creative|impression|pixel|viewability|viewable)(?:$|[/:_.-])/i;
 const AD_PLAYBOOK_UNSAFE_ENDPOINT_RE =
   /(?:^|[/:_.-])(?:account|auth|checkout|graphql|login|order|payment|profile|search|settings|signin|signup|user)(?:$|[/:_.-])/i;
+const AD_SESSION_COSMETIC_PENDING_MS = 10 * 60 * 1000;
+
+const adSessionState = new Map(); // origin -> same-browser-session cosmetic candidates
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -237,14 +240,17 @@ const bumpCount = (counts, key) => {
 };
 
 const normalizeAdSignal = (signal) => ({
+  confidence: String(signal.confidence || "learning").slice(0, 16),
   cosmetic: Array.isArray(signal.cosmetic)
     ? signal.cosmetic.map(normalizeAdCosmeticCandidate).filter(Boolean).slice(0, 4)
     : [],
   endpoint: String(signal.endpoint || "").slice(0, 160),
+  pageId: String(signal.pageId || "").slice(0, 64),
   reasons: Array.isArray(signal.reasons)
     ? signal.reasons.map((reason) => String(reason).slice(0, 64)).slice(0, 12)
     : [],
   resourceType: normalizeAdResourceType(signal.resourceType),
+  score: Math.max(0, Math.min(100, Math.round(signal.score || 0))),
   source: String(signal.source || "unknown").slice(0, 160),
 });
 
@@ -572,6 +578,167 @@ const recomputeAdPlaybookState = (playbook) => {
   }
 };
 
+const trimAdSessionOrigins = () => {
+  if (adSessionState.size <= (AD_PLAYBOOK_CAPS.origins || AD_LOG_CAPS.origins)) return;
+  const entries = Array.from(adSessionState.entries()).sort(
+    (a, b) => (b[1].lastUpdated || 0) - (a[1].lastUpdated || 0)
+  );
+  for (const [origin] of entries.slice(AD_PLAYBOOK_CAPS.origins || AD_LOG_CAPS.origins)) {
+    adSessionState.delete(origin);
+  }
+};
+
+const adSessionStateFor = (origin) => {
+  let state = adSessionState.get(origin);
+  if (!state) {
+    state = {
+      cosmetic: [],
+      lastUpdated: 0,
+      pendingCosmetic: new Map(),
+    };
+    adSessionState.set(origin, state);
+  }
+  return state;
+};
+
+const clearAdSessionStateForOrigin = (origin) => adSessionState.delete(origin);
+
+const clearAllAdSessionState = () => {
+  adSessionState.clear();
+};
+
+const adSessionCosmeticKeyFor = (entry) => `${entry.kind}\n${entry.value}`;
+
+const adSessionPendingKeyFor = (pageId, entry) =>
+  `${pageId || "origin"}\n${entry.kind}\n${entry.value}`;
+
+const cleanPendingAdSessionCosmetic = (state, now) => {
+  for (const [key, candidate] of state.pendingCosmetic.entries()) {
+    if ((candidate.lastSeen || 0) && now - candidate.lastSeen > AD_SESSION_COSMETIC_PENDING_MS) {
+      state.pendingCosmetic.delete(key);
+    }
+  }
+};
+
+const rememberAdSessionCosmeticCandidates = ({ normalized, now, origin }) => {
+  if (!normalized.cosmetic.length) return;
+  const state = adSessionStateFor(origin);
+  cleanPendingAdSessionCosmetic(state, now);
+  const pageId = normalized.pageId || "origin";
+  for (const candidate of normalized.cosmetic) {
+    if (candidate.diagnosticOnly) continue;
+    const key = adSessionPendingKeyFor(pageId, candidate);
+    const pending = state.pendingCosmetic.get(key) || {
+      diagnosticOnly: false,
+      firstSeen: now,
+      hits: 0,
+      kind: candidate.kind,
+      pageId,
+      reason: "",
+      value: candidate.value,
+    };
+    pending.hits = Math.max(0, pending.hits || 0) + 1;
+    pending.lastSeen = now;
+    pending.reason = candidate.reason || "";
+    state.pendingCosmetic.set(key, pending);
+  }
+  state.lastUpdated = now;
+  trimAdSessionOrigins();
+};
+
+const adSignalIsCurrentPageHigh = (normalized) => {
+  const highThreshold = (AD_SIGNALS.thresholds && AD_SIGNALS.thresholds.high) || 80;
+  return normalized.confidence === "high" && (normalized.score || 0) >= highThreshold;
+};
+
+const sessionCosmeticCandidateIsSafe = (candidate) =>
+  !!candidate &&
+  !candidate.diagnosticOnly &&
+  (candidate.kind === "selector" || candidate.kind === "structure") &&
+  !!candidate.value;
+
+const upsertAdSessionCosmeticEntry = ({ candidate, now, score, state }) => {
+  const existing = findPlaybookEntry(state.cosmetic, "value", candidate.value, candidate.kind);
+  const entry = existing || {
+    firstSeen: candidate.firstSeen || now,
+    hits: 0,
+    kind: candidate.kind,
+    lastSeen: 0,
+    value: candidate.value,
+  };
+  const nextHits = Math.max(entry.hits || 0, candidate.hits || 0, AD_PLAYBOOK_MIN_HITS.cosmetic);
+  const nextScore = Math.max(entry.score || 0, score || 0);
+  const changed =
+    !existing ||
+    entry.diagnosticOnly ||
+    entry.hits !== nextHits ||
+    entry.score !== nextScore ||
+    entry.lastSeen !== now;
+  entry.diagnosticOnly = false;
+  entry.hits = nextHits;
+  entry.lastSeen = now;
+  entry.reason = "";
+  entry.score = nextScore;
+  entry.status = "session";
+  if (!existing) state.cosmetic.push(entry);
+  return changed;
+};
+
+const promoteAdSessionCosmeticEntries = ({ normalized, now, origin }) => {
+  if (!adSignalIsCurrentPageHigh(normalized)) return false;
+  const state = adSessionStateFor(origin);
+  cleanPendingAdSessionCosmetic(state, now);
+  const score = Math.max(
+    normalized.score || 0,
+    (AD_SIGNALS.thresholds && AD_SIGNALS.thresholds.high) || 80
+  );
+  let changed = false;
+  const pageId = normalized.pageId || "origin";
+  for (const candidate of state.pendingCosmetic.values()) {
+    if (candidate.pageId !== pageId) continue;
+    if (!sessionCosmeticCandidateIsSafe(candidate)) continue;
+    changed = upsertAdSessionCosmeticEntry({ candidate, now, score, state }) || changed;
+  }
+  trimPlaybookEntries({ entries: state.cosmetic, limit: AD_PLAYBOOK_CAPS.cosmetic });
+  state.lastUpdated = now;
+  trimAdSessionOrigins();
+  return changed;
+};
+
+const activeAdCosmeticEntryForConfig = (entry) =>
+  !!entry &&
+  !entry.diagnosticOnly &&
+  (entry.kind === "selector" || entry.kind === "structure") &&
+  (entry.hits || 0) >= AD_PLAYBOOK_MIN_HITS.cosmetic &&
+  (entry.score || 0) >= ((AD_SIGNALS.thresholds && AD_SIGNALS.thresholds.high) || 80);
+
+const adSessionCosmeticEntriesFor = (origin) => {
+  const state = origin ? adSessionState.get(origin) : null;
+  if (!state) return [];
+  return sortedPlaybookEntries(state.cosmetic, AD_PLAYBOOK_CAPS.cosmetic);
+};
+
+const mergeAdCosmeticConfigEntries = (...entryLists) => {
+  const byKey = new Map();
+  for (const entries of entryLists) {
+    for (const rawEntry of Array.isArray(entries) ? entries : []) {
+      const entry = sanitizeAdPlaybookEntry(rawEntry);
+      const key = adSessionCosmeticKeyFor(entry);
+      const existing = byKey.get(key);
+      if (
+        !existing ||
+        entry.score > existing.score ||
+        (entry.score === existing.score && entry.hits > existing.hits)
+      ) {
+        byKey.set(key, entry);
+      }
+    }
+  }
+  return Array.from(byKey.values())
+    .sort((a, b) => b.score - a.score || b.hits - a.hits || a.value.localeCompare(b.value))
+    .slice(0, AD_PLAYBOOK_CAPS.cosmetic);
+};
+
 const endpointCandidateFor = (endpoint, resourceType) => {
   const path = safePlaybookText(endpoint);
   if (!path || !path.startsWith("same-origin:/")) return null;
@@ -699,6 +866,56 @@ const adDiagnosticsFor = ({ adLog = {}, adPlaybooks = {}, adPrefs = {}, origin }
   };
 };
 
+const adCosmeticConfigFor = ({ adPlaybooks = {}, adPrefs = {}, origin }) => {
+  const playbook = origin && adPlaybooks[origin] ? adPlaybooks[origin] : {};
+  const prefs = adSitePrefsFor(origin, adPrefs);
+  const disabled = !!(prefs.cleanupDisabled || playbook.disabled);
+  const sessionEntries = disabled ? [] : adSessionCosmeticEntriesFor(origin);
+  const sessionSafe = sessionEntries.some(activeAdCosmeticEntryForConfig);
+  const persistentHigh = playbook.confidence === "high" || !!playbook.cosmeticSafe;
+  const active =
+    adCleanupModeFor(adPrefs) === "cosmetic" && !disabled && (persistentHigh || sessionSafe);
+  const entries = active
+    ? mergeAdCosmeticConfigEntries(sessionEntries, playbook.cosmetic).filter(
+        activeAdCosmeticEntryForConfig
+      )
+    : [];
+  return {
+    active,
+    entries,
+    origin,
+    session: sessionEntries.filter(activeAdCosmeticEntryForConfig).length,
+  };
+};
+
+const updateAdSessionCosmeticState = ({ disabled, normalized, now, origin }) => {
+  if (disabled) return clearAdSessionStateForOrigin(origin);
+  rememberAdSessionCosmeticCandidates({ normalized, now, origin });
+  return promoteAdSessionCosmeticEntries({ normalized, now, origin });
+};
+
+const updateAdLogEntry = ({ entry, normalized, now }) => {
+  entry.version = 1;
+  entry.total = (entry.total || 0) + 1;
+  entry.firstSeen ||= now;
+  entry.lastUpdated = now;
+  entry.reasons ||= {};
+  entry.endpoints ||= {};
+  entry.sources ||= {};
+  bumpCount(entry.endpoints, normalized.endpoint);
+  bumpCount(entry.sources, normalized.source);
+  for (const reason of normalized.reasons) bumpCount(entry.reasons, reason);
+
+  entry.reasons = trimCountMap(entry.reasons, AD_LOG_CAPS.reasons);
+  entry.endpoints = trimCountMap(entry.endpoints, AD_LOG_CAPS.endpoints);
+  entry.sources = trimCountMap(entry.sources, AD_LOG_CAPS.sources);
+  const classification = adClassificationFor(entry.reasons);
+  entry.score = classification.score;
+  entry.confidence = classification.confidence;
+  entry.scoreReasons = Array.from(classification.scoreReasons || []).slice(0, 16);
+  return classification;
+};
+
 const recordAdSignal = async (origin, signal) => {
   if (!origin || !signal || typeof signal !== "object") return;
   const {
@@ -723,36 +940,21 @@ const recordAdSignal = async (origin, signal) => {
     version: 1,
   };
   const normalized = normalizeAdSignal(signal);
-
-  entry.version = 1;
-  entry.total = (entry.total || 0) + 1;
-  entry.firstSeen ||= now;
-  entry.lastUpdated = now;
-  entry.reasons ||= {};
-  entry.endpoints ||= {};
-  entry.sources ||= {};
-  bumpCount(entry.endpoints, normalized.endpoint);
-  bumpCount(entry.sources, normalized.source);
-  for (const reason of normalized.reasons) bumpCount(entry.reasons, reason);
-
-  entry.reasons = trimCountMap(entry.reasons, AD_LOG_CAPS.reasons);
-  entry.endpoints = trimCountMap(entry.endpoints, AD_LOG_CAPS.endpoints);
-  entry.sources = trimCountMap(entry.sources, AD_LOG_CAPS.sources);
-  const classification = adClassificationFor(entry.reasons);
-  entry.score = classification.score;
-  entry.confidence = classification.confidence;
-  entry.scoreReasons = Array.from(classification.scoreReasons || []).slice(0, 16);
+  const disabled = adSitePrefsFor(origin, ad_prefs).cleanupDisabled;
+  const sessionChanged = updateAdSessionCosmeticState({ disabled, normalized, now, origin });
+  const classification = updateAdLogEntry({ entry, normalized, now });
   ad_log[origin] = entry;
   trimLogOrigins(ad_log, AD_LOG_CAPS.origins);
   updateAdPlaybook({
     adPlaybooks: ad_playbooks,
     classification,
-    disabled: adSitePrefsFor(origin, ad_prefs).cleanupDisabled,
+    disabled,
     normalized,
     now,
     origin,
   });
   await chrome.storage.local.set({ ad_log, ad_playbooks });
+  if (sessionChanged) await broadcastAdCosmeticUpdate(origin);
 };
 
 const recordAdaptiveSignal = async (origin, signal) => {
@@ -1302,6 +1504,25 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
   return true;
 };
 
+const handleGetAdCosmeticConfig = (_msg, sender, sendResponse) => {
+  (async () => {
+    const origin = originFromSender(sender);
+    const { ad_playbooks = {}, ad_prefs = {} } = await chrome.storage.local.get({
+      ad_playbooks: {},
+      ad_prefs: {},
+    });
+    sendResponse({
+      ok: true,
+      ...adCosmeticConfigFor({
+        adPlaybooks: ad_playbooks,
+        adPrefs: ad_prefs,
+        origin,
+      }),
+    });
+  })();
+  return true;
+};
+
 const broadcastConfigUpdate = async (options = {}) => {
   try {
     const resetProbeState = !!options.resetProbeState;
@@ -1311,6 +1532,20 @@ const broadcastConfigUpdate = async (options = {}) => {
         if (tab.id == null) return null;
         return chrome.tabs
           .sendMessage(tab.id, { resetProbeState, type: "static_persona_update" })
+          .catch(() => {});
+      })
+    );
+  } catch {}
+};
+
+const broadcastAdCosmeticUpdate = async (origin) => {
+  try {
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) => {
+        if (tab.id == null) return null;
+        return chrome.tabs
+          .sendMessage(tab.id, { origin, type: "static_ad_cosmetic_update" })
           .catch(() => {});
       })
     );
@@ -1417,6 +1652,8 @@ const setAdCleanupDisabled = async (origin, disabled) => {
   };
   delete nextPrefs.site;
   await chrome.storage.local.set({ ad_playbooks, ad_prefs: nextPrefs });
+  if (disabled) clearAdSessionStateForOrigin(normalized);
+  await broadcastAdCosmeticUpdate(normalized);
   return adSitePrefsFor(normalized, nextPrefs);
 };
 
@@ -1470,10 +1707,12 @@ const clearAdDataForOrigin = async (origin) => {
   const hadPlaybook = !!ad_playbooks[normalized];
   delete ad_log[normalized];
   delete ad_playbooks[normalized];
+  const hadSessionState = clearAdSessionStateForOrigin(normalized);
   await chrome.storage.local.set({ ad_log, ad_playbooks });
   const removedSessionRules = await clearAdSessionRulesForOrigin(normalized);
+  await broadcastAdCosmeticUpdate(normalized);
   return {
-    cleared: hadLog || hadPlaybook || removedSessionRules > 0,
+    cleared: hadLog || hadPlaybook || hadSessionState || removedSessionRules > 0,
     origin: normalized,
     removedSessionRules,
   };
@@ -1533,6 +1772,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
 const handleClearLog = (_msg, _sender, sendResponse) => {
   (async () => {
     cachedSecretPromise = null;
+    clearAllAdSessionState();
     await serialize(() =>
       chrome.storage.local.remove([
         "probe_log",
@@ -1547,6 +1787,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
     );
     await clearTabStateAndBadges();
     await broadcastConfigUpdate({ resetProbeState: true });
+    await broadcastAdCosmeticUpdate(null);
     sendResponse({ ok: true });
   })();
   return true;
@@ -1558,6 +1799,7 @@ const messageHandlers = {
   static_clear_ad_site_data: handleClearAdSiteData,
   static_clear_log: handleClearLog,
   static_export_log: handleExportLog,
+  static_get_ad_cosmetic_config: handleGetAdCosmeticConfig,
   static_get_details: handleGetDetails,
   static_get_persona: handleGetPersona,
   static_probe_blocked: handleProbeBlocked,

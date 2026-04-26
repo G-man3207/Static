@@ -450,14 +450,43 @@
     };
   };
 
+  const configFromResponse = (response) => {
+    if (!response || !response.ok || response.origin !== origin) return null;
+    const entries = Array.isArray(response.entries) ? response.entries : [];
+    return {
+      active: !!response.active,
+      entries: response.active ? entries.filter(activeEntry).slice(0, 24) : [],
+    };
+  };
+
+  const requestConfigFromServiceWorker = () =>
+    new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage({ type: "static_get_ad_cosmetic_config" }, (response) => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+            return;
+          }
+          resolve(response);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+
   const refreshConfig = async () => {
+    let nextConfig = null;
     try {
-      currentConfig = configFromStored(
-        await chrome.storage.local.get({ ad_playbooks: {}, ad_prefs: {} })
-      );
-    } catch {
-      currentConfig = { active: false, entries: [] };
+      nextConfig = configFromResponse(await requestConfigFromServiceWorker());
+    } catch {}
+    if (!nextConfig) {
+      try {
+        nextConfig = configFromStored(
+          await chrome.storage.local.get({ ad_playbooks: {}, ad_prefs: {} })
+        );
+      } catch {}
     }
+    currentConfig = nextConfig || { active: false, entries: [] };
     requestApply();
   };
 
@@ -484,6 +513,15 @@
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || (!changes.ad_prefs && !changes.ad_playbooks)) return;
     refreshConfig();
+  });
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || msg.type !== "static_ad_cosmetic_update") return undefined;
+    if (msg.origin && msg.origin !== origin) return undefined;
+    refreshConfig()
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
   });
 
   if (document.documentElement) {

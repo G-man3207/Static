@@ -93,6 +93,54 @@ const fixtureFiles = {
     );
     window.__adObserveDone = true;
   `,
+  "/ad-session-first.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <body>
+      <div id="session-slot"><div id="session-inner"></div></div>
+      <script src="/assets/ad/session-loader-1234567890abcdef1234567890abcdef.js?token=secret-token"></script>
+    </body>
+  `,
+  "/assets/ad/session-loader-1234567890abcdef1234567890abcdef.js": `
+    window.googletag = {
+      defineSlot() {
+        return {
+          addService() {
+            return this;
+          },
+        };
+      },
+      pubads() {
+        return {};
+      },
+    };
+    window.googletag.defineSlot("/1234/session", [300, 250], "session-slot").addService(
+      window.googletag.pubads()
+    );
+    const iframe = document.createElement("iframe");
+    iframe.width = "300";
+    iframe.height = "250";
+    iframe.src = "/creative/session-widget.html?creative=private-token";
+    document.getElementById("session-inner").appendChild(iframe);
+    navigator.sendBeacon(
+      "/collect/impression/session-1234567890abcdef1234567890abcdef?token=secret-token",
+      "body-should-not-store"
+    );
+    window.__adSessionDone = true;
+  `,
+  "/ad-session-second.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <style>
+      #session-slot { width: 300px; min-height: 250px; background: #fee; }
+      #session-slot iframe { border: 0; display: block; width: 300px; height: 250px; }
+    </style>
+    <body>
+      <div id="session-slot" class="ad-slot">
+        <iframe width="300" height="250" title="Advertisement" src="/ad-creative.html"></iframe>
+      </div>
+    </body>
+  `,
   "/ad-playbook-broad-selector.html": `
     <!doctype html>
     <meta charset="utf-8">

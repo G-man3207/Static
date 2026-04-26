@@ -84,6 +84,32 @@ const setSiteCleanupDisabled = (extension, origin, disabled) =>
     { disabled, origin }
   );
 
+const sendExtensionMessage = async (extension, message) => {
+  const extensionPage = await extension.context.newPage();
+  try {
+    await extensionPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+    return await extensionPage.evaluate((msg) => chrome.runtime.sendMessage(msg), message);
+  } finally {
+    await extensionPage.close();
+  }
+};
+
+const adPlaybookFor = (extension, origin) =>
+  extension.serviceWorker.evaluate(
+    (originArg) =>
+      chrome.storage.local
+        .get("ad_playbooks")
+        .then(({ ad_playbooks }) => ad_playbooks && ad_playbooks[originArg]),
+    origin
+  );
+
+const adLogFor = (extension, origin) =>
+  extension.serviceWorker.evaluate(
+    (originArg) =>
+      chrome.storage.local.get("ad_log").then(({ ad_log }) => ad_log && ad_log[originArg]),
+    origin
+  );
+
 const elementState = (page, selector) =>
   page.locator(selector).evaluate((element) => {
     const style = getComputedStyle(element);
@@ -182,6 +208,80 @@ test("per-site ad cleanup disable restores hidden elements without reload", asyn
       marker: null,
       visibility: "visible",
     });
+  expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+});
+
+test("same-session fast learning hides learned slots on later same-origin navigation", async ({
+  extension,
+  server,
+}) => {
+  await setCleanupMode(extension, "cosmetic");
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/ad-session-first.html"));
+  await expect.poll(() => page.evaluate(() => window.__adSessionDone === true)).toBe(true);
+  await expect
+    .poll(() => adLogFor(extension, server.origin).then((entry) => entry && entry.confidence))
+    .toBe("high");
+
+  await extension.serviceWorker.evaluate((origin) => {
+    return chrome.storage.local.get({ ad_playbooks: {} }).then(({ ad_playbooks }) => {
+      delete ad_playbooks[origin];
+      return chrome.storage.local.set({ ad_playbooks });
+    });
+  }, server.origin);
+  await expect.poll(() => adPlaybookFor(extension, server.origin)).toBeFalsy();
+
+  await page.goto(server.url("/ad-session-second.html"));
+  await expect
+    .poll(() => elementState(page, "#session-slot"))
+    .toMatchObject({
+      marker: "hide",
+      visibility: "hidden",
+    });
+  expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+});
+
+test("per-site disable ignores same-session learned cosmetic entries", async ({
+  extension,
+  server,
+}) => {
+  await setCleanupMode(extension, "cosmetic");
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/ad-observe-positive.html"));
+  await expect.poll(() => page.evaluate(() => window.__adObserveDone === true)).toBe(true);
+  await expect
+    .poll(() => adLogFor(extension, server.origin).then((entry) => entry && entry.confidence))
+    .toBe("high");
+
+  await page.goto(server.url("/ad-cosmetic-slot.html"));
+  await expect
+    .poll(() => elementState(page, "#ad-slot"))
+    .toMatchObject({
+      marker: "hide",
+      visibility: "hidden",
+    });
+
+  await sendExtensionMessage(extension, {
+    disabled: true,
+    origin: server.origin,
+    type: "static_set_ad_cleanup_disabled",
+  });
+
+  await expect
+    .poll(() => elementState(page, "#ad-slot"))
+    .toMatchObject({
+      marker: null,
+      visibility: "visible",
+    });
+
+  await page.goto(server.url("/ad-cosmetic-slot.html"));
+  await page.waitForTimeout(150);
+  expect(await elementState(page, "#ad-slot")).toMatchObject({
+    marker: null,
+    visibility: "visible",
+  });
   expect(await dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
 });
 
