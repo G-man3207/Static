@@ -415,24 +415,32 @@ const sanitizePlaybookResourceTypes = (entry) => {
   return entry.resourceTypes.map((type) => String(type).slice(0, 32)).slice(0, 6);
 };
 
+const safeAdEntryCount = (value) => Math.max(0, Math.round(value || 0));
+
+const safeAdEntryText = (value, fallback = "", maxLength = 160) =>
+  String(value || fallback).slice(0, maxLength);
+
 const sanitizeAdPlaybookEntry = (entry) => {
   const safeEntry = entry || {};
   return {
+    breakageCount: safeAdEntryCount(safeEntry.breakageCount),
+    demotedUntil: safeEntry.demotedUntil || 0,
     diagnosticOnly: !!safeEntry.diagnosticOnly,
     firstSeen: safeEntry.firstSeen || 0,
-    hits: Math.max(0, Math.round(safeEntry.hits || 0)),
-    kind: String(safeEntry.kind || "entry").slice(0, 32),
+    hits: safeAdEntryCount(safeEntry.hits),
+    kind: safeAdEntryText(safeEntry.kind, "entry", 32),
+    lastBreakageAt: safeEntry.lastBreakageAt || 0,
     lastSeen: safeEntry.lastSeen || 0,
-    origin: String(safeEntry.origin || "").slice(0, 160),
-    path: String(safeEntry.path || "").slice(0, 160),
+    origin: safeAdEntryText(safeEntry.origin),
+    path: safeAdEntryText(safeEntry.path),
     promotedAt: safeEntry.promotedAt || 0,
-    reason: String(safeEntry.reason || "").slice(0, 64),
+    reason: safeAdEntryText(safeEntry.reason, "", 64),
     resourceTypes: sanitizePlaybookResourceTypes(safeEntry),
     ruleId: Number.isInteger(safeEntry.ruleId) ? safeEntry.ruleId : 0,
-    score: Math.max(0, Math.min(100, Math.round(safeEntry.score || 0))),
-    sessionCount: Math.max(0, Math.round(safeEntry.sessionCount || 0)),
-    status: String(safeEntry.status || "").slice(0, 32),
-    value: String(safeEntry.value || "").slice(0, 160),
+    score: Math.min(100, safeAdEntryCount(safeEntry.score)),
+    sessionCount: safeAdEntryCount(safeEntry.sessionCount),
+    status: safeAdEntryText(safeEntry.status, "", 32),
+    value: safeAdEntryText(safeEntry.value),
   };
 };
 
@@ -1268,6 +1276,33 @@ const adDynamicRuleSummariesForOrigin = async (origin, state) => {
   }
 };
 
+const adDynamicRecoverySummariesForOrigin = (origin, state, now = Date.now()) =>
+  Object.values(adDynamicRuleMapFor(state))
+    .map((entry) => {
+      const summary = sanitizeAdPlaybookEntry(entry);
+      if (summary.demotedUntil > now) summary.status = "demoted";
+      return summary;
+    })
+    .filter((entry) => {
+      if (origin && normalizeOrigin(entry.origin) !== origin) return false;
+      const recentBreakage =
+        entry.lastBreakageAt &&
+        now - entry.lastBreakageAt >= 0 &&
+        now - entry.lastBreakageAt < AD_DYNAMIC_DISABLE_COOLDOWN_MS;
+      return (
+        entry.kind === "endpoint" &&
+        entry.breakageCount > 0 &&
+        (entry.demotedUntil > now || recentBreakage)
+      );
+    })
+    .sort(
+      (a, b) =>
+        (b.lastBreakageAt || 0) - (a.lastBreakageAt || 0) ||
+        (b.demotedUntil || 0) - (a.demotedUntil || 0) ||
+        (b.score || 0) - (a.score || 0)
+    )
+    .slice(0, AD_DYNAMIC_RULE_CAP);
+
 const endpointCandidateFor = (endpoint, resourceType) => {
   const path = safePlaybookText(endpoint);
   if (!path || !path.startsWith("same-origin:/")) return null;
@@ -1469,6 +1504,7 @@ const adDiagnosticsFor = ({
   adPrefs = {},
   dynamicNetwork = [],
   origin,
+  recoveryNetwork = [],
   sessionNetwork = [],
 }) => {
   const entry = storedEntryForOrigin(origin, adLog);
@@ -1484,6 +1520,7 @@ const adDiagnosticsFor = ({
     playbook,
     prefs,
     persistentNetwork: dynamicNetwork,
+    recoveryNetwork,
     sessionNetwork,
   };
 };
@@ -2077,6 +2114,7 @@ const detailsResponseFor = async (tabId, stored) => {
   const diagnosticEntry = storedEntryForOrigin(origin, stored.diagnostic_log);
   const adSessionNetwork = await adSessionRuleSummariesForOrigin(origin);
   const adDynamicNetwork = await adDynamicRuleSummariesForOrigin(origin, stored.ad_dynamic_rules);
+  const adRecoveryNetwork = adDynamicRecoverySummariesForOrigin(origin, stored.ad_dynamic_rules);
   const selectedPersonaIds =
     originProbeEntry && stored.noise_enabled ? await personaFor(origin) : [];
   const loggedOrigins = loggedOriginsFor(stored);
@@ -2096,6 +2134,7 @@ const detailsResponseFor = async (tabId, stored) => {
       adPrefs: stored.ad_prefs,
       dynamicNetwork: adDynamicNetwork,
       origin,
+      recoveryNetwork: adRecoveryNetwork,
       sessionNetwork: adSessionNetwork,
     }),
     diagnosticEvents: diagnosticEventCountFor(diagnosticEntry),
@@ -2465,6 +2504,8 @@ const markAdDynamicMetadataForOrigin = ({ deleteMetadata, markDemoted, now, orig
     if (markDemoted) {
       meta.breakageCount = Math.max(0, Math.round(meta.breakageCount || 0)) + 1;
       meta.demotedUntil = now + AD_DYNAMIC_DISABLE_COOLDOWN_MS;
+      meta.lastBreakageAt = now;
+      meta.status = "demoted";
     }
   }
   if (changed) state.lastUpdated = now;
@@ -2685,6 +2726,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
     });
     const adSessionRules = await adSessionRuleSummariesForOrigin(null);
     const adDynamicRules = await adDynamicRuleSummariesForOrigin(null, ad_dynamic_rules);
+    const adDynamicRecovery = adDynamicRecoverySummariesForOrigin(null, ad_dynamic_rules);
     sendResponse({
       schema: "static.probe-log.v1",
       exportedAt: new Date().toISOString(),
@@ -2696,6 +2738,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       replayDetections: replay_log,
       adaptiveSignals: adaptive_log,
       adBehavior: ad_log,
+      adDynamicRecovery,
       adDynamicRules,
       adPlaybooks: ad_playbooks,
       adPrefs: ad_prefs,

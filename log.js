@@ -781,6 +781,15 @@ const adPersistentNetworkText = (persistentNetwork) => {
     : "No persistent learned network blocks active for this origin.";
 };
 
+const adRecoveryNetworkText = (recoveryNetwork) => {
+  const count = Array.isArray(recoveryNetwork) ? recoveryNetwork.length : 0;
+  return count > 0
+    ? `${fmt(count)} persistent learned network candidate${
+        count === 1 ? " was" : "s were"
+      } recently demoted after site recovery.`
+    : "";
+};
+
 const adDetailLines = ({
   ad,
   endpoints,
@@ -788,6 +797,7 @@ const adDetailLines = ({
   playbook,
   persistentNetwork,
   prefs,
+  recoveryNetwork,
   score,
   sessionNetwork,
   sources,
@@ -798,9 +808,19 @@ const adDetailLines = ({
     adEndpointEvidenceText(endpoints),
     adSessionNetworkText(sessionNetwork),
     adPersistentNetworkText(persistentNetwork),
+    adRecoveryNetworkText(recoveryNetwork),
     adSourceText(sources),
     adCleanupText(origin, playbook, prefs),
   ].filter(Boolean);
+
+const hasAdDetailContent = ({
+  ad,
+  persistentNetwork = [],
+  playbook,
+  recoveryNetwork = [],
+  sessionNetwork = [],
+}) =>
+  !!(ad || playbook || sessionNetwork.length || persistentNetwork.length || recoveryNetwork.length);
 
 const buildAdDetail = ({
   ad,
@@ -808,9 +828,10 @@ const buildAdDetail = ({
   persistentNetwork = [],
   playbook,
   prefs,
+  recoveryNetwork = [],
   sessionNetwork = [],
 }) => {
-  if (!ad && !playbook && sessionNetwork.length === 0 && persistentNetwork.length === 0) {
+  if (!hasAdDetailContent({ ad, persistentNetwork, playbook, recoveryNetwork, sessionNetwork })) {
     return null;
   }
   const box = document.createElement("div");
@@ -833,6 +854,7 @@ const buildAdDetail = ({
     playbook,
     persistentNetwork,
     prefs,
+    recoveryNetwork,
     score,
     sessionNetwork,
     sources,
@@ -851,6 +873,7 @@ const buildAdDetail = ({
   );
   box.appendChild(buildAdPlaybookList("Session network blocks", sessionNetwork, "path"));
   box.appendChild(buildAdPlaybookList("Persistent network blocks", persistentNetwork, "path"));
+  box.appendChild(buildAdPlaybookList("Recovery network candidates", recoveryNetwork, "path"));
   box.appendChild(
     buildAdPlaybookList("Learned script labels", playbook && playbook.scripts, "value")
   );
@@ -966,6 +989,7 @@ const buildOriginDetail = ({ drift, entry, origin, rank, severity }) => {
     persistentNetwork: entry.__adDynamicRules,
     playbook: entry.__adPlaybook,
     prefs: entry.__adPrefs,
+    recoveryNetwork: entry.__adRecoveryRules,
     sessionNetwork: entry.__adSessionRules,
   });
   if (ad) box.appendChild(ad);
@@ -1050,6 +1074,7 @@ const originNamesForData = (data) =>
     ...Object.keys(data.adBehavior || {}),
     ...Object.keys(data.adPlaybooks || {}),
     ...Object.keys(data.diagnostics || {}),
+    ...(data.adDynamicRecovery || []).map((rule) => rule.origin).filter(Boolean),
     ...(data.adDynamicRules || []).map((rule) => rule.origin).filter(Boolean),
     ...(data.adSessionRules || []).map((rule) => rule.origin).filter(Boolean),
   ]);
@@ -1066,6 +1091,7 @@ const rankedEntriesForData = (data) => {
   const origins = data.origins || {};
   const adaptiveSignals = data.adaptiveSignals || {};
   const adBehavior = data.adBehavior || {};
+  const adDynamicRecovery = data.adDynamicRecovery || [];
   const adDynamicRules = data.adDynamicRules || [];
   const adPlaybooks = data.adPlaybooks || {};
   const diagnostics = data.diagnostics || {};
@@ -1076,6 +1102,7 @@ const rankedEntriesForData = (data) => {
     const adaptive = adaptiveSignals[origin];
     const ad = adBehavior[origin];
     const adPlaybook = adPlaybooks[origin];
+    const recoveryRules = adDynamicRecovery.filter((rule) => rule && rule.origin === origin);
     const dynamicRules = adDynamicRules.filter((rule) => rule && rule.origin === origin);
     const diagnostic = diagnostics[origin];
     const sessionRules = adSessionRules.filter((rule) => rule && rule.origin === origin);
@@ -1087,6 +1114,7 @@ const rankedEntriesForData = (data) => {
       __adDynamicRules: dynamicRules,
       __adPlaybook: adPlaybook,
       __adPrefs: adPrefs,
+      __adRecoveryRules: recoveryRules,
       __adSessionRules: sessionRules,
       __diagnostics: diagnostic,
     });

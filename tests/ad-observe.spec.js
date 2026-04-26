@@ -336,6 +336,41 @@ test("disable and clear site data remove persistent learned ad DNR rules", async
     type: "static_set_ad_cleanup_disabled",
   });
   await expect.poll(() => dnrRuleCounts(extension)).toEqual({ dynamic: 0, session: 0 });
+  const demotedState = await adDynamicState(extension);
+  const [demotedMeta] = Object.values(demotedState.rules || {}).filter(
+    (entry) => entry.origin === server.origin
+  );
+  expect(demotedMeta).toMatchObject({
+    breakageCount: 1,
+    kind: "endpoint",
+    lastBreakageAt: expect.any(Number),
+    path: "same-origin:/collect/impression/:token",
+    status: "demoted",
+  });
+  expect(demotedMeta.demotedUntil).toBeGreaterThan(Date.now());
+
+  await page.bringToFront();
+  const tabId = await activeTabId(extension);
+  const popupPage = await openPopupForActiveTab(extension, tabId);
+  await openPopupAdvancedControls(popupPage);
+  await popupPage.getByText("Ad behavior diagnostics").click();
+  await expect(popupPage.locator("#ad-diagnostics")).toContainText("Recovery");
+  await expect(popupPage.locator("#ad-diagnostics")).toContainText(
+    "same-origin:/collect/impression/:token"
+  );
+  await expect(popupPage.locator("#ad-diagnostics")).toContainText("demoted");
+  await expect(popupPage.locator("#clear-ad-persistent-network")).toBeEnabled();
+
+  const logPage = await extension.context.newPage();
+  await logPage.goto(`chrome-extension://${extension.extensionId}/log.html`);
+  await logPage.getByText(server.origin).click();
+  const recoveryGuide = logPage.locator(".reason-guide").filter({
+    hasText: "Recovery network candidates",
+  });
+  await expect(recoveryGuide).toBeVisible();
+  await expect(recoveryGuide).toContainText("same-origin:/collect/impression/:token");
+  await expect(recoveryGuide).toContainText("demoted");
+  await expect(logPage.getByText(/recently demoted after site recovery/)).toBeVisible();
 
   await sendExtensionMessage(extension, {
     disabled: false,

@@ -443,6 +443,9 @@ const adSessionNetworkState = (ad) =>
 const adPersistentNetworkState = (ad) =>
   ad && Array.isArray(ad.persistentNetwork) ? ad.persistentNetwork : [];
 
+const adRecoveryNetworkState = (ad) =>
+  ad && Array.isArray(ad.recoveryNetwork) ? ad.recoveryNetwork : [];
+
 const adCleanupModeState = (resp, ad) => (resp && resp.adCleanupMode) || (ad && ad.cleanupMode);
 
 const adCleanupDisabledText = (ad) =>
@@ -466,6 +469,8 @@ const refreshDetails = async () => {
 const renderAdControls = (container, resp) => {
   const ad = currentAdState(resp);
   const origin = resp && resp.origin;
+  const persistentNetwork = adPersistentNetworkState(ad);
+  const recoveryNetwork = adRecoveryNetworkState(ad);
   const controls = document.createElement("div");
   controls.className = "ad-controls";
 
@@ -495,7 +500,10 @@ const renderAdControls = (container, resp) => {
   clearPersistent.id = "clear-ad-persistent-network";
   clearPersistent.type = "button";
   clearPersistent.textContent = "Clear persistent learned network rules for this site";
-  clearPersistent.disabled = !(origin && adPersistentNetworkState(ad).length > 0);
+  clearPersistent.disabled = !(
+    origin &&
+    (persistentNetwork.length > 0 || recoveryNetwork.length > 0)
+  );
   controls.appendChild(clearPersistent);
 
   checkbox.addEventListener("change", () => {
@@ -577,6 +585,7 @@ const renderAdDiagnostics = (resp) => {
     formatPlaybookEntries(adPersistentNetworkState(ad), "path")
   );
   addDiagnosticRow(box, "Scripts", formatPlaybookEntries(playbook.scripts, "value"));
+  addDiagnosticRow(box, "Recovery", formatPlaybookEntries(adRecoveryNetworkState(ad), "path"));
   addDiagnosticRow(box, "Cleanup mode", adCleanupModeLabel(adCleanupModeState(resp, ad)));
   addDiagnosticRow(box, "Cleanup", adCleanupDisabledText(ad));
   renderAdControls(box, resp);
