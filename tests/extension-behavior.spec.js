@@ -860,24 +860,20 @@ test("popup toggles QA diagnostics mode", async ({ extension }) => {
     .toEqual({ diagnostics_mode: false });
 });
 
-test("popup shows replay blocking and poisoning indicators", async ({ extension }) => {
+test("popup shows replay poisoning indicators", async ({ extension }) => {
   await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
 
   const popupPage = await extension.context.newPage();
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
   await openPopupAdvancedControls(popupPage);
 
-  await expect(popupPage.getByText("Replay vendor blocking on")).toBeVisible();
   await expect(popupPage.getByText("Mask poisoning armed")).toBeVisible();
-
-  await popupPage.locator("#rs_session_replay").uncheck();
-  await expect(popupPage.getByText("Replay vendor blocking on")).toHaveCount(0);
 
   await popupPage.locator("#replay-mode").selectOption("noise");
   await expect(popupPage.getByText("Noise poisoning armed")).toBeVisible();
 });
 
-test("popup frames core defenses and groups network protections", async ({ extension }) => {
+test("popup frames core defenses and scoped fingerprint network checks", async ({ extension }) => {
   const popupPage = await extension.context.newPage();
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
   await openPopupAdvancedControls(popupPage);
@@ -887,24 +883,18 @@ test("popup frames core defenses and groups network protections", async ({ exten
   await expect(popupPage.getByText("DOM markers")).toBeVisible();
   await expect(popupPage.getByText("Extension globals")).toBeVisible();
 
-  await expect(popupPage.getByRole("heading", { name: "Network protections" })).toBeVisible();
-  await expect(popupPage.locator(".ruleset-group-title")).toHaveText([
-    "Site telemetry",
-    "Fingerprinting and access checks",
-    "Replay and monitoring",
-  ]);
-  await expect(popupPage.locator(".ruleset-group").nth(0)).toContainText("LinkedIn telemetry");
-  await expect(popupPage.locator(".ruleset-group").nth(1)).toContainText(
+  await expect(
+    popupPage.getByRole("heading", { name: "Fingerprint network checks" })
+  ).toBeVisible();
+  await expect(popupPage.locator(".section-note")).toContainText(
+    "Keep uBlock Origin or Privacy Badger"
+  );
+  await expect(popupPage.locator(".ruleset-group-title")).toHaveText(["Fingerprint checks"]);
+  await expect(popupPage.locator(".ruleset-group").nth(0)).toContainText(
     "Fingerprinting and anti-bot"
   );
-  await expect(popupPage.locator(".ruleset-group").nth(1)).toContainText(
+  await expect(popupPage.locator(".ruleset-group").nth(0)).toContainText(
     "CAPTCHA and device checks"
-  );
-  await expect(popupPage.locator(".ruleset-group").nth(2)).toContainText(
-    "Session replay recorders"
-  );
-  await expect(popupPage.locator(".ruleset-group").nth(2)).toContainText(
-    "Datadog browser monitoring"
   );
 });
 
@@ -978,10 +968,7 @@ test("popup exposes local help text for privacy controls", async ({ extension })
     "replay-help-text"
   );
   await expect(popupPage.locator("#replay-help")).not.toHaveAttribute("title", /.*/);
-  await expect(popupPage.locator("#rulesets-help")).toHaveAttribute(
-    "data-tip",
-    /declarative rulesets/
-  );
+  await expect(popupPage.locator("#rulesets-help")).toHaveAttribute("data-tip", /uBlock Origin/);
   await expect(popupPage.locator("#rulesets-help")).toHaveAttribute(
     "aria-describedby",
     "rulesets-help-text"
@@ -1011,7 +998,7 @@ test("popup help tooltips stay inside the visible popup bounds", async ({ extens
   await popupPage.setViewportSize({ width: 320, height: 460 });
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
   await openPopupAdvancedControls(popupPage);
-  await expect(popupPage.locator("#rs_datadog_rum_help")).toBeVisible();
+  await expect(popupPage.locator("#rs_captcha_vendors_help")).toBeVisible();
 
   const helpTips = popupPage.locator(".help-tip");
   const helpTipCount = await helpTips.count();

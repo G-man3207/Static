@@ -5,7 +5,7 @@
 <h1 align="center">Static</h1>
 
 <p align="center">
-  <strong>Anti-fingerprinting Chrome extension that blocks extension enumeration, browser fingerprinting, and session-replay telemetry — and optionally poisons probe logs with plausible decoys.</strong>
+  <strong>Anti-fingerprinting Chrome extension that blocks extension enumeration and extension-derived browser fingerprints — and optionally poisons probe logs with plausible decoys.</strong>
 </p>
 
 <p align="center">
@@ -19,7 +19,9 @@
 
 ## What it does (10-second version)
 
-Websites quietly probe your browser to figure out **which extensions you have installed**, fingerprint your browser, and record your session via vendors like FullStory and LogRocket. Static blocks all three — and in **Noise mode** it feeds extension probes plausible-but-fake answers, while optional **Replay poisoning** masks and perturbs what detected session-replay listeners see.
+Websites quietly probe your browser to figure out **which extensions you have installed** and fold those signals into browser fingerprints. Static blocks those probes, hides extension-made DOM/global markers, and in **Noise mode** feeds extension probes plausible-but-fake answers.
+
+Static is intentionally narrow. It is built to run alongside uBlock Origin or Privacy Badger, which are better suited for broad ad-tech, analytics, and third-party tracker blocking.
 
 > On LinkedIn, Static blocks ~4,500 extension-enumeration probes per page load. The popup shows the live count.
 
@@ -44,12 +46,9 @@ Websites quietly probe your browser to figure out **which extensions you have in
 1. **Extension enumeration.** Pages that iterate through extension IDs via `fetch("chrome-extension://<id>/<resource>")` (and XHR / `<script src>` / `<link href>` / `<img src>` / image `srcset` / image-input `src` / video `poster` / media and track `src` / `Audio(url)` / object/embed/source URLs / anchor, area, base, ping, form `action`, and `formaction` URLs / CSSOM `@import` rules / style text, CSS declaration, and style-attribute URLs / `sendBeacon` / `Worker` / `SharedWorker` / worklet `addModule` / `EventSource` / `serviceWorker.register` equivalents) to probe which extensions are installed. All those vectors are patched in the page's MAIN world to reject `chrome-extension://` (plus `moz-extension://`, `ms-browser-extension://`, `safari-web-extension://`, `edge-extension://`) transparently.
 2. **DOM-marker fingerprinting.** A MutationObserver strips attributes, classes, and custom-element tags that browser extensions leave on the DOM to announce their presence, while MAIN-world observer shims hide transient marker records from page-owned MutationObservers.
 3. **`window` global fingerprinting.** Devtools bridges and extension-presence markers (`__REACT_DEVTOOLS_GLOBAL_HOOK__`, `__GRAMMARLY_DESKTOP_INTEGRATION__`, etc.) are locked to `undefined` before page scripts run.
-4. **Network-layer blocklists (togglable).** Declarative-Net-Request rulesets block known:
+4. **Fingerprint network checks (togglable).** Narrow Declarative-Net-Request rulesets block known:
    - **Fingerprinting / anti-bot vendors** — Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
    - **CAPTCHA / device-check vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA, DataDome response pages, and Cloudflare Turnstile / Challenge Platform.
-   - **Session-replay vendors** — FullStory, LogRocket, Hotjar, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, PostHog, OpenReplay, and Sentry Replay CDN bundles.
-   - **Datadog RUM** _(off by default, also used for legitimate monitoring)_.
-   - **LinkedIn** — sensor/metrics collection, conversion tracking, ad pixel, adblock detection, internal Piwik, marketing tag system, LMS analytics.
 5. **Device signal poisoning _(opt-in)._** Static can return a stable per-site machine persona for high-entropy Signal guide surfaces documented in BrowserGate-style collectors: OS/user-agent platform, CPU/RAM buckets, language, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, offline-audio render output, storage quota, battery, and network hints.
 6. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` of wrapped functions → native-looking strings, so the blocker's API overrides are indistinguishable from natives under any `toString` check.
 7. **Replay poisoning _(opt-in)._** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
@@ -163,7 +162,7 @@ Toggle Device signal poisoning from the popup.
 
 ## Replay poisoning _(opt-in)_
 
-The session-replay ruleset blocks known replay vendors at the network layer. If a replay SDK still runs because it is self-hosted, newly named, or the ruleset is disabled, Replay poisoning can make its local recording stream less trustworthy without sending fake traffic to the vendor.
+Replay poisoning is not a tracker-list replacement. It is an opt-in behavior-level defense for replay SDKs that still run because they are self-hosted, newly named, first-party proxied, or allowed by the user's tracker blocker. It can make the local recording stream less trustworthy without sending fake traffic to the vendor.
 
 Replay poisoning detects likely replay code from script URLs, known globals, and replay-looking listener sources, then wraps only those listeners:
 
@@ -176,13 +175,13 @@ The feature is scoped to replay listeners rather than the whole page. It does no
 
 Sentry Replay is handled here too. Static looks for replay-specific Sentry signatures such as `replayIntegration`, `replayCanvasIntegration`, replay sample-rate options, `@sentry/replay`, `rrweb`, and Sentry CDN bundle paths containing `replay`. It intentionally does not block all `*.ingest.sentry.io` traffic because regular Sentry error monitoring and Session Replay share envelope transport URLs.
 
-Datadog Session Replay is handled more narrowly than the optional Datadog RUM ruleset. Static watches for replay-specific `DD_RUM` init/start signals such as `sessionReplaySampleRate`, legacy `premiumSampleRate` / `replaySampleRate`, and `startSessionReplayRecording()`, so self-hosted or first-party Datadog replay can still be detected without treating every `DD_RUM` install as a replay recorder.
+Datadog Session Replay is handled narrowly. Static watches for replay-specific `DD_RUM` init/start signals such as `sessionReplaySampleRate`, legacy `premiumSampleRate` / `replaySampleRate`, and `startSessionReplayRecording()`, so self-hosted or first-party Datadog replay can still be detected without treating every `DD_RUM` install as a replay recorder.
 
-Hotjar is blocked on its documented runtime host families (`*.hotjar.com`, `*.hotjar.io`, and websocket Hotjar hosts). For first-party reverse-proxy and bundled SDK deployments, Static also treats Hotjar script/source labels as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
+Hotjar script/source labels are treated as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
 
-PostHog Session Replay is blocked on its documented cloud ingest/assets host family (`*.i.posthog.com`). For first-party reverse-proxy and bundled SDK deployments, Static also treats PostHog's replay bundle names such as `lazy-recorder`, `posthog-recorder`, and `recorder-v2`, plus documented `posthog.init(...)` default recording starts and `posthog.startSessionRecording()` calls, as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
+For first-party reverse-proxy and bundled SDK deployments, Static treats PostHog's replay bundle names such as `lazy-recorder`, `posthog-recorder`, and `recorder-v2`, plus documented `posthog.init(...)` default recording starts and `posthog.startSessionRecording()` calls, as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
 
-OpenReplay cloud tracker and ingest hosts (`static.openreplay.com`, `api.openreplay.com`) are blocked by the session-replay ruleset. First-party or bundled OpenReplay deployments are detected through `openreplay` script/source labels and documented `window.OpenReplay.start()` recording starts.
+First-party or bundled OpenReplay deployments are detected through `openreplay` script/source labels and documented `window.OpenReplay.start()` recording starts.
 
 ## Install
 
@@ -191,22 +190,21 @@ OpenReplay cloud tracker and ingest hosts (`static.openreplay.com`, `api.openrep
 3. Toggle **Developer mode** (top-right).
 4. Click **Load unpacked** and select the repo folder.
 
-## Toggle rulesets
+## Toggle fingerprint rulesets
 
-Each category of network rules lives in its own file under `rules/`. Toggle them two ways:
+Each narrow fingerprinting network rule category lives in its own file under `rules/`. Toggle them two ways:
 
 - **From the popup** — click the extension icon. Each ruleset has a checkbox; changes apply live (no reload).
 - **From `manifest.json`** — each `rule_resources` entry has an `enabled` flag. This controls the initial state on fresh install; after that, user toggles from the popup persist.
 
 ```json
 "rule_resources": [
-  { "id": "linkedin",            "enabled": true,  "path": "rules/linkedin.json" },
   { "id": "fingerprint_vendors", "enabled": true,  "path": "rules/fingerprint_vendors.json" },
-  { "id": "captcha_vendors",     "enabled": false, "path": "rules/captcha_vendors.json" },
-  { "id": "session_replay",      "enabled": true,  "path": "rules/session_replay.json" },
-  { "id": "datadog_rum",         "enabled": false, "path": "rules/datadog_rum.json" }
+  { "id": "captcha_vendors",     "enabled": false, "path": "rules/captcha_vendors.json" }
 ]
 ```
+
+Static intentionally does not ship broad ad-tech, analytics, social pixel, or general session-replay network lists. Use uBlock Origin, Privacy Badger, or both for that layer.
 
 `rules/META.json` is a sidecar index with `version`, `last_verified`, and human-readable descriptions for each ruleset. It's consumed by nothing at runtime — it's there so maintainers and contributors can tell which blocklists are fresh.
 
@@ -261,7 +259,7 @@ npm run check
 
 - **DOM markers to strip** — edit the regex arrays in `lists.js`.
 - **`window` globals to strip** — edit the `STRIP_GLOBALS` array in `block_globals.js`.
-- **Endpoints to block at the network layer** — add rules to an existing file under `rules/`, or create a new `rules/<category>.json` and register it in `manifest.json`'s `rule_resources` (and add an entry in `rules/META.json` + `popup.js`'s `RULESET_META`).
+- **Fingerprinting endpoints to block at the network layer** — add rules to an existing file under `rules/`, or create a new `rules/<category>.json` and register it in `manifest.json`'s `rule_resources` (and add an entry in `rules/META.json` + `popup.js`'s `RULESET_META`). Avoid general tracker or ad-tech lists; those belong in uBlock Origin / Privacy Badger.
 - **A new script-layer probe vector (some new Web API that takes a URL)** — add a wrapper in `block_vectors.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns. Fetch/XHR Noise-mode decoys live in `block.js`.
 
 ## Layout
@@ -283,11 +281,8 @@ static/
 ├── icons/                # 16/32/48/128 px icon set + original
 └── rules/
     ├── META.json
-    ├── linkedin.json
     ├── fingerprint_vendors.json
-    ├── captcha_vendors.json
-    ├── session_replay.json
-    └── datadog_rum.json
+    └── captcha_vendors.json
 ```
 
 ## Caveats
@@ -296,8 +291,8 @@ static/
 - The DOM scrubber ships with a default list of extensions whose markers are stripped. If one of those is an extension you use, its in-page UI (autofill icons, inline suggestions, etc.) may not render. Remove that extension's patterns from `lists.js` to keep it working.
 - Some sites use anti-bot vendors (PerimeterX, DataDome) as part of their login / checkout flow. If a site breaks, try disabling `fingerprint_vendors` first from the popup.
 - `captcha_vendors` is disabled by default because Arkose/FunCAPTCHA, DataDome, and Cloudflare Turnstile / Challenge Platform are served as CAPTCHA or device-check flows on some logins and protected forms (X signup, Roblox, some crypto exchanges, Cloudflare-protected forms); enabling it will break sign-in there.
-- `datadog_rum` is disabled by default because Datadog RUM is also widely used for legitimate performance and error monitoring that site owners and users may want.
 - Does not cover the entire browser-fingerprinting surface (canvas, WebGL, audio, fonts, font enumeration, WebRTC IP leak, etc.). Complements, doesn't replace, a dedicated anti-fingerprint extension.
+- Does not block broad tracker, ad-tech, analytics, or social pixel ecosystems. Complements, doesn't replace, uBlock Origin or Privacy Badger.
 
 ## License
 

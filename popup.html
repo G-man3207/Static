@@ -271,6 +271,12 @@
         letter-spacing: 0.8px;
         margin: 0 0 10px;
       }
+      .section-note {
+        margin: -4px 0 10px;
+        color: var(--text-muted);
+        font-size: 10px;
+        line-height: 1.4;
+      }
       .core-defenses {
         display: grid;
         gap: 0;
@@ -867,22 +873,26 @@
 
       <div class="section">
         <div class="title-with-help">
-          <h2>Network protections</h2>
+          <h2>Fingerprint network checks</h2>
           <button
             class="help-tip"
             id="rulesets-help"
             type="button"
-            data-tip="Network-layer protections use Chrome declarative rulesets. Toggling a protection changes local browser blocking only."
+            data-tip="Narrow network rules block known fingerprinting and device-check endpoints. Use uBlock Origin or Privacy Badger for broad tracker and ad-tech blocking."
             aria-label="Ruleset details"
             aria-describedby="rulesets-help-text"
           >
             ?
           </button>
           <span class="sr-only" id="rulesets-help-text"
-            >Network-layer protections use Chrome declarative rulesets. Toggling a protection
-            changes local browser blocking only.</span
+            >Narrow network rules block known fingerprinting and device-check endpoints. Use uBlock
+            Origin or Privacy Badger for broad tracker and ad-tech blocking.</span
           >
         </div>
+        <p class="section-note">
+          Static stays focused on probing and fingerprinting. Keep uBlock Origin or Privacy Badger
+          alongside it for broad tracker blocking.
+        </p>
         <div id="rulesets"></div>
       </div>
     </details>

@@ -1,11 +1,5 @@
 {
   "rulesets": {
-    "linkedin": {
-      "version": "1.0.2",
-      "last_verified": "2026-04-25",
-      "description": "LinkedIn telemetry: sensor/metrics collection, conversion tracking, ad pixel, adblock-detection script, internal Piwik, marketing tag utag/vendor paths, LMS analytics, Merchant Pool fingerprinting, and lnkd.in redirector. Connection-oriented rules include websocket and webtransport resource types.",
-      "enabled_by_default": true
-    },
     "fingerprint_vendors": {
       "version": "1.0.7",
       "last_verified": "2026-04-25",
@@ -16,18 +10,6 @@
       "version": "1.0.3",
       "last_verified": "2026-04-25",
       "description": "CAPTCHA / device-attestation vendors (Arkose Labs, FunCAPTCHA, DataDome response pages under captcha-delivery.com, and Cloudflare Turnstile / Challenge Platform under challenges.cloudflare.com). Connection-oriented rules include websocket and webtransport resource types. DISABLED BY DEFAULT — blocking these will break logins on sites that use them as CAPTCHA or device-check challenges (X signup, Roblox, several crypto exchanges, Cloudflare-protected forms, some enterprise SSO flows).",
-      "enabled_by_default": false
-    },
-    "session_replay": {
-      "version": "1.0.6",
-      "last_verified": "2026-04-25",
-      "description": "Session-replay, heatmap, and product-analytics vendors that record user interaction: FullStory, LogRocket, Hotjar, Mouseflow, Contentsquare, Smartlook, Quantum Metric, Microsoft Clarity, Heap, Pendo, Lucky Orange, Inspectlet, Browsee, PostHog, OpenReplay, and Sentry Replay CDN bundles. Includes current LogRocket CSP host family, Hotjar hotjar.com/hotjar.io host families, Clarity c.bing.com, Heap heap-api/heapanalytics plus classic replay auryc hosts, PostHog cloud ingest/assets under i.posthog.com, OpenReplay cloud tracker/ingest hosts, and persistent transport resource types.",
-      "enabled_by_default": true
-    },
-    "datadog_rum": {
-      "version": "1.0.2",
-      "last_verified": "2026-04-25",
-      "description": "Datadog Real User Monitoring intake endpoints (US1, US3, US5, EU1, US1-FED, AP1, AP2) and browser agent CDN. Connection-oriented rules include websocket and webtransport resource types. DISABLED BY DEFAULT — Datadog RUM is also widely used for legitimate performance and error monitoring that site operators and users may want to keep.",
       "enabled_by_default": false
     }
   }

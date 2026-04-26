@@ -1,8 +1,8 @@
 # Static — Privacy Policy
 
-**Last updated:** April 25, 2026
+**Last updated:** April 26, 2026
 
-Static is a Chrome extension that blocks websites from fingerprinting which browser extensions you have installed, and blocks known client-side fingerprinting / session-replay / anti-bot vendor endpoints at the network layer.
+Static is a Chrome extension that blocks websites from fingerprinting which browser extensions you have installed, and blocks known client-side fingerprinting / anti-bot vendor endpoints at the network layer.
 
 This policy describes exactly what information Static processes on your machine, what it does **not** access, and how any data you choose to export is handled.
 
@@ -22,7 +22,7 @@ Static stores this local state in your browser profile and never writes to `chro
 1. **Probe log** — a per-origin map of extension IDs that each site has probed you for, with counts. Capped at 100 origins × 2,000 IDs per origin; older entries are evicted beyond that cap.
 2. **Since-install probe counter** — the total number of extension-enumeration probes blocked since you installed Static.
 3. **User secret** — a random 256-bit value generated once, at install time, via `crypto.getRandomValues`. Used only to seed the per-origin decoy personas for Noise mode so that different Static users produce different decoys on the same site. Never displayed anywhere in the UI, never transmitted.
-4. **Preferences** — whether Noise mode is enabled, which Replay poisoning mode is selected (`off`, `mask`, `noise`, or `chaos`), and which DNR rulesets (LinkedIn telemetry, fingerprinting vendors, CAPTCHA vendors, session replay, Datadog RUM) you have turned on. Noise and Replay poisoning preferences are stored in `chrome.storage.local`; DNR ruleset choices are persisted locally by Chrome's extension ruleset API.
+4. **Preferences** — whether Noise mode is enabled, which Replay poisoning mode is selected (`off`, `mask`, `noise`, or `chaos`), and which DNR rulesets (fingerprinting vendors, CAPTCHA vendors) you have turned on. Noise and Replay poisoning preferences are stored in `chrome.storage.local`; DNR ruleset choices are persisted locally by Chrome's extension ruleset API.
 5. **Playbook summaries** — weekly, per-origin aggregates describing how a site probed for extensions: probe vectors (for example `fetch`, XHR, Worker, EventSource), coarse extension-resource path kinds (for example manifest, image, script, HTML, CSS, other), per-week ID counts, and first/last-seen times for the weekly bucket. These summaries power local "probe behavior changed" indicators and are capped to the latest 10 weekly buckets per origin.
 6. **Replay detection log** — a per-origin summary of likely session-replay SDK signals, such as matching script URLs, known replay globals, Sentry Replay-specific markers, or replay-looking listener sources. Capped at 100 origins × 50 signals per origin. It records signal names/counts and last-seen timestamps, not form values or page content.
 7. **Adaptive behavior log** — observe-only, per-origin summaries of correlated local behavior signals that may indicate fingerprinting, replay, or anti-bot collection. It stores category counts, max local score, reason counts, source labels, endpoint origin/path strings, and timestamps. It does not store request bodies, form values, cookies, local storage, or full URLs, and it does not create blocking rules yet.
@@ -33,7 +33,7 @@ You can erase the probe log, playbook summaries, replay detection log, adaptive 
 ## What Static does NOT store or access
 
 - Page content, form inputs, passwords, cookies, or local storage of any website.
-- Full URLs or your browsing history. The probe log aggregates at the **origin** level (e.g. `https://www.linkedin.com`), never the URL / path level.
+- Full URLs or your browsing history. The probe log aggregates at the **origin** level (e.g. `https://example.com`), never the URL / path level.
 - Your IP address, device fingerprint, or any identifier tied to you personally.
 - Any personally identifiable information.
 
@@ -45,11 +45,11 @@ When Replay poisoning is enabled, Static also proxies event objects delivered to
 
 Static has no backend. It makes no outbound network requests of its own. It contains no third-party SDKs, analytics frameworks, advertising integrations, crash-reporting services, or telemetry of any kind.
 
-Static's only network-related action is **blocking** certain outbound requests initiated by the websites you visit, via Chrome's [`declarativeNetRequest`](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest) API and via interception of `fetch` / `XMLHttpRequest` calls to extension-scheme URLs. Replay poisoning and adaptive behavior logging are page-local and do not send fake replay data or adaptive telemetry over the network. Static never **originates** network requests itself.
+Static's only network-related action is **blocking** narrow fingerprinting or device-check requests initiated by the websites you visit, via Chrome's [`declarativeNetRequest`](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest) API and via interception of `fetch` / `XMLHttpRequest` calls to extension-scheme URLs. It intentionally does not ship broad ad-tech, analytics, social pixel, or general session-replay network lists. Replay poisoning and adaptive behavior logging are page-local and do not send fake replay data or adaptive telemetry over the network. Static never **originates** network requests itself.
 
 ## Permissions Static requests, and why
 
-- **`declarativeNetRequest`** — to block fingerprinting, tracking, and session-replay vendor endpoints at the browser's network layer. Blocking is declarative; Static does not inspect the contents of these requests.
+- **`declarativeNetRequest`** — to block fingerprinting and device-check vendor endpoints at the browser's network layer. Blocking is declarative; Static does not inspect the contents of these requests.
 - **`storage`** — to persist the items listed under "What Static stores locally" above. Uses `chrome.storage.local` only; never `chrome.storage.sync`.
 - **Content-script `matches: ["<all_urls>"]`** — to register the API interception on every page, because fingerprinting can happen on any site. Static does not read page content in any origin it runs on.
 - No `host_permissions` are additionally requested; the content-script match patterns are the only host access.

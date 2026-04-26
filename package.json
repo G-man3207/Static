@@ -1,7 +1,7 @@
 {
   "name": "static",
   "version": "2.0.4",
-  "description": "Chrome MV3 extension that blocks extension-enumeration probes and known fingerprinting telemetry.",
+  "description": "Chrome MV3 extension that blocks extension-enumeration probes and extension-derived fingerprinting.",
   "private": true,
   "scripts": {
     "prepare": "husky",

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Static",
   "version": "2.0.4",
-  "description": "Blocks websites from fingerprinting which browser extensions you have installed, and known tracker/session-replay telemetry.",
+  "description": "Blocks extension-enumeration probes and extension-derived browser fingerprinting.",
   "permissions": ["declarativeNetRequest", "storage"],
   "icons": {
     "16": "icons/icon-16.png",
@@ -26,11 +26,6 @@
   "declarative_net_request": {
     "rule_resources": [
       {
-        "id": "linkedin",
-        "enabled": true,
-        "path": "rules/linkedin.json"
-      },
-      {
         "id": "fingerprint_vendors",
         "enabled": true,
         "path": "rules/fingerprint_vendors.json"
@@ -39,16 +34,6 @@
         "id": "captcha_vendors",
         "enabled": false,
         "path": "rules/captcha_vendors.json"
-      },
-      {
-        "id": "session_replay",
-        "enabled": true,
-        "path": "rules/session_replay.json"
-      },
-      {
-        "id": "datadog_rum",
-        "enabled": false,
-        "path": "rules/datadog_rum.json"
       }
     ]
   },

@@ -425,11 +425,9 @@ test("DNR rulesets are well-formed and synchronized with metadata and popup IDs"
   }
 });
 
-test("vendor DNR lists cover current official client-side collection hosts", () => {
+test("fingerprint DNR lists cover current official client-side collection hosts", () => {
   const captchaFilters = new Set(urlFiltersFor("rules/captcha_vendors.json"));
   const fingerprintFilters = new Set(urlFiltersFor("rules/fingerprint_vendors.json"));
-  const datadogFilters = new Set(urlFiltersFor("rules/datadog_rum.json"));
-  const replayFilters = new Set(urlFiltersFor("rules/session_replay.json"));
 
   expect(
     captchaFilters.has("||captcha-delivery.com^"),
@@ -461,60 +459,10 @@ test("vendor DNR lists cover current official client-side collection hosts", () 
   ]) {
     expect(fingerprintFilters.has(filter), `fingerprint_vendors missing ${filter}`).toBe(true);
   }
-
-  for (const filter of [
-    "||browser-intake-datadoghq.com^",
-    "||browser-intake-us3-datadoghq.com^",
-    "||browser-intake-us5-datadoghq.com^",
-    "||browser-intake-datadoghq.eu^",
-    "||browser-intake-ap1-datadoghq.com^",
-    "||browser-intake-ap2-datadoghq.com^",
-    "||browser-intake-ddog-gov.com^",
-    "||datadoghq-browser-agent.com^",
-  ]) {
-    expect(datadogFilters.has(filter), `datadog_rum missing ${filter}`).toBe(true);
-  }
-
-  for (const filter of [
-    "||contentsquare.com^",
-    "||contentsquare.net^",
-    "||fullstory.com^",
-    "||fs.net^",
-    "||logrocket.com^",
-    "||logrocket.io^",
-    "||lr-ingest.io^",
-    "||lr-in-prod.com^",
-    "||lr-ingest.com^",
-    "||ingest-lr.com^",
-    "||lr-intake.com^",
-    "||intake-lr.com^",
-    "||logr-ingest.com^",
-    "||lrkt-in.com^",
-    "||lgrckt-in.com^",
-    "||logr-in.com^",
-    "||clarity.ms^",
-    "||c.bing.com^",
-    "||auryc.com^",
-    "||heap-api.com^",
-    "||heapanalytics.com^",
-    "||hotjar.com^",
-    "||hotjar.io^",
-    "||i.posthog.com^",
-    "||api.openreplay.com^",
-    "||static.openreplay.com^",
-  ]) {
-    expect(replayFilters.has(filter), `session_replay missing ${filter}`).toBe(true);
-  }
 });
 
-test("vendor DNR connection rules include persistent transport resource types", () => {
-  for (const filePath of [
-    "rules/captcha_vendors.json",
-    "rules/datadog_rum.json",
-    "rules/fingerprint_vendors.json",
-    "rules/linkedin.json",
-    "rules/session_replay.json",
-  ]) {
+test("fingerprint DNR connection rules include persistent transport resource types", () => {
+  for (const filePath of ["rules/captcha_vendors.json", "rules/fingerprint_vendors.json"]) {
     for (const rule of readJson(filePath)) {
       const resourceTypes = rule.condition && rule.condition.resourceTypes;
       if (!Array.isArray(resourceTypes)) continue;
@@ -524,18 +472,4 @@ test("vendor DNR connection rules include persistent transport resource types", 
       );
     }
   }
-});
-
-test("LinkedIn DNR rules avoid blocking app allowlist profiles", () => {
-  const linkedinRules = readJson("rules/linkedin.json");
-  const serializedRules = JSON.stringify(linkedinRules);
-  const linkedinConditions = linkedinRules.map((rule) => rule.condition || {});
-
-  expect(serializedRules).not.toContain("||platform.linkedin.com/litms/");
-  expect(serializedRules).not.toContain("/litms/allowlist/");
-  expect(
-    linkedinConditions.some((condition) =>
-      String(condition.regexFilter || "").includes("/litms/(?:utag|vendor)/")
-    )
-  ).toBe(true);
 });
