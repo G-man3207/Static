@@ -314,7 +314,8 @@ const formatAdaptiveRule = (rule) => {
   const breakage = rule.breakageCount
     ? `, ${fmt(rule.breakageCount)} breakage mark${rule.breakageCount === 1 ? "" : "s"}`
     : "";
-  return `${kind}rule${id}: ${label} (${rule.status || "candidate"}${score}${breakage})`;
+  const reason = rule.lastBreakageReason ? `, ${rule.lastBreakageReason}` : "";
+  return `${kind}rule${id}: ${label} (${rule.status || "candidate"}${score}${breakage}${reason})`;
 };
 
 const formatAdaptiveRecovery = (recovery) => {

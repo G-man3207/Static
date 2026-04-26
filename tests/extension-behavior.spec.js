@@ -925,6 +925,7 @@ const adaptiveRecoveryStateFor = (extension, origin) =>
       demotedUntilFuture: (rule.demotedUntil || 0) > Date.now(),
       dynamicRules: await chrome.declarativeNetRequest.getDynamicRules(),
       hasAdaptiveLog: !!(stored.adaptive_log && stored.adaptive_log[originArg]),
+      lastBreakageReason: rule.lastBreakageReason || "",
       ruleCount: rules.length,
       sessionRules: await chrome.declarativeNetRequest.getSessionRules(),
       status: rule.status || "",
@@ -1504,7 +1505,9 @@ test("adaptive future blocking disable is local-only and reflected in calibratio
   const powerDiagnostics = popupPage.locator("#power-diagnostics");
   const adaptiveDisable = popupPage.locator("#adaptive-blocking-disabled");
   await expect(powerDiagnostics).toContainText("Adaptive calibration");
-  await expect(powerDiagnostics).toContainText("Per-site future blocking disable is available");
+  await expect(powerDiagnostics).toContainText(
+    "Per-site future blocking disable and automatic reload/exit breakage detection are available"
+  );
   await expect(adaptiveDisable).not.toBeChecked();
 
   await adaptiveDisable.check();
@@ -1624,7 +1627,7 @@ test("adaptive recovery attribution is local-only and demoted by site disable", 
   await expect(powerDiagnostics).toContainText("Adaptive recovery");
   await expect(powerDiagnostics).toContainText("1 tracked adaptive rule");
   await expect(powerDiagnostics).toContainText("/collect/fingerprint/*");
-  await expect(powerDiagnostics).toContainText("automatic reload/exit breakage detection");
+  await expect(powerDiagnostics).toContainText("narrow short-circuit");
   await expect(powerDiagnostics).toContainText("Observe-only; no generic adaptive rules active");
 
   await popupPage.locator("#adaptive-blocking-disabled").check();
@@ -1636,6 +1639,7 @@ test("adaptive recovery attribution is local-only and demoted by site disable", 
       demotedUntilFuture: true,
       dynamicRules: [],
       hasAdaptiveLog: true,
+      lastBreakageReason: "site-disabled",
       ruleCount: 1,
       sessionRules: [],
       status: "demoted",
@@ -1652,6 +1656,80 @@ test("adaptive recovery attribution is local-only and demoted by site disable", 
       hasAdaptiveLog: false,
       ruleCount: 0,
       sessionRules: [],
+    });
+});
+
+test("adaptive reload-loop monitoring demotes tracked future rules without enabling blocking", async ({
+  extension,
+  server,
+}) => {
+  const now = Date.now();
+  await extension.serviceWorker.evaluate(
+    ({ now: seededAt, origin }) =>
+      chrome.storage.local.set({
+        adaptive_log: {
+          [origin]: {
+            categories: { "anti-bot": 3 },
+            endpoints: {
+              [`${origin}/collect/fingerprint/:token`]: 3,
+            },
+            lastUpdated: seededAt,
+            reasons: {
+              canvas: 1,
+              crypto: 1,
+              navigator: 1,
+              network: 3,
+            },
+            scoreMax: 9,
+            sources: { "runtime:settimeout": 1 },
+            total: 3,
+          },
+        },
+        adaptive_rules: {
+          rules: {
+            "session-collect": {
+              addedAt: seededAt,
+              breakageCount: 1,
+              category: "anti-bot",
+              endpoint: `${origin}/collect/fingerprint/*`,
+              lastTriggeredAt: seededAt,
+              origin,
+              reasons: ["canvas", "crypto", "navigator", "network"],
+              ruleId: 9100002,
+              ruleKind: "session",
+              score: 9,
+              source: "runtime:settimeout",
+              status: "active",
+            },
+          },
+          version: 1,
+        },
+      }),
+    { now, origin: server.origin }
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.evaluate(
+    (id) => fetch(`chrome-extension://${id}/manifest.json`).catch(() => {}),
+    PROBED_ID
+  );
+  await page.reload({ waitUntil: "load" });
+  await page.reload({ waitUntil: "load" });
+  await page.reload({ waitUntil: "load" });
+
+  await expect
+    .poll(() => adaptiveRecoveryStateFor(extension, server.origin))
+    .toMatchObject({
+      adaptiveDisabled: false,
+      breakageCount: 2,
+      demotedUntilFuture: true,
+      dynamicRules: [],
+      hasAdaptiveLog: true,
+      lastBreakageReason: "reload-loop",
+      ruleCount: 1,
+      sessionRules: [],
+      status: "demoted",
     });
 });
 

@@ -114,8 +114,13 @@ const ADAPTIVE_RULE_ID_MIN = 9100000;
 const ADAPTIVE_RULE_ID_MAX = 9299999;
 const ADAPTIVE_RULE_METADATA_CAP = 64;
 const ADAPTIVE_RULE_DEMOTION_MS = 7 * 24 * 60 * 60 * 1000;
+const ADAPTIVE_RULE_AUTO_DEMOTE_THRESHOLD = 2;
+const ADAPTIVE_RULE_EXIT_BREAKAGE_MS = 8000;
+const ADAPTIVE_RULE_RELOAD_THRESHOLD = 3;
+const ADAPTIVE_RULE_RELOAD_WINDOW_MS = 30000;
 
 const adSessionState = new Map(); // origin -> same-browser-session cosmetic candidates
+const adaptiveTabLifecycleState = new Map(); // tabId -> recent loads for future adaptive recovery
 const serviceWorkerAdSessionId = (() => {
   try {
     const parts = new Uint32Array(2);
@@ -1044,7 +1049,14 @@ const ensureAdaptiveRuleState = (adaptiveRules) => {
 
 const safeAdaptiveRuleStatus = (status, demotedUntil, now) => {
   if (demotedUntil && demotedUntil > now) return "demoted";
-  if (status === "active" || status === "candidate" || status === "demoted") return status;
+  if (
+    status === "active" ||
+    status === "candidate" ||
+    status === "demoted" ||
+    status === "possible-breakage"
+  ) {
+    return status;
+  }
   if (status === "session" || status === "dynamic") return "active";
   return "candidate";
 };
@@ -1080,6 +1092,7 @@ const sanitizeAdaptiveRuleMeta = (meta, now = Date.now()) => {
     demotedUntil,
     endpoint: firstAdaptiveRuleText(safeMeta, ["endpoint", "path", "urlFilter"], "collector"),
     lastBreakageAt: adaptiveRuleNumber(safeMeta.lastBreakageAt),
+    lastBreakageReason: safePlaybookText(safeMeta.lastBreakageReason, 64),
     lastTriggeredAt: adaptiveRuleNumber(safeMeta.lastTriggeredAt || safeMeta.lastSeen),
     origin,
     reasons: adaptiveRuleReasonsFor(safeMeta),
@@ -1132,7 +1145,8 @@ const adaptiveRecoveryForOrigin = (origin, adaptiveRules, sitePrefs = {}) => {
 };
 
 const adaptiveRecoveryControlsFor = (sitePrefs = {}, recovery = {}) => ({
-  breakageCircuitBreaker: false,
+  automaticBreakageDetection: true,
+  breakageCircuitBreaker: true,
   clearSiteSignals: true,
   recentRuleCount: recovery.recentRuleCount || 0,
   ruleAttribution: true,
@@ -1151,12 +1165,12 @@ const adaptiveRecoverySummaryFor = (sitePrefs = {}, recovery = {}) => {
       recovery.likelyBreakageRule
     )}.`;
   }
-  return "Per-site future blocking disable is available; adaptive rule attribution metadata is ready, but automatic reload breakage detection is still missing.";
+  return "Per-site future blocking disable and automatic reload/exit breakage detection are available.";
 };
 
 const adaptiveNextStepFor = (candidateCount) =>
   candidateCount > 0
-    ? "Add automatic reload/exit breakage detection before allowing any candidate to block."
+    ? "Keep generic adaptive blocking observe-only until a narrow short-circuit implementation is explicitly enabled."
     : "Keep calibrating local evidence before considering adaptive blocking.";
 
 const adaptiveCalibrationForEntry = (
@@ -3097,6 +3111,7 @@ const markAdaptiveRuleMetadataForOrigin = ({ deleteMetadata, markDemoted, now, o
     meta.breakageCount = Math.max(0, Math.round(meta.breakageCount || 0)) + 1;
     meta.demotedUntil = now + ADAPTIVE_RULE_DEMOTION_MS;
     meta.lastBreakageAt = now;
+    meta.lastBreakageReason = "site-disabled";
     meta.lastUpdated = now;
     meta.removedAt = now;
     meta.status = "demoted";
@@ -3118,6 +3133,110 @@ const clearAdaptiveRulesForOrigin = async (
     markAdaptiveRuleMetadataForOrigin({ deleteMetadata, markDemoted, now, origin, state });
   }
   return removed;
+};
+
+const adaptiveRuleStatusIsBreakageEligible = (status) =>
+  status === "active" || status === "possible-breakage";
+
+const markAdaptiveRulePossibleBreakageForOrigin = ({ now, origin, reason, state }) => {
+  const rules = adaptiveRuleMapFor(state);
+  let changed = false;
+  let demoted = false;
+  for (const meta of Object.values(rules)) {
+    if (normalizeOrigin(meta && meta.origin) !== origin) continue;
+    const status = safeAdaptiveRuleStatus(meta.status, meta.demotedUntil, now);
+    if (!adaptiveRuleStatusIsBreakageEligible(status)) continue;
+    meta.breakageCount = Math.max(0, Math.round(meta.breakageCount || 0)) + 1;
+    meta.lastBreakageAt = now;
+    meta.lastBreakageReason = safePlaybookText(reason, 64);
+    meta.lastUpdated = now;
+    if (meta.breakageCount >= ADAPTIVE_RULE_AUTO_DEMOTE_THRESHOLD) {
+      meta.demotedUntil = now + ADAPTIVE_RULE_DEMOTION_MS;
+      meta.removedAt = now;
+      meta.status = "demoted";
+      demoted = true;
+    } else {
+      meta.status = "possible-breakage";
+    }
+    changed = true;
+  }
+  if (changed) {
+    trimAdaptiveRuleMetadata(state, now);
+    state.lastUpdated = now;
+  }
+  return { changed, demoted };
+};
+
+const markAdaptiveBreakageIfTracked = async (origin, reason) => {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return;
+  const { adaptive_prefs = {}, adaptive_rules = {} } = await chrome.storage.local.get({
+    adaptive_prefs: {},
+    adaptive_rules: {},
+  });
+  if (adaptiveSitePrefsFor(normalized, adaptive_prefs).blockingDisabled) return;
+  const state = ensureAdaptiveRuleState(adaptive_rules);
+  const now = Date.now();
+  const result = markAdaptiveRulePossibleBreakageForOrigin({
+    now,
+    origin: normalized,
+    reason,
+    state,
+  });
+  if (!result.changed) return;
+  if (result.demoted) await removeAdaptiveDnrRulesForOrigin(normalized, state);
+  await chrome.storage.local.set({ adaptive_rules });
+};
+
+const originForTabLifecycle = (tabId, info = {}, tab = {}) => {
+  const direct = originFromUrl(info.url) || originFromUrl(tab.url);
+  if (direct && direct !== "null") return direct;
+  const state = perTabState.get(tabId);
+  if (state && state.origin) return state.origin;
+  const lifecycle = adaptiveTabLifecycleState.get(tabId);
+  return lifecycle && lifecycle.origin ? lifecycle.origin : null;
+};
+
+const adaptiveReloadStateFor = (tabId, origin, now) => {
+  const existing = adaptiveTabLifecycleState.get(tabId);
+  if (!existing || existing.origin !== origin) {
+    const next = {
+      lastLoadAt: now,
+      lastReloadBreakageAt: 0,
+      loadTimes: [now],
+      origin,
+    };
+    adaptiveTabLifecycleState.set(tabId, next);
+    return next;
+  }
+  existing.lastLoadAt = now;
+  existing.loadTimes = [...(existing.loadTimes || []), now].filter(
+    (time) => now - time <= ADAPTIVE_RULE_RELOAD_WINDOW_MS
+  );
+  return existing;
+};
+
+const maybeMarkAdaptiveReloadBreakage = (tabId, info, tab) => {
+  const origin = originForTabLifecycle(tabId, info, tab);
+  if (!origin) return;
+  const now = Date.now();
+  const state = adaptiveReloadStateFor(tabId, origin, now);
+  if ((state.loadTimes || []).length < ADAPTIVE_RULE_RELOAD_THRESHOLD) return;
+  if (
+    state.lastReloadBreakageAt &&
+    now - state.lastReloadBreakageAt < ADAPTIVE_RULE_RELOAD_WINDOW_MS
+  ) {
+    return;
+  }
+  state.lastReloadBreakageAt = now;
+  serialize(() => markAdaptiveBreakageIfTracked(origin, "reload-loop"));
+};
+
+const maybeMarkAdaptiveExitBreakage = (tabId) => {
+  const state = adaptiveTabLifecycleState.get(tabId);
+  if (!(state && state.origin && state.lastLoadAt)) return;
+  if (Date.now() - state.lastLoadAt > ADAPTIVE_RULE_EXIT_BREAKAGE_MS) return;
+  serialize(() => markAdaptiveBreakageIfTracked(state.origin, "early-tab-close"));
 };
 
 const diagnosticTotalsForEvents = (events) => {
@@ -3328,6 +3447,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
   (async () => {
     cachedSecretPromise = null;
     clearAllAdSessionState();
+    adaptiveTabLifecycleState.clear();
     await clearAllAdSessionRules();
     await clearAllAdDynamicRules();
     await clearAllAdaptiveDnrRules();
@@ -3411,11 +3531,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  maybeMarkAdaptiveExitBreakage(tabId);
+  adaptiveTabLifecycleState.delete(tabId);
   perTabState.delete(tabId);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, info) => {
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.status === "loading") {
+    maybeMarkAdaptiveReloadBreakage(tabId, info, tab);
     perTabState.delete(tabId);
     chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
   }

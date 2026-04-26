@@ -13,11 +13,11 @@ when confidence is high enough.
 The current adaptive implementation is observe-only: Stage 1 logging plus Stage 2 diagnostics UI
 with local endpoint guardrails, calibration summaries, a local per-site recovery preference that can
 disable future adaptive blocking before any enforcement exists, and a local recovery-attribution
-ledger for future adaptive rules. It records compact local signals and never creates generic
-adaptive DNR rules. Generic adaptive blocking stages are intentionally unimplemented until
-calibration and recovery controls are strong enough. Separate opt-in Device signal poisoning can
-weaken many high-entropy Signal guide surfaces by returning stable per-site decoys instead of
-blocking the reads.
+ledger plus automatic reload/exit breakage marking for future adaptive rules. It records compact
+local signals and never creates generic adaptive DNR rules. Generic adaptive blocking stages are
+intentionally unimplemented until calibration and recovery controls are strong enough. Separate
+opt-in Device signal poisoning can weaken many high-entropy Signal guide surfaces by returning
+stable per-site decoys instead of blocking the reads.
 
 ## Threat Model
 
@@ -147,7 +147,7 @@ Adaptive blocking must be easy to undo:
   state in calibration diagnostics before any blocking stage ships.
 - Track recently added adaptive rules by origin in local metadata before any blocking stage ships.
 - If a page exits, reloads repeatedly, or the user disables a rule shortly after creation, mark it as
-  possible breakage.
+  possible breakage in local rule metadata.
 - Repeated possible breakage demotes the rule to observe-only.
 - Popup recovery should say which recent adaptive rule is most likely responsible.
 

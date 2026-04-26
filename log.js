@@ -700,9 +700,10 @@ const adaptiveRuleLabel = (rule) => {
   const breakage = rule.breakageCount
     ? `, ${fmt(rule.breakageCount)} breakage mark${rule.breakageCount === 1 ? "" : "s"}`
     : "";
+  const reason = rule.lastBreakageReason ? `, ${rule.lastBreakageReason}` : "";
   return `${kind}rule${id}: ${rule.endpoint || "collector endpoint"} (${
     rule.status || "candidate"
-  }${score}${breakage})`;
+  }${score}${breakage}${reason})`;
 };
 
 const buildAdaptiveRecovery = (recovery) => {
