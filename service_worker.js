@@ -110,6 +110,10 @@ const ADAPTIVE_ENDPOINT_BROAD_SEGMENTS = new Set([
   "tags",
 ]);
 const ADAPTIVE_PREFS_VERSION = 1;
+const ADAPTIVE_RULE_ID_MIN = 9100000;
+const ADAPTIVE_RULE_ID_MAX = 9299999;
+const ADAPTIVE_RULE_METADATA_CAP = 64;
+const ADAPTIVE_RULE_DEMOTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const adSessionState = new Map(); // origin -> same-browser-session cosmetic candidates
 const serviceWorkerAdSessionId = (() => {
@@ -1021,32 +1025,153 @@ const adaptiveSitePrefsFor = (origin, adaptivePrefs = {}) => {
   };
 };
 
-const adaptiveRecoveryControlsFor = (sitePrefs = {}) => ({
+const adaptiveRuleIdIsManaged = (id) =>
+  Number.isInteger(id) && id >= ADAPTIVE_RULE_ID_MIN && id <= ADAPTIVE_RULE_ID_MAX;
+
+const adaptiveDnrRuleIsManaged = (rule) => !!rule && adaptiveRuleIdIsManaged(rule.id);
+
+const adaptiveRuleMapFor = (adaptiveRules) => {
+  if (!(adaptiveRules && typeof adaptiveRules === "object")) return {};
+  return adaptiveRules.rules && typeof adaptiveRules.rules === "object" ? adaptiveRules.rules : {};
+};
+
+const ensureAdaptiveRuleState = (adaptiveRules) => {
+  const state = adaptiveRules && typeof adaptiveRules === "object" ? adaptiveRules : {};
+  state.version = ADAPTIVE_PREFS_VERSION;
+  if (!(state.rules && typeof state.rules === "object")) state.rules = {};
+  return state;
+};
+
+const safeAdaptiveRuleStatus = (status, demotedUntil, now) => {
+  if (demotedUntil && demotedUntil > now) return "demoted";
+  if (status === "active" || status === "candidate" || status === "demoted") return status;
+  if (status === "session" || status === "dynamic") return "active";
+  return "candidate";
+};
+
+const adaptiveRuleNumber = (value) => Math.max(0, Math.round(Number(value) || 0));
+
+const firstAdaptiveRuleText = (meta, keys, fallback, maxLength = 160) => {
+  for (const key of keys) {
+    if (meta[key]) return safePlaybookText(meta[key], maxLength);
+  }
+  return safePlaybookText(fallback, maxLength);
+};
+
+const adaptiveRuleReasonsFor = (meta) => {
+  if (!Array.isArray(meta.reasons)) return [];
+  return meta.reasons
+    .map((reason) => safePlaybookText(reason, 64))
+    .filter(Boolean)
+    .slice(0, 8);
+};
+
+const sanitizeAdaptiveRuleMeta = (meta, now = Date.now()) => {
+  const safeMeta = meta && typeof meta === "object" ? meta : {};
+  const origin = normalizeOrigin(safeMeta.origin);
+  if (!origin) return null;
+  const ruleKind = firstAdaptiveRuleText(safeMeta, ["ruleKind", "kind"], "rule", 24);
+  const ruleId = Math.round(Number(safeMeta.ruleId || safeMeta.id) || 0);
+  const demotedUntil = adaptiveRuleNumber(safeMeta.demotedUntil);
+  return {
+    addedAt: adaptiveRuleNumber(safeMeta.addedAt || safeMeta.createdAt),
+    breakageCount: adaptiveRuleNumber(safeMeta.breakageCount),
+    category: safePlaybookText(safeMeta.category, 48),
+    demotedUntil,
+    endpoint: firstAdaptiveRuleText(safeMeta, ["endpoint", "path", "urlFilter"], "collector"),
+    lastBreakageAt: adaptiveRuleNumber(safeMeta.lastBreakageAt),
+    lastTriggeredAt: adaptiveRuleNumber(safeMeta.lastTriggeredAt || safeMeta.lastSeen),
+    origin,
+    reasons: adaptiveRuleReasonsFor(safeMeta),
+    ruleId: adaptiveRuleIdIsManaged(ruleId) ? ruleId : 0,
+    ruleKind,
+    score: Math.min(100, adaptiveRuleNumber(safeMeta.score)),
+    source: safePlaybookText(safeMeta.source, 160),
+    status: safeAdaptiveRuleStatus(safeMeta.status, demotedUntil, now),
+  };
+};
+
+const adaptiveRuleSortValue = (rule) =>
+  Math.max(rule.lastBreakageAt || 0, rule.lastTriggeredAt || 0, rule.addedAt || 0);
+
+const adaptiveRuleSummariesForOrigin = (origin, adaptiveRules, now = Date.now()) =>
+  Object.values(adaptiveRuleMapFor(adaptiveRules))
+    .map((meta) => sanitizeAdaptiveRuleMeta(meta, now))
+    .filter((rule) => rule && (!origin || rule.origin === origin))
+    .sort(
+      (a, b) =>
+        Number(b.breakageCount > 0) - Number(a.breakageCount > 0) ||
+        adaptiveRuleSortValue(b) - adaptiveRuleSortValue(a) ||
+        (b.score || 0) - (a.score || 0) ||
+        (a.endpoint || "").localeCompare(b.endpoint || "")
+    )
+    .slice(0, ADAPTIVE_RULE_METADATA_CAP);
+
+const adaptiveRuleLabelFor = (rule) => {
+  if (!rule) return "tracked adaptive rule";
+  const id = rule.ruleId ? ` #${rule.ruleId}` : "";
+  const kind = rule.ruleKind && rule.ruleKind !== "rule" ? `${rule.ruleKind} ` : "";
+  return `${kind}rule${id} for ${rule.endpoint || "collector endpoint"}`.trim();
+};
+
+const adaptiveRecoveryForOrigin = (origin, adaptiveRules, sitePrefs = {}) => {
+  const recentRules = adaptiveRuleSummariesForOrigin(origin, adaptiveRules);
+  const likelyBreakageRule =
+    recentRules.find((rule) => rule.breakageCount > 0) ||
+    recentRules.find((rule) => rule.status === "active") ||
+    recentRules[0] ||
+    null;
+  const demotedRuleCount = recentRules.filter((rule) => rule.status === "demoted").length;
+  return {
+    demotedRuleCount,
+    likelyBreakageRule,
+    recentRuleCount: recentRules.length,
+    recentRules,
+    siteDisabled: !!sitePrefs.blockingDisabled,
+  };
+};
+
+const adaptiveRecoveryControlsFor = (sitePrefs = {}, recovery = {}) => ({
   breakageCircuitBreaker: false,
   clearSiteSignals: true,
-  ruleAttribution: false,
+  recentRuleCount: recovery.recentRuleCount || 0,
+  ruleAttribution: true,
   siteDisable: true,
   siteDisabled: !!sitePrefs.blockingDisabled,
+  userDisableDemotion: true,
 });
 
-const adaptiveRecoverySummaryFor = (sitePrefs = {}) =>
-  sitePrefs.blockingDisabled
-    ? "Future adaptive blocking is disabled for this site."
-    : "Per-site future blocking disable is available; rule attribution and breakage demotion are still missing.";
+const adaptiveRecoverySummaryFor = (sitePrefs = {}, recovery = {}) => {
+  if (sitePrefs.blockingDisabled && recovery.demotedRuleCount > 0) {
+    return "Future adaptive blocking is disabled for this site; tracked adaptive rules were demoted to observe-only.";
+  }
+  if (sitePrefs.blockingDisabled) return "Future adaptive blocking is disabled for this site.";
+  if (recovery.likelyBreakageRule) {
+    return `Adaptive rule attribution is available; likely recovery target: ${adaptiveRuleLabelFor(
+      recovery.likelyBreakageRule
+    )}.`;
+  }
+  return "Per-site future blocking disable is available; adaptive rule attribution metadata is ready, but automatic reload breakage detection is still missing.";
+};
 
 const adaptiveNextStepFor = (candidateCount) =>
   candidateCount > 0
-    ? "Add local adaptive rule attribution and breakage demotion before allowing any candidate to block."
+    ? "Add automatic reload/exit breakage detection before allowing any candidate to block."
     : "Keep calibrating local evidence before considering adaptive blocking.";
 
-const adaptiveCalibrationForEntry = (entry, endpointDiagnostics = null, sitePrefs = {}) => {
+const adaptiveCalibrationForEntry = (
+  entry,
+  endpointDiagnostics = null,
+  sitePrefs = {},
+  recovery = {}
+) => {
   if (!entry) return null;
   const diagnostics = endpointDiagnostics || adaptiveEndpointDiagnosticsForEntry(entry);
   const candidateCount = diagnostics.filter((item) => item.status === "candidate").length;
   const learningCount = diagnostics.filter((item) => item.status === "learning").length;
   const rejectedCount = diagnostics.filter((item) => item.status === "rejected").length;
   const scoreMax = Math.max(0, Math.round(entry.scoreMax || 0));
-  const recoveryControls = adaptiveRecoveryControlsFor(sitePrefs);
+  const recoveryControls = adaptiveRecoveryControlsFor(sitePrefs, recovery);
   const reasons = [
     "generic-adaptive-blocking:observe-only",
     scoreMax >= ADAPTIVE_ENDPOINT_MIN_SCORE
@@ -1056,6 +1181,8 @@ const adaptiveCalibrationForEntry = (entry, endpointDiagnostics = null, sitePref
     recoveryControls.siteDisabled
       ? "site:future-adaptive-blocking-disabled"
       : "site:future-adaptive-blocking-enabled",
+    "recovery:rule-attribution-ready",
+    "recovery:user-disable-demotion-ready",
     "recovery:required-before-blocking",
   ];
   return {
@@ -1067,12 +1194,13 @@ const adaptiveCalibrationForEntry = (entry, endpointDiagnostics = null, sitePref
     minScore: ADAPTIVE_ENDPOINT_MIN_SCORE,
     nextStep: adaptiveNextStepFor(candidateCount),
     reasons,
+    recovery,
     recoveryControls,
     recoveryRequired: true,
     rejectedCount,
     scoreMax,
     siteBlockingDisabled: recoveryControls.siteDisabled,
-    siteRecoverySummary: adaptiveRecoverySummaryFor(sitePrefs),
+    siteRecoverySummary: adaptiveRecoverySummaryFor(sitePrefs, recovery),
     summary: adaptiveCalibrationSummaryFor({ candidateCount, learningCount, rejectedCount }),
   };
 };
@@ -2285,35 +2413,41 @@ const handleAdSignal = (msg, sender) => {
 
 const storedEntryForOrigin = (origin, log) => (origin ? log[origin] : null);
 
-const adaptiveDiagnosticsFor = (entry, adaptivePrefs = {}, origin = null) => {
+const adaptiveDiagnosticsFor = (entry, adaptivePrefs = {}, origin = null, adaptiveRules = {}) => {
   const endpointDiagnostics = entry ? adaptiveEndpointDiagnosticsForEntry(entry) : [];
   const sitePrefs = adaptiveSitePrefsFor(origin, adaptivePrefs);
+  const recovery = adaptiveRecoveryForOrigin(origin, adaptiveRules, sitePrefs);
   return {
     adaptiveBlockingDisabled: sitePrefs.blockingDisabled,
     adaptiveCalibration: entry
-      ? adaptiveCalibrationForEntry(entry, endpointDiagnostics, sitePrefs)
+      ? adaptiveCalibrationForEntry(entry, endpointDiagnostics, sitePrefs, recovery)
       : null,
     adaptiveCategories: entry ? entry.categories || {} : {},
     adaptiveDetected: !!entry,
     adaptiveEndpointDiagnostics: endpointDiagnostics,
     adaptiveEndpoints: entry ? countEntries(entry.endpoints, 4) : [],
+    adaptiveRecovery: recovery,
+    adaptiveRules: recovery.recentRules,
     adaptiveReasons: entry ? countEntries(entry.reasons, 8) : [],
     adaptiveScore: entry ? entry.scoreMax || 0 : 0,
     adaptiveSources: entry ? countEntries(entry.sources, 4) : [],
   };
 };
 
-const adaptiveLogWithDiagnostics = (adaptiveLog = {}, adaptivePrefs = {}) =>
+const adaptiveLogWithDiagnostics = (adaptiveLog = {}, adaptivePrefs = {}, adaptiveRules = {}) =>
   Object.fromEntries(
     Object.entries(adaptiveLog || {}).map(([origin, entry]) => {
       const endpointDiagnostics = adaptiveEndpointDiagnosticsForEntry(entry);
       const sitePrefs = adaptiveSitePrefsFor(origin, adaptivePrefs);
+      const recovery = adaptiveRecoveryForOrigin(origin, adaptiveRules, sitePrefs);
       return [
         origin,
         {
           ...entry,
-          calibration: adaptiveCalibrationForEntry(entry, endpointDiagnostics, sitePrefs),
+          calibration: adaptiveCalibrationForEntry(entry, endpointDiagnostics, sitePrefs, recovery),
           endpointDiagnostics,
+          recovery,
+          rules: recovery.recentRules,
         },
       ];
     })
@@ -2334,6 +2468,7 @@ const loggedOriginsFor = (stored) =>
     ...Object.keys(stored.probe_log),
     ...Object.keys(stored.replay_log),
     ...Object.keys(stored.adaptive_log),
+    ...adaptiveRuleSummariesForOrigin(null, stored.adaptive_rules).map((rule) => rule.origin),
     ...Object.keys(stored.ad_log),
     ...Object.keys(stored.ad_playbooks),
     ...adDynamicOriginsForState(stored.ad_dynamic_rules),
@@ -2363,7 +2498,7 @@ const detailsResponseFor = async (tabId, stored) => {
     noiseEnabled: stored.noise_enabled,
     replayMode: stored.replay_mode,
     replayDetected: !!(origin && stored.replay_log[origin]),
-    ...adaptiveDiagnosticsFor(adaptiveEntry, stored.adaptive_prefs, origin),
+    ...adaptiveDiagnosticsFor(adaptiveEntry, stored.adaptive_prefs, origin, stored.adaptive_rules),
     adCleanupMode: adCleanupModeFor(stored.ad_prefs),
     ad: adDiagnosticsFor({
       adLog: stored.ad_log,
@@ -2400,6 +2535,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
       replay_log: {},
       adaptive_log: {},
       adaptive_prefs: {},
+      adaptive_rules: {},
       ad_dynamic_rules: {},
       ad_log: {},
       ad_playbooks: {},
@@ -2879,6 +3015,111 @@ const handleClearAdPersistentNetwork = (msg, _sender, sendResponse) => {
   return true;
 };
 
+const adaptiveRuleMetadataIdsForOrigin = (state, origin) =>
+  new Set(
+    Object.values(adaptiveRuleMapFor(state))
+      .map((meta) => sanitizeAdaptiveRuleMeta(meta))
+      .filter((meta) => meta && meta.origin === origin && meta.ruleId)
+      .map((meta) => meta.ruleId)
+  );
+
+const adaptiveRuleMatchesOrigin = (rule, origin, metadataRuleIds) => {
+  if (!adaptiveDnrRuleIsManaged(rule)) return false;
+  if (metadataRuleIds && metadataRuleIds.has(rule.id)) return true;
+  return dnrRuleMatchesOrigin(rule, origin, adaptiveDnrRuleIsManaged);
+};
+
+const removeAdaptiveDnrRulesForOrigin = async (origin, state) => {
+  const metadataRuleIds = adaptiveRuleMetadataIdsForOrigin(state, origin);
+  let removedDynamicRules = 0;
+  let removedSessionRules = 0;
+  try {
+    const sessionRules = await chrome.declarativeNetRequest.getSessionRules();
+    const removeRuleIds = sessionRules
+      .filter((rule) => adaptiveRuleMatchesOrigin(rule, origin, metadataRuleIds))
+      .map((rule) => rule.id);
+    if (removeRuleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+      removedSessionRules = removeRuleIds.length;
+    }
+  } catch {}
+  try {
+    const dynamicRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const removeRuleIds = dynamicRules
+      .filter((rule) => adaptiveRuleMatchesOrigin(rule, origin, metadataRuleIds))
+      .map((rule) => rule.id);
+    if (removeRuleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds });
+      removedDynamicRules = removeRuleIds.length;
+    }
+  } catch {}
+  return { removedDynamicRules, removedSessionRules };
+};
+
+const clearAllAdaptiveDnrRules = async () => {
+  try {
+    const sessionRules = await chrome.declarativeNetRequest.getSessionRules();
+    const removeRuleIds = sessionRules.filter(adaptiveDnrRuleIsManaged).map((rule) => rule.id);
+    if (removeRuleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+    }
+  } catch {}
+  try {
+    const dynamicRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const removeRuleIds = dynamicRules.filter(adaptiveDnrRuleIsManaged).map((rule) => rule.id);
+    if (removeRuleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds });
+    }
+  } catch {}
+};
+
+const trimAdaptiveRuleMetadata = (state, now) => {
+  const rules = adaptiveRuleMapFor(state);
+  const entries = Object.entries(rules).sort((a, b) => {
+    const ruleA = sanitizeAdaptiveRuleMeta(a[1], now) || {};
+    const ruleB = sanitizeAdaptiveRuleMeta(b[1], now) || {};
+    return adaptiveRuleSortValue(ruleB) - adaptiveRuleSortValue(ruleA);
+  });
+  for (const [key] of entries.slice(ADAPTIVE_RULE_METADATA_CAP)) delete rules[key];
+};
+
+const markAdaptiveRuleMetadataForOrigin = ({ deleteMetadata, markDemoted, now, origin, state }) => {
+  const rules = adaptiveRuleMapFor(state);
+  let changed = false;
+  for (const [key, meta] of Object.entries(rules)) {
+    if (normalizeOrigin(meta && meta.origin) !== origin) continue;
+    changed = true;
+    if (deleteMetadata) {
+      delete rules[key];
+      continue;
+    }
+    if (!markDemoted) continue;
+    meta.breakageCount = Math.max(0, Math.round(meta.breakageCount || 0)) + 1;
+    meta.demotedUntil = now + ADAPTIVE_RULE_DEMOTION_MS;
+    meta.lastBreakageAt = now;
+    meta.lastUpdated = now;
+    meta.removedAt = now;
+    meta.status = "demoted";
+  }
+  if (changed) {
+    trimAdaptiveRuleMetadata(state, now);
+    state.lastUpdated = now;
+  }
+  return changed;
+};
+
+const clearAdaptiveRulesForOrigin = async (
+  origin,
+  { adaptiveRules = null, deleteMetadata = false, markDemoted = false, now = Date.now() } = {}
+) => {
+  const state = adaptiveRules ? ensureAdaptiveRuleState(adaptiveRules) : null;
+  const removed = await removeAdaptiveDnrRulesForOrigin(origin, state);
+  if (state) {
+    markAdaptiveRuleMetadataForOrigin({ deleteMetadata, markDemoted, now, origin, state });
+  }
+  return removed;
+};
+
 const diagnosticTotalsForEvents = (events) => {
   const totals = {};
   for (const event of events || []) {
@@ -2932,7 +3173,10 @@ const adaptiveSitesForBlockingDisabled = ({ adaptivePrefs, disabled, now, origin
 const setAdaptiveBlockingDisabled = async (origin, disabled) => {
   const normalized = normalizeOrigin(origin);
   if (!normalized) return null;
-  const { adaptive_prefs = {} } = await chrome.storage.local.get({ adaptive_prefs: {} });
+  const { adaptive_prefs = {}, adaptive_rules = {} } = await chrome.storage.local.get({
+    adaptive_prefs: {},
+    adaptive_rules: {},
+  });
   const now = Date.now();
   const sites = adaptiveSitesForBlockingDisabled({
     adaptivePrefs: adaptive_prefs,
@@ -2947,7 +3191,14 @@ const setAdaptiveBlockingDisabled = async (origin, disabled) => {
     version: ADAPTIVE_PREFS_VERSION,
   };
   delete nextPrefs.site;
-  await chrome.storage.local.set({ adaptive_prefs: nextPrefs });
+  if (disabled) {
+    await clearAdaptiveRulesForOrigin(normalized, {
+      adaptiveRules: adaptive_rules,
+      markDemoted: true,
+      now,
+    });
+  }
+  await chrome.storage.local.set({ adaptive_prefs: nextPrefs, adaptive_rules });
   return adaptiveSitePrefsFor(normalized, nextPrefs);
 };
 
@@ -2961,23 +3212,51 @@ const handleSetAdaptiveBlockingDisabled = (msg, _sender, sendResponse) => {
 
 const clearAdaptiveDataForOrigin = async (origin) => {
   const normalized = normalizeOrigin(origin);
-  if (!normalized) return { cleared: false, origin: null, removedDiagnosticEvents: 0 };
-  const { adaptive_log = {}, diagnostic_log = {} } = await chrome.storage.local.get({
+  if (!normalized) {
+    return {
+      cleared: false,
+      origin: null,
+      removedDiagnosticEvents: 0,
+      removedDynamicRules: 0,
+      removedSessionRules: 0,
+    };
+  }
+  const {
+    adaptive_log = {},
+    adaptive_rules = {},
+    diagnostic_log = {},
+  } = await chrome.storage.local.get({
     adaptive_log: {},
+    adaptive_rules: {},
     diagnostic_log: {},
   });
   const hadAdaptiveLog = !!adaptive_log[normalized];
+  const hadAdaptiveRules = adaptiveRuleSummariesForOrigin(normalized, adaptive_rules).length > 0;
   delete adaptive_log[normalized];
   const removedDiagnosticEvents = removeDiagnosticEventsForOriginType(
     diagnostic_log,
     normalized,
     "adaptive"
   );
-  await chrome.storage.local.set({ adaptive_log, diagnostic_log });
+  const { removedDynamicRules, removedSessionRules } = await clearAdaptiveRulesForOrigin(
+    normalized,
+    {
+      adaptiveRules: adaptive_rules,
+      deleteMetadata: true,
+    }
+  );
+  await chrome.storage.local.set({ adaptive_log, adaptive_rules, diagnostic_log });
   return {
-    cleared: hadAdaptiveLog || removedDiagnosticEvents > 0,
+    cleared:
+      hadAdaptiveLog ||
+      hadAdaptiveRules ||
+      removedDiagnosticEvents > 0 ||
+      removedDynamicRules > 0 ||
+      removedSessionRules > 0,
     origin: normalized,
     removedDiagnosticEvents,
+    removedDynamicRules,
+    removedSessionRules,
   };
 };
 
@@ -2996,6 +3275,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       replay_log = {},
       adaptive_log = {},
       adaptive_prefs = {},
+      adaptive_rules = {},
       ad_dynamic_rules = {},
       ad_log = {},
       ad_playbooks = {},
@@ -3009,6 +3289,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       replay_log: {},
       adaptive_log: {},
       adaptive_prefs: {},
+      adaptive_rules: {},
       ad_dynamic_rules: {},
       ad_log: {},
       ad_playbooks: {},
@@ -3030,7 +3311,8 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       fingerprintMode: fingerprint_mode,
       origins: probe_log,
       replayDetections: replay_log,
-      adaptiveSignals: adaptiveLogWithDiagnostics(adaptive_log, adaptive_prefs),
+      adaptiveRules: adaptiveRuleSummariesForOrigin(null, adaptive_rules),
+      adaptiveSignals: adaptiveLogWithDiagnostics(adaptive_log, adaptive_prefs, adaptive_rules),
       adBehavior: ad_log,
       adDynamicRecovery,
       adDynamicRules,
@@ -3048,11 +3330,13 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
     clearAllAdSessionState();
     await clearAllAdSessionRules();
     await clearAllAdDynamicRules();
+    await clearAllAdaptiveDnrRules();
     await serialize(() =>
       chrome.storage.local.remove([
         "probe_log",
         "replay_log",
         "adaptive_log",
+        "adaptive_rules",
         "ad_dynamic_rules",
         "ad_log",
         "ad_playbooks",

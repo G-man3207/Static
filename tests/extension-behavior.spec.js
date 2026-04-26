@@ -903,6 +903,34 @@ const adaptiveLogViewerClearStateFor = (extension, origin) =>
     };
   }, origin);
 
+const adaptiveRecoveryStateFor = (extension, origin) =>
+  extension.serviceWorker.evaluate(async (originArg) => {
+    const stored = await chrome.storage.local.get([
+      "adaptive_log",
+      "adaptive_prefs",
+      "adaptive_rules",
+    ]);
+    const rules = Object.values(
+      (stored.adaptive_rules && stored.adaptive_rules.rules) || {}
+    ).filter((rule) => rule && rule.origin === originArg);
+    const rule = rules[0] || {};
+    return {
+      adaptiveDisabled: !!(
+        stored.adaptive_prefs &&
+        stored.adaptive_prefs.sites &&
+        stored.adaptive_prefs.sites[originArg] &&
+        stored.adaptive_prefs.sites[originArg].blockingDisabled
+      ),
+      breakageCount: rule.breakageCount || 0,
+      demotedUntilFuture: (rule.demotedUntil || 0) > Date.now(),
+      dynamicRules: await chrome.declarativeNetRequest.getDynamicRules(),
+      hasAdaptiveLog: !!(stored.adaptive_log && stored.adaptive_log[originArg]),
+      ruleCount: rules.length,
+      sessionRules: await chrome.declarativeNetRequest.getSessionRules(),
+      status: rule.status || "",
+    };
+  }, origin);
+
 test("popup keeps detailed controls folded by default", async ({ extension }) => {
   const popupPage = await extension.context.newPage();
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
@@ -1522,6 +1550,109 @@ test("adaptive future blocking disable is local-only and reflected in calibratio
     session: await chrome.declarativeNetRequest.getSessionRules(),
   }));
   expect(rules).toEqual({ dynamic: [], session: [] });
+});
+
+test("adaptive recovery attribution is local-only and demoted by site disable", async ({
+  extension,
+  server,
+}) => {
+  const now = Date.now();
+  await extension.serviceWorker.evaluate(
+    ({ now: seededAt, origin }) =>
+      chrome.storage.local.set({
+        adaptive_log: {
+          [origin]: {
+            categories: { "anti-bot": 3 },
+            endpoints: {
+              [`${origin}/collect/fingerprint/:token`]: 3,
+            },
+            lastUpdated: seededAt,
+            reasons: {
+              canvas: 1,
+              crypto: 1,
+              navigator: 1,
+              network: 3,
+            },
+            scoreMax: 9,
+            sources: { "runtime:settimeout": 1 },
+            total: 3,
+          },
+        },
+        adaptive_rules: {
+          rules: {
+            "session-collect": {
+              addedAt: seededAt,
+              category: "anti-bot",
+              endpoint: `${origin}/collect/fingerprint/*`,
+              lastTriggeredAt: seededAt,
+              origin,
+              reasons: ["canvas", "crypto", "navigator", "network"],
+              ruleId: 9100001,
+              ruleKind: "session",
+              score: 9,
+              source: "runtime:settimeout",
+              status: "active",
+            },
+          },
+          version: 1,
+        },
+      }),
+    { now, origin: server.origin }
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.evaluate(
+    (id) => fetch(`chrome-extension://${id}/manifest.json`).catch(() => {}),
+    PROBED_ID
+  );
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local.get({ probe_log: {} }).then(({ probe_log }) => !!probe_log[origin]),
+        server.origin
+      )
+    )
+    .toBe(true);
+  await page.bringToFront();
+  const tabId = await activeTabId(extension);
+  const popupPage = await openPopupForActiveTab(extension, tabId);
+  await openPopupAdvancedControls(popupPage);
+  await popupPage.getByText("Power diagnostics").click();
+  const powerDiagnostics = popupPage.locator("#power-diagnostics");
+  await expect(powerDiagnostics).toContainText("Adaptive recovery");
+  await expect(powerDiagnostics).toContainText("1 tracked adaptive rule");
+  await expect(powerDiagnostics).toContainText("/collect/fingerprint/*");
+  await expect(powerDiagnostics).toContainText("automatic reload/exit breakage detection");
+  await expect(powerDiagnostics).toContainText("Observe-only; no generic adaptive rules active");
+
+  await popupPage.locator("#adaptive-blocking-disabled").check();
+  await expect
+    .poll(() => adaptiveRecoveryStateFor(extension, server.origin))
+    .toMatchObject({
+      adaptiveDisabled: true,
+      breakageCount: 1,
+      demotedUntilFuture: true,
+      dynamicRules: [],
+      hasAdaptiveLog: true,
+      ruleCount: 1,
+      sessionRules: [],
+      status: "demoted",
+    });
+  await expect(powerDiagnostics).toContainText("tracked adaptive rules were demoted");
+  await expect(powerDiagnostics).toContainText("1 demoted");
+
+  await popupPage.locator("#clear-adaptive-site-data").click();
+  await expect
+    .poll(() => adaptiveRecoveryStateFor(extension, server.origin))
+    .toMatchObject({
+      adaptiveDisabled: true,
+      dynamicRules: [],
+      hasAdaptiveLog: false,
+      ruleCount: 0,
+      sessionRules: [],
+    });
 });
 
 test("Adaptive observe-only logging ignores canvas-heavy apps without corroborating signals", async ({

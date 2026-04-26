@@ -692,6 +692,50 @@ const buildAdaptiveCalibration = (calibration) => {
   return box;
 };
 
+const adaptiveRuleLabel = (rule) => {
+  if (!rule) return "tracked adaptive rule";
+  const id = rule.ruleId ? ` #${fmt(rule.ruleId)}` : "";
+  const kind = rule.ruleKind && rule.ruleKind !== "rule" ? `${rule.ruleKind} ` : "";
+  const score = typeof rule.score === "number" ? `, score ${fmt(rule.score)}` : "";
+  const breakage = rule.breakageCount
+    ? `, ${fmt(rule.breakageCount)} breakage mark${rule.breakageCount === 1 ? "" : "s"}`
+    : "";
+  return `${kind}rule${id}: ${rule.endpoint || "collector endpoint"} (${
+    rule.status || "candidate"
+  }${score}${breakage})`;
+};
+
+const buildAdaptiveRecovery = (recovery) => {
+  const box = document.createElement("div");
+  box.className = "reason-guide";
+  const title = document.createElement("div");
+  title.className = "drift-detail-title";
+  title.textContent = "Adaptive recovery";
+  box.appendChild(title);
+  const list = document.createElement("ul");
+  list.className = "drift-reasons";
+  const rules = Array.isArray(recovery && recovery.recentRules) ? recovery.recentRules : [];
+  const summary = document.createElement("li");
+  summary.textContent = rules.length
+    ? `${fmt(rules.length)} tracked adaptive rule${rules.length === 1 ? "" : "s"}; ${
+        recovery.demotedRuleCount ? `${fmt(recovery.demotedRuleCount)} demoted.` : "none demoted."
+      }`
+    : "No tracked adaptive rules for this origin.";
+  list.appendChild(summary);
+  if (recovery && recovery.likelyBreakageRule) {
+    const li = document.createElement("li");
+    li.textContent = `Likely recovery target: ${adaptiveRuleLabel(recovery.likelyBreakageRule)}.`;
+    list.appendChild(li);
+  }
+  for (const rule of rules.slice(0, 4)) {
+    const li = document.createElement("li");
+    li.textContent = adaptiveRuleLabel(rule);
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  return box;
+};
+
 const appendAdaptiveClearControl = (box, origin) => {
   if (!origin) return;
   const actions = document.createElement("div");
@@ -757,6 +801,7 @@ const buildAdaptiveDetail = (adaptive, origin) => {
   if (reasonGuide) box.appendChild(reasonGuide);
   box.appendChild(buildAdaptiveEndpointDiagnostics(adaptive.endpointDiagnostics));
   box.appendChild(buildAdaptiveCalibration(adaptive.calibration));
+  box.appendChild(buildAdaptiveRecovery(adaptive.recovery));
   appendAdaptiveClearControl(box, origin);
   return box;
 };
@@ -1149,6 +1194,7 @@ const originNamesForData = (data) =>
   new Set([
     ...Object.keys(data.origins || {}),
     ...Object.keys(data.adaptiveSignals || {}),
+    ...(data.adaptiveRules || []).map((rule) => rule.origin).filter(Boolean),
     ...Object.keys(data.adBehavior || {}),
     ...Object.keys(data.adPlaybooks || {}),
     ...Object.keys(data.diagnostics || {}),

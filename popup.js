@@ -305,6 +305,39 @@ const formatAdaptiveCalibration = (calibration) => {
   return pieces.join("; ");
 };
 
+const formatAdaptiveRule = (rule) => {
+  if (!rule) return "";
+  const label = rule.endpoint || "collector endpoint";
+  const id = rule.ruleId ? ` #${fmt(rule.ruleId)}` : "";
+  const kind = rule.ruleKind && rule.ruleKind !== "rule" ? `${rule.ruleKind} ` : "";
+  const score = typeof rule.score === "number" ? `, score ${fmt(rule.score)}` : "";
+  const breakage = rule.breakageCount
+    ? `, ${fmt(rule.breakageCount)} breakage mark${rule.breakageCount === 1 ? "" : "s"}`
+    : "";
+  return `${kind}rule${id}: ${label} (${rule.status || "candidate"}${score}${breakage})`;
+};
+
+const formatAdaptiveRecovery = (recovery) => {
+  if (!recovery) return "no adaptive recovery metadata";
+  const pieces = [];
+  if (recovery.recentRuleCount) {
+    pieces.push(
+      `${fmt(recovery.recentRuleCount)} tracked adaptive rule${
+        recovery.recentRuleCount === 1 ? "" : "s"
+      }`
+    );
+  } else {
+    pieces.push("no tracked adaptive rules");
+  }
+  if (recovery.demotedRuleCount) {
+    pieces.push(`${fmt(recovery.demotedRuleCount)} demoted`);
+  }
+  if (recovery.likelyBreakageRule) {
+    pieces.push(`likely recovery target ${formatAdaptiveRule(recovery.likelyBreakageRule)}`);
+  }
+  return pieces.join("; ");
+};
+
 const formatAdReasons = (reasons) => {
   if (!Array.isArray(reasons) || reasons.length === 0) return "none observed";
   return reasons
@@ -406,6 +439,7 @@ const addAdaptivePowerRows = (box, resp) => {
     "Adaptive calibration",
     formatAdaptiveCalibration(resp.adaptiveCalibration)
   );
+  addDiagnosticRow(box, "Adaptive recovery", formatAdaptiveRecovery(resp.adaptiveRecovery));
   addDiagnosticRow(box, "Adaptive blocking", "Observe-only; no generic adaptive rules active");
 };
 
