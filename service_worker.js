@@ -2593,6 +2593,62 @@ const handleClearAdPersistentNetwork = (msg, _sender, sendResponse) => {
   return true;
 };
 
+const diagnosticTotalsForEvents = (events) => {
+  const totals = {};
+  for (const event of events || []) {
+    const type = event && event.type ? event.type : "unknown";
+    totals[type] = (totals[type] || 0) + 1;
+  }
+  return totals;
+};
+
+const removeDiagnosticEventsForOriginType = (diagnosticLog, origin, type) => {
+  const entry = diagnosticLog[origin];
+  if (!(entry && Array.isArray(entry.events))) return 0;
+  const kept = entry.events.filter((event) => event && event.type !== type);
+  const removed = entry.events.length - kept.length;
+  if (removed <= 0) return 0;
+  if (kept.length === 0) {
+    delete diagnosticLog[origin];
+    return removed;
+  }
+  entry.events = kept;
+  entry.totals = diagnosticTotalsForEvents(kept);
+  entry.lastUpdated = Date.now();
+  diagnosticLog[origin] = entry;
+  return removed;
+};
+
+const clearAdaptiveDataForOrigin = async (origin) => {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return { cleared: false, origin: null, removedDiagnosticEvents: 0 };
+  const { adaptive_log = {}, diagnostic_log = {} } = await chrome.storage.local.get({
+    adaptive_log: {},
+    diagnostic_log: {},
+  });
+  const hadAdaptiveLog = !!adaptive_log[normalized];
+  delete adaptive_log[normalized];
+  const removedDiagnosticEvents = removeDiagnosticEventsForOriginType(
+    diagnostic_log,
+    normalized,
+    "adaptive"
+  );
+  await chrome.storage.local.set({ adaptive_log, diagnostic_log });
+  return {
+    cleared: hadAdaptiveLog || removedDiagnosticEvents > 0,
+    origin: normalized,
+    removedDiagnosticEvents,
+  };
+};
+
+const handleClearAdaptiveSiteData = (msg, _sender, sendResponse) => {
+  (async () => {
+    const result = await serialize(() => clearAdaptiveDataForOrigin(msg.origin));
+    sendResponse({ ok: !!(result && result.origin), ...result });
+  })();
+  return true;
+};
+
 const handleExportLog = (_msg, _sender, sendResponse) => {
   (async () => {
     const {
@@ -2672,6 +2728,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
 const messageHandlers = {
   static_ad_signal: handleAdSignal,
   static_adaptive_signal: handleAdaptiveSignal,
+  static_clear_adaptive_site_data: handleClearAdaptiveSiteData,
   static_clear_ad_persistent_network: handleClearAdPersistentNetwork,
   static_clear_ad_site_data: handleClearAdSiteData,
   static_clear_log: handleClearLog,

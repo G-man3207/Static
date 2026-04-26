@@ -816,6 +816,63 @@ const openPopupAdvancedControls = async (popupPage) => {
   await expect(popupPage.locator("#advanced-controls")).toHaveAttribute("open", "");
 };
 
+const activeTabId = (extension) =>
+  extension.serviceWorker.evaluate(() =>
+    chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => tab && tab.id)
+  );
+
+const openPopupForActiveTab = async (extension, tabId) => {
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  await popupPage.evaluate((activeTabIdArg) => {
+    return chrome.tabs.update(activeTabIdArg, { active: true });
+  }, tabId);
+  await popupPage.reload({ waitUntil: "load" });
+  return popupPage;
+};
+
+const hasAdaptiveLogFor = (extension, origin) =>
+  extension.serviceWorker.evaluate(async (originArg) => {
+    const { adaptive_log = {} } = await chrome.storage.local.get({ adaptive_log: {} });
+    return !!adaptive_log[originArg];
+  }, origin);
+
+const adaptiveDiagnosticEventCountFor = (extension, origin) =>
+  extension.serviceWorker.evaluate(async (originArg) => {
+    const { diagnostic_log = {} } = await chrome.storage.local.get({ diagnostic_log: {} });
+    const entry = diagnostic_log[originArg];
+    let count = 0;
+    for (const event of (entry && entry.events) || []) {
+      if (event && event.type === "adaptive") count++;
+    }
+    return count;
+  }, origin);
+
+const adaptiveClearStateFor = (extension, origin) =>
+  extension.serviceWorker.evaluate(async (originArg) => {
+    const stored = await chrome.storage.local.get([
+      "adaptive_log",
+      "diagnostic_log",
+      "diagnostics_mode",
+      "fingerprint_mode",
+      "noise_enabled",
+      "replay_mode",
+    ]);
+    const diagnosticEntry = stored.diagnostic_log && stored.diagnostic_log[originArg];
+    let adaptiveDiagnosticEvents = 0;
+    for (const event of (diagnosticEntry && diagnosticEntry.events) || []) {
+      if (event && event.type === "adaptive") adaptiveDiagnosticEvents++;
+    }
+    return {
+      adaptiveDiagnosticEvents,
+      diagnosticsMode: stored.diagnostics_mode,
+      fingerprintMode: stored.fingerprint_mode,
+      hasAdaptiveLog: !!(stored.adaptive_log && stored.adaptive_log[originArg]),
+      noiseEnabled: stored.noise_enabled,
+      replayMode: stored.replay_mode,
+    };
+  }, origin);
+
 test("popup keeps detailed controls folded by default", async ({ extension }) => {
   const popupPage = await extension.context.newPage();
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
@@ -1090,6 +1147,57 @@ test("Adaptive observe-only logging records multi-signal collectors without addi
   );
   expect(dynamicRules).toEqual([]);
   expect(sessionRules).toEqual([]);
+});
+
+test("popup clears current-site adaptive signals without changing modes or DNR rules", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({
+      diagnostics_mode: true,
+      fingerprint_mode: "mask",
+      noise_enabled: true,
+      replay_mode: "mask",
+    })
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-positive.html"));
+  await expect.poll(() => page.evaluate(() => window.__adaptiveDone === true)).toBe(true);
+  await expect.poll(() => hasAdaptiveLogFor(extension, server.origin)).toBe(true);
+  await expect
+    .poll(() => adaptiveDiagnosticEventCountFor(extension, server.origin))
+    .toBeGreaterThan(0);
+
+  await page.bringToFront();
+  const tabId = await activeTabId(extension);
+  const popupPage = await openPopupForActiveTab(extension, tabId);
+  await expect(popupPage.locator("#adaptive")).toContainText("Adaptive signals observed");
+
+  await openPopupAdvancedControls(popupPage);
+  await popupPage.getByText("Power diagnostics").click();
+  await expect(popupPage.locator("#power-diagnostics")).toContainText("Adaptive");
+  await popupPage.locator("#clear-adaptive-site-data").click();
+
+  await expect
+    .poll(() => adaptiveClearStateFor(extension, server.origin))
+    .toEqual({
+      adaptiveDiagnosticEvents: 0,
+      diagnosticsMode: true,
+      fingerprintMode: "mask",
+      hasAdaptiveLog: false,
+      noiseEnabled: true,
+      replayMode: "mask",
+    });
+
+  const rules = await extension.serviceWorker.evaluate(async () => ({
+    dynamic: await chrome.declarativeNetRequest.getDynamicRules(),
+    session: await chrome.declarativeNetRequest.getSessionRules(),
+  }));
+  expect(rules).toEqual({ dynamic: [], session: [] });
+  await expect(popupPage.locator("#adaptive")).toBeHidden();
+  await expect(popupPage.locator("#clear-adaptive-site-data")).toHaveCount(0);
 });
 
 test("Adaptive observe-only logging ignores canvas-heavy apps without corroborating signals", async ({

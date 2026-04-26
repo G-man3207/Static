@@ -360,6 +360,36 @@ const addAdaptivePowerRow = (box, resp) => {
   );
 };
 
+const renderAdaptiveControls = (container, resp) => {
+  const origin = resp && resp.origin;
+  if (!(origin && resp.adaptiveDetected)) return;
+  const controls = document.createElement("div");
+  controls.className = "diagnostic-controls";
+
+  const clear = document.createElement("button");
+  clear.className = "diagnostic-clear-btn";
+  clear.id = "clear-adaptive-site-data";
+  clear.type = "button";
+  clear.textContent = "Clear adaptive signals for this site";
+  controls.appendChild(clear);
+
+  clear.addEventListener("click", async () => {
+    clear.disabled = true;
+    try {
+      await chrome.runtime.sendMessage({
+        origin,
+        type: "static_clear_adaptive_site_data",
+      });
+      await refreshDetails();
+    } catch (e) {
+      console.error("[Static] clear adaptive site data failed", e);
+      clear.disabled = false;
+    }
+  });
+
+  container.appendChild(controls);
+};
+
 const addAdPowerRow = (box, resp) => {
   if (!(resp.ad && resp.ad.observed)) return;
   addDiagnosticRow(
@@ -390,6 +420,7 @@ const renderPowerDiagnostics = (resp) => {
   addNoiseDiagnosticRows(box, diagnostics);
   addProbePlaybookRows(box, playbook);
   addAdaptivePowerRow(box, resp);
+  renderAdaptiveControls(box, resp);
   addAdPowerRow(box, resp);
   if (resp.fingerprintMode && resp.fingerprintMode !== "off") {
     addDiagnosticRow(box, "Signal poison", resp.fingerprintMode);
