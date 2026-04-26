@@ -616,7 +616,31 @@ const buildAdaptiveReasonGuide = (reasons) => {
   return guide;
 };
 
-const buildAdaptiveDetail = (adaptive) => {
+const appendAdaptiveClearControl = (box, origin) => {
+  if (!origin) return;
+  const actions = document.createElement("div");
+  actions.className = "detail-actions";
+  const clear = document.createElement("button");
+  clear.className = "btn btn-danger";
+  clear.type = "button";
+  clear.textContent = "Clear adaptive signals for this origin";
+  clear.addEventListener("click", async () => {
+    clear.disabled = true;
+    try {
+      await chrome.runtime.sendMessage({
+        origin,
+        type: "static_clear_adaptive_site_data",
+      });
+      await reload();
+    } catch {
+      clear.disabled = false;
+    }
+  });
+  actions.appendChild(clear);
+  box.appendChild(actions);
+};
+
+const buildAdaptiveDetail = (adaptive, origin) => {
   if (!adaptive) return null;
   const box = document.createElement("div");
   box.className = "drift-detail";
@@ -655,6 +679,7 @@ const buildAdaptiveDetail = (adaptive) => {
   box.appendChild(list);
   const reasonGuide = buildAdaptiveReasonGuide(reasons);
   if (reasonGuide) box.appendChild(reasonGuide);
+  appendAdaptiveClearControl(box, origin);
   return box;
 };
 
@@ -933,7 +958,7 @@ const buildOriginDetail = ({ drift, entry, origin, rank, severity }) => {
   if (LOG_DIAGNOSTICS.buildNoiseReadinessDetail) {
     box.appendChild(LOG_DIAGNOSTICS.buildNoiseReadinessDetail(entry));
   }
-  const adaptive = buildAdaptiveDetail(entry.__adaptive);
+  const adaptive = buildAdaptiveDetail(entry.__adaptive, origin);
   if (adaptive) box.appendChild(adaptive);
   const ad = buildAdDetail({
     ad: entry.__ad,
