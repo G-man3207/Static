@@ -6,6 +6,11 @@ const vm = require("vm");
 const repoRoot = path.resolve(__dirname, "..");
 const readJson = (filePath) => JSON.parse(fs.readFileSync(path.join(repoRoot, filePath), "utf8"));
 const readText = (filePath) => fs.readFileSync(path.join(repoRoot, filePath), "utf8");
+const latestChangelogReleaseVersion = () => {
+  const match = readText("CHANGELOG.md").match(/^## \[(\d+\.\d+\.\d+)\]/m);
+  expect(match, "CHANGELOG.md should contain a released version heading").toBeTruthy();
+  return match[1];
+};
 const urlFiltersFor = (filePath) => {
   return readJson(filePath)
     .map((rule) => rule.condition && rule.condition.urlFilter)
@@ -223,6 +228,18 @@ test("manifest references existing files and keeps content-script worlds separat
   const manifest = readJson("manifest.json");
   expectManifestFilesToExist(manifest);
   expectContentScriptWorlds(manifest);
+});
+
+test("release metadata versions match the latest changelog release", () => {
+  const expectedVersion = latestChangelogReleaseVersion();
+  const manifest = readJson("manifest.json");
+  const packageJson = readJson("package.json");
+  const packageLock = readJson("package-lock.json");
+
+  expect(manifest.version).toBe(expectedVersion);
+  expect(packageJson.version).toBe(expectedVersion);
+  expect(packageLock.version).toBe(expectedVersion);
+  expect(packageLock.packages[""].version).toBe(expectedVersion);
 });
 
 test("extension pages reference existing local scripts", () => {
