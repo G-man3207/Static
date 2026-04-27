@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- MAIN-world fingerprint shims are safer kept contiguous */
+/* eslint-disable max-lines, max-statements -- MAIN-world fingerprint shims are safer kept contiguous */
 // Static - MAIN-world opt-in device and browser signal poisoning.
 (() => {
   const BRIDGE_EVENT = "__static_fingerprint_bridge_init__";
@@ -39,6 +39,7 @@
   const UNMASKED_RENDERER_WEBGL = 0x9246;
   const allowedModes = new Set(["off", MODE_MASK]);
   const uaDataProxies = new WeakMap();
+  const explicitTimeZoneDateTimeFormats = new WeakSet();
   const poisonedAudioBuffers = new WeakSet();
   const nativeDateGetTimezoneOffset = Date.prototype.getTimezoneOffset;
   let bridgePort = null;
@@ -78,6 +79,32 @@
       return origFnToString.call(fn);
     } catch {
       return `function ${fallbackName}() { [native code] }`;
+    }
+  };
+
+  const alignPrototypeConstructor = (wrapped, original) => {
+    try {
+      const proto = original && original.prototype;
+      if (!proto) return;
+      const desc = Object.getOwnPropertyDescriptor(proto, "constructor") || {
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      };
+      Object.defineProperty(proto, "constructor", {
+        ...desc,
+        value: wrapped,
+      });
+    } catch {}
+  };
+
+  const copyConstructorStatics = (wrapped, original) => {
+    for (const key of Reflect.ownKeys(original)) {
+      if (key === "length" || key === "name" || key === "prototype") continue;
+      try {
+        const desc = Object.getOwnPropertyDescriptor(original, key);
+        if (desc) Object.defineProperty(wrapped, key, desc);
+      } catch {}
     }
   };
 
@@ -426,6 +453,57 @@
     }
   };
 
+  const trackedDateTimeFormatArgs = (args, state) => {
+    const nextArgs = Array.from(args);
+    const options = nextArgs[1];
+    if (!options || (typeof options !== "object" && typeof options !== "function")) {
+      return nextArgs;
+    }
+    nextArgs[1] = new Proxy(options, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === "timeZone" && value != null) state.explicitTimeZone = true;
+        return value;
+      },
+    });
+    return nextArgs;
+  };
+
+  const rememberExplicitTimeZoneFormatter = (formatter, explicitTimeZone) => {
+    if (
+      explicitTimeZone &&
+      formatter &&
+      (typeof formatter === "object" || typeof formatter === "function")
+    ) {
+      explicitTimeZoneDateTimeFormats.add(formatter);
+    }
+    return formatter;
+  };
+
+  const patchDateTimeFormatConstructor = () => {
+    if (typeof Intl === "undefined" || typeof Intl.DateTimeFormat !== "function") return;
+    const OriginalDateTimeFormat = Intl.DateTimeFormat;
+    const desc = Object.getOwnPropertyDescriptor(Intl, "DateTimeFormat");
+    const wrappedDateTimeFormat = function DateTimeFormat() {
+      const state = { explicitTimeZone: false };
+      const args = trackedDateTimeFormatArgs(arguments, state);
+      const formatter = new.target
+        ? Reflect.construct(OriginalDateTimeFormat, args, new.target)
+        : OriginalDateTimeFormat.apply(this, args);
+      return rememberExplicitTimeZoneFormatter(formatter, state.explicitTimeZone);
+    };
+    wrappedDateTimeFormat.prototype = OriginalDateTimeFormat.prototype;
+    copyConstructorStatics(wrappedDateTimeFormat, OriginalDateTimeFormat);
+    alignPrototypeConstructor(wrappedDateTimeFormat, OriginalDateTimeFormat);
+    Object.defineProperty(Intl, "DateTimeFormat", {
+      ...(desc || { configurable: true, writable: true }),
+      value: stealth(wrappedDateTimeFormat, "DateTimeFormat", {
+        length: OriginalDateTimeFormat.length,
+        source: nativeSourceFor(OriginalDateTimeFormat, "DateTimeFormat"),
+      }),
+    });
+  };
+
   const patchTimezone = () => {
     const dateDesc = Object.getOwnPropertyDescriptor(Date.prototype, "getTimezoneOffset");
     const origOffset = dateDesc && dateDesc.value;
@@ -452,7 +530,7 @@
     const wrappedResolved = {
       resolvedOptions() {
         const options = origResolved.apply(this, arguments);
-        if (!isMasking()) return options;
+        if (!isMasking() || explicitTimeZoneDateTimeFormats.has(this)) return options;
         return { ...options, timeZone: persona().timeZone };
       },
     }.resolvedOptions;
@@ -737,6 +815,7 @@
     patchNavigatorGetters();
     patchScreenGetters();
     patchUserAgentData();
+    patchDateTimeFormatConstructor();
     patchTimezone();
     patchNetworkInformation();
     patchBattery();
