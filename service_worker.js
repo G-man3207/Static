@@ -688,7 +688,7 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
       noise_enabled: false,
       replay_mode: "off",
     });
-    const origin = originFromSender(sender);
+    const origin = rememberSenderOrigin(sender);
     const fingerprintMode = fingerprint_mode === "mask" ? "mask" : "off";
     const fingerprintPersona =
       fingerprintMode === "mask" ? await fingerprintPersonaFor(origin) : null;
@@ -811,6 +811,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
 const handleClearLog = (_msg, _sender, sendResponse) => {
   (async () => {
     cachedSecretPromise = null;
+    await broadcastConfigUpdate({ resetProbeState: true });
     await serialize(() =>
       chrome.storage.local.remove([
         "probe_log",

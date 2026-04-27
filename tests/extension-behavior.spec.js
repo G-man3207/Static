@@ -615,6 +615,73 @@ test("Noise mode decoys eligible fetch, XHR, and passive element probes", async 
   expect(decoys.resolvedImageSrc).toBe(probedUrl(PROBED_ID, "/icon.png"));
 });
 
+test("current-site diagnostics resolve after a quiet page config handshake", async ({
+  extension,
+  server,
+}) => {
+  const now = Date.now();
+  await extension.serviceWorker.evaluate(
+    ({ id, now, origin }) =>
+      chrome.storage.local.set({
+        noise_enabled: true,
+        probe_log: {
+          [origin]: {
+            idCounts: { [id]: 2 },
+            lastUpdated: now,
+            playbook: {
+              weeks: {
+                "2026-W15": {
+                  firstSeen: now - 1000,
+                  idCounts: { [id]: 2 },
+                  lastSeen: now,
+                  pathKindCounts: { manifest: 22 },
+                  total: 22,
+                  vectorCounts: { fetch: 22 },
+                },
+              },
+            },
+          },
+        },
+      }),
+    { id: PROBED_ID, now, origin: server.origin }
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.bringToFront();
+  const tabId = await extension.serviceWorker.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab && tab.id;
+  });
+  expect(typeof tabId).toBe("number");
+
+  const extensionPage = await extension.context.newPage();
+  await extensionPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+  await expect
+    .poll(() =>
+      extensionPage.evaluate(
+        (id) => chrome.runtime.sendMessage({ tabId: id, type: "static_get_details" }),
+        tabId
+      )
+    )
+    .toMatchObject({
+      noiseDiagnostics: {
+        armed: true,
+        eligibleKnown: 1,
+        selectedCount: 1,
+      },
+      origin: server.origin,
+      playbook: {
+        pathKinds: [["manifest", 22]],
+        total: 22,
+        vectors: [["fetch", 22]],
+      },
+      topIds: [],
+      total: 0,
+    });
+});
+
 test("Noise mode does not decoy IDs below the minimum observed count", async ({
   extension,
   server,
