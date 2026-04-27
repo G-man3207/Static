@@ -199,6 +199,14 @@ const expectMaskedFingerprint = (fingerprint) => {
   }
 };
 
+const collectExplicitIntlTimeZones = (page) =>
+  page.evaluate(() => ({
+    constructorUtc: new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).resolvedOptions()
+      .timeZone,
+    functionTokyo: Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo" }).resolvedOptions()
+      .timeZone,
+  }));
+
 const collectAudioFingerprint = (page) =>
   page.evaluate(async () => {
     if (typeof OfflineAudioContext === "undefined") return null;
@@ -244,6 +252,10 @@ test("Fingerprint masking returns a stable plausible per-origin device persona",
   const second = await collectFingerprint(page);
   expectMaskedFingerprint(first);
   expect(second).toEqual(first);
+  await expect(collectExplicitIntlTimeZones(page)).resolves.toEqual({
+    constructorUtc: "UTC",
+    functionTokyo: "Asia/Tokyo",
+  });
 });
 
 test("Fingerprint masking can be enabled live through the extension bridge", async ({
