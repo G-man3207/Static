@@ -33,6 +33,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Client Hints masking now handles invocation context correctly.
 - Popup help tooltips stay bounded and no longer expose native `title` tooltips.
 - Style text-node insertion and mutation probes now fail closed synchronously before extension URLs can be read back from `<style>` contents.
+- Clear log now resets pending page bridge batches before deleting storage, preventing queued Noise probes from recreating logs.
+- Popup diagnostics now resolve current-site probe history after quiet page loads that perform no new probes.
 
 ## [2.0.10] — 2026-04-24
 
