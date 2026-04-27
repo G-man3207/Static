@@ -28,6 +28,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Fixed
 
 - Device signal poisoning now preserves caller-requested `Intl.DateTimeFormat` time zones while still masking the default timezone.
+- Device signal poisoning now keeps masked User-Agent Client Hints method identities stable, closing a native-surface detection gap.
 - Replay poisoning now respects provider-documented replay-off init controls for Datadog manual replay starts and PostHog flags-disabled setups, so ordinary RUM/product analytics listeners are not masked as replay listeners before recording starts.
 - Fingerprint vendor blocking now covers Fingerprint's current `api.fpjs.io` API host family in addition to the existing CDN, TLS, npm-loader, and `api.fpjs.pro` hosts.
 - Client Hints masking now handles invocation context correctly.

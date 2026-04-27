@@ -38,6 +38,8 @@
   const UNMASKED_VENDOR_WEBGL = 0x9245;
   const UNMASKED_RENDERER_WEBGL = 0x9246;
   const allowedModes = new Set(["off", MODE_MASK]);
+  const uaDataMethodProxies = new WeakMap();
+  const uaDataNavigatorProxies = new WeakMap();
   const uaDataProxies = new WeakMap();
   const explicitTimeZoneDateTimeFormats = new WeakSet();
   const poisonedAudioBuffers = new WeakSet();
@@ -377,11 +379,24 @@
     });
   };
 
-  const maskedUaData = (target) => {
+  const maskedUaData = (target, owner) => {
     if (!target || typeof target !== "object") return target;
+    if (owner && (typeof owner === "object" || typeof owner === "function")) {
+      const ownerCached = uaDataNavigatorProxies.get(owner);
+      if (ownerCached) return ownerCached;
+    }
     const cached = uaDataProxies.get(target);
     if (cached) return cached;
     const nativeValue = (prop) => Reflect.get(target, prop, target);
+    const cachedMethod = (prop, build) => {
+      let methods = uaDataMethodProxies.get(target);
+      if (!methods) {
+        methods = {};
+        uaDataMethodProxies.set(target, methods);
+      }
+      methods[prop] ||= build();
+      return methods[prop];
+    };
     const proxy = new Proxy(target, {
       get(t, prop) {
         if (!isMasking()) return nativeValue(prop);
@@ -390,22 +405,28 @@
         if (prop === "platform") return persona().uaDataPlatform;
         if (prop === "toJSON") {
           const orig = nativeValue(prop);
-          return stealth(
-            function toJSON() {
-              return maskedUaDataJson(t);
-            },
-            "toJSON",
-            { length: 0, source: nativeSourceFor(orig, "toJSON") }
+          if (typeof orig !== "function") return orig;
+          return cachedMethod("toJSON", () =>
+            stealth(
+              function toJSON() {
+                return maskedUaDataJson(t);
+              },
+              "toJSON",
+              { length: 0, source: nativeSourceFor(orig, "toJSON") }
+            )
           );
         }
         if (prop === "getHighEntropyValues") {
           const orig = nativeValue(prop);
-          return stealth(
-            function getHighEntropyValues(hints) {
-              return maskedHighEntropyValues(t, hints);
-            },
-            "getHighEntropyValues",
-            { length: 1, source: nativeSourceFor(orig, "getHighEntropyValues") }
+          if (typeof orig !== "function") return orig;
+          return cachedMethod("getHighEntropyValues", () =>
+            stealth(
+              function getHighEntropyValues(hints) {
+                return maskedHighEntropyValues(t, hints);
+              },
+              "getHighEntropyValues",
+              { length: 1, source: nativeSourceFor(orig, "getHighEntropyValues") }
+            )
           );
         }
         const value = nativeValue(prop);
@@ -413,13 +434,16 @@
       },
     });
     uaDataProxies.set(target, proxy);
+    if (owner && (typeof owner === "object" || typeof owner === "function")) {
+      uaDataNavigatorProxies.set(owner, proxy);
+    }
     return proxy;
   };
 
   const patchUserAgentData = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    patchGetter(Navigator.prototype, "userAgentData", "get userAgentData", (original) =>
-      maskedUaData(original)
+    patchGetter(Navigator.prototype, "userAgentData", "get userAgentData", (original, owner) =>
+      maskedUaData(original, owner)
     );
   };
 
