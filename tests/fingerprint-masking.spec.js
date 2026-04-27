@@ -207,6 +207,44 @@ const collectExplicitIntlTimeZones = (page) =>
       .timeZone,
   }));
 
+const collectUaDataSurface = (page) =>
+  page.evaluate(() => {
+    if (!navigator.userAgentData) return null;
+    const firstUaData = navigator.userAgentData;
+    const secondUaData = navigator.userAgentData;
+    const highEntropyMethod = firstUaData.getHighEntropyValues;
+    const toJsonMethod = firstUaData.toJSON;
+    return {
+      highEntropySource:
+        typeof highEntropyMethod === "function"
+          ? Function.prototype.toString.call(highEntropyMethod)
+          : null,
+      highEntropyStable:
+        typeof highEntropyMethod === "function"
+          ? highEntropyMethod === firstUaData.getHighEntropyValues &&
+            highEntropyMethod === secondUaData.getHighEntropyValues
+          : null,
+      toJsonSource:
+        typeof toJsonMethod === "function" ? Function.prototype.toString.call(toJsonMethod) : null,
+      toJsonStable:
+        typeof toJsonMethod === "function"
+          ? toJsonMethod === firstUaData.toJSON && toJsonMethod === secondUaData.toJSON
+          : null,
+      userAgentDataStable: firstUaData === secondUaData,
+    };
+  });
+
+const expectMaskedUaDataSurface = (surface) => {
+  if (!surface) return;
+  expect(surface.userAgentDataStable).toBe(true);
+  expect(surface.highEntropyStable).toBe(true);
+  expect(surface.highEntropySource).toContain("[native code]");
+  if (surface.toJsonStable !== null) {
+    expect(surface.toJsonStable).toBe(true);
+    expect(surface.toJsonSource).toContain("[native code]");
+  }
+};
+
 const collectAudioFingerprint = (page) =>
   page.evaluate(async () => {
     if (typeof OfflineAudioContext === "undefined") return null;
@@ -251,6 +289,7 @@ test("Fingerprint masking returns a stable plausible per-origin device persona",
   const first = await collectFingerprint(page);
   const second = await collectFingerprint(page);
   expectMaskedFingerprint(first);
+  expectMaskedUaDataSurface(await collectUaDataSurface(page));
   expect(second).toEqual(first);
   await expect(collectExplicitIntlTimeZones(page)).resolves.toEqual({
     constructorUtc: "UTC",
