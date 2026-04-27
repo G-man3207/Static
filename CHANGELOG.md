@@ -37,6 +37,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Clear log now resets pending page bridge batches before deleting storage, preventing queued Noise probes from recreating logs.
 - Popup diagnostics now resolve current-site probe history after quiet page loads that perform no new probes.
 - Noise passive decoys now preserve native `Attr` node identity for `setAttributeNode` and `setAttributeNodeNS` probes while still hiding internal data-URL replacements.
+- Wrapped constructors now preserve native no-`new` `TypeError` behavior before inspecting extension URLs, closing a detection and false probe-log side effect in Worker, SharedWorker, Audio, EventSource, and MutationObserver shims.
 
 ## [2.0.10] — 2026-04-24
 
