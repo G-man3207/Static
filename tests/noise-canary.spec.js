@@ -578,6 +578,81 @@ test("style setProperty and cssText URL probes are fail-closed", async ({ extens
     });
 });
 
+test("style text-node URL probes are fail-closed synchronously", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const imageUrl = probedUrl(PROBED_ID, "/icon.png");
+  const result = await page.evaluate((styleUrl) => {
+    const importText = () => `@import url("${styleUrl}")`;
+    const appendToStyle = (write) => {
+      const style = document.createElement("style");
+      document.head.appendChild(style);
+      write(style);
+      return style.textContent;
+    };
+
+    const appendChildText = appendToStyle((style) => {
+      style.appendChild(document.createTextNode(importText()));
+    });
+    const insertBeforeText = appendToStyle((style) => {
+      style.insertBefore(document.createTextNode(importText()), null);
+    });
+    const replaceChildText = appendToStyle((style) => {
+      style.appendChild(document.createTextNode("body { color: rgb(1, 2, 3); }"));
+      style.replaceChild(document.createTextNode(importText()), style.firstChild);
+    });
+    const insertAdjacentText = appendToStyle((style) => {
+      style.insertAdjacentText("beforeend", importText());
+    });
+
+    const mutableStyle = document.createElement("style");
+    const mutableText = document.createTextNode("");
+    mutableStyle.appendChild(mutableText);
+    document.head.appendChild(mutableStyle);
+    mutableText.data = importText();
+    const mutableData = mutableText.data;
+    mutableText.nodeValue = importText();
+    const mutableNodeValue = mutableText.nodeValue;
+    mutableText.textContent = importText();
+    const mutableTextContent = mutableText.textContent;
+
+    return {
+      appendChildText,
+      hasStyleUrl: mutableStyle.textContent.includes(styleUrl),
+      insertAdjacentText,
+      insertBeforeText,
+      mutableData,
+      mutableNodeValue,
+      mutableTextContent,
+      replaceChildText,
+    };
+  }, imageUrl);
+
+  expect(result).toEqual({
+    appendChildText: "",
+    hasStyleUrl: false,
+    insertAdjacentText: "",
+    insertBeforeText: "",
+    mutableData: "",
+    mutableNodeValue: "",
+    mutableTextContent: "",
+    replaceChildText: "",
+  });
+
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      "style.data": 1,
+      "style.domInsertion": 3,
+      "style.insertAdjacentText": 1,
+      "style.nodeValue": 1,
+      "style.textContent": 1,
+    });
+});
+
 test("style attribute URL probes are scrubbed synchronously across HTML sinks", async ({
   extension,
   server,

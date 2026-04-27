@@ -31,6 +31,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Fingerprint vendor blocking now covers Fingerprint's current `api.fpjs.io` API host family in addition to the existing CDN, TLS, npm-loader, and `api.fpjs.pro` hosts.
 - Client Hints masking now handles invocation context correctly.
 - Popup help tooltips stay bounded and no longer expose native `title` tooltips.
+- Style text-node insertion and mutation probes now fail closed synchronously before extension URLs can be read back from `<style>` contents.
 
 ## [2.0.10] — 2026-04-24
 
