@@ -139,6 +139,10 @@
     );
   };
 
+  const isStyleTextNode = (node) => {
+    return node && node.nodeType === Node.TEXT_NODE && isStyleElement(node.parentNode);
+  };
+
   const clearStyleText = (style) => {
     while (style.firstChild) {
       try {
@@ -154,6 +158,28 @@
     if (!url) return false;
     bump(label, url);
     return true;
+  };
+
+  const scrubStyleTextPayload = (node, label) => {
+    if (!node || typeof node !== "object") return false;
+    let changed = false;
+    const visit = (current) => {
+      if (!current) return;
+      if (current.nodeType === Node.TEXT_NODE) {
+        if (blockStyleText(label, current.textContent || "")) {
+          try {
+            current.textContent = "";
+            changed = true;
+          } catch {}
+        }
+        return;
+      }
+      for (let child = current.firstChild; child; child = child.nextSibling) {
+        visit(child);
+      }
+    };
+    visit(node);
+    return changed;
   };
 
   const attrLocalName = (name) => {
@@ -331,6 +357,10 @@
           desc.set.call(this, "");
           return;
         }
+        if (isStyleTextNode(this) && blockStyleText("style.textContent", value)) {
+          desc.set.call(this, "");
+          return;
+        }
         desc.set.call(this, value);
       },
     };
@@ -341,6 +371,29 @@
       set: stealth(Object.getOwnPropertyDescriptor(wrapped, "textContent").set, "set textContent", {
         length: desc.set.length,
         source: nativeSourceFor(desc.set, "set textContent"),
+      }),
+    });
+  };
+
+  const patchStyleTextNodeSetter = (proto, prop, label) => {
+    const desc = Object.getOwnPropertyDescriptor(proto, prop);
+    if (!desc || !desc.set) return;
+    const wrapped = {
+      set [prop](value) {
+        if (isStyleTextNode(this) && blockStyleText(label, value)) {
+          desc.set.call(this, "");
+          return;
+        }
+        desc.set.call(this, value);
+      },
+    };
+    Object.defineProperty(proto, prop, {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get: desc.get,
+      set: stealth(Object.getOwnPropertyDescriptor(wrapped, prop).set, `set ${prop}`, {
+        length: desc.set.length,
+        source: nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -407,11 +460,34 @@
     });
   };
 
+  const patchInsertAdjacentText = (proto) => {
+    const desc = Object.getOwnPropertyDescriptor(proto, "insertAdjacentText");
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      insertAdjacentText(position, text) {
+        const nextText =
+          isStyleElement(this) && blockStyleText("style.insertAdjacentText", text) ? "" : text;
+        return orig.call(this, position, nextText);
+      },
+    }.insertAdjacentText;
+    Object.defineProperty(proto, "insertAdjacentText", {
+      ...desc,
+      value: stealth(wrapped, "insertAdjacentText", {
+        length: orig.length,
+        source: nativeSourceFor(orig, "insertAdjacentText"),
+      }),
+    });
+  };
+
   const scrubInsertionArgs = (target, args, label) => {
     const nextArgs = [];
     for (const arg of args) {
       if (isStyleElement(target) && typeof arg === "string" && blockStyleText(label, arg)) {
         continue;
+      }
+      if (isStyleElement(target) && arg && typeof arg === "object") {
+        scrubStyleTextPayload(arg, label);
       }
       if (arg && typeof arg === "object") {
         scrubTree(arg, label);
@@ -429,6 +505,7 @@
     const wrapped = {
       [name](node, ...rest) {
         if (node && typeof node === "object") {
+          if (isStyleElement(this)) scrubStyleTextPayload(node, label);
           scrubTree(node, label);
           scrubStyleTextTree(node, label);
         }
@@ -460,9 +537,14 @@
     const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
     const outerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, "outerHTML");
     patchTextContent(Node.prototype);
+    patchStyleTextNodeSetter(Node.prototype, "nodeValue", "style.nodeValue");
+    if (typeof CharacterData !== "undefined" && CharacterData.prototype) {
+      patchStyleTextNodeSetter(CharacterData.prototype, "data", "style.data");
+    }
     patchInnerHTML(Element.prototype, innerHTMLDesc);
     patchOuterHTML(Element.prototype, outerHTMLDesc, innerHTMLDesc);
     patchInsertAdjacentHTML(Element.prototype, innerHTMLDesc);
+    patchInsertAdjacentText(Element.prototype);
     for (const name of ["appendChild", "insertBefore", "replaceChild"]) {
       patchNodeInsertionMethod(Node.prototype, name, "style.domInsertion");
     }
