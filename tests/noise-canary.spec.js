@@ -129,7 +129,12 @@ test("Noise passive decoys preserve original URLs through attribute nodes and se
     const nodeImage = document.createElement("img");
     const nodeAttr = document.createAttribute("src");
     nodeAttr.value = srcUrl;
-    nodeImage.setAttributeNode(nodeAttr);
+    const oldNodeAttr = nodeImage.setAttributeNode(nodeAttr);
+
+    const nsNodeImage = document.createElement("img");
+    const nsNodeAttr = document.createAttributeNS(null, "src");
+    nsNodeAttr.value = srcUrl;
+    const oldNsNodeAttr = nsNodeImage.setAttributeNodeNS(nsNodeAttr);
 
     attr.value = srcUrl;
 
@@ -143,18 +148,34 @@ test("Noise passive decoys preserve original URLs through attribute nodes and se
       cloneGetAttribute: clone.getAttribute("src"),
       cloneOuterHTML: clone.outerHTML,
       getAttribute: image.getAttribute("src"),
+      nodeAttrAttached: nodeImage.getAttributeNode("src") === nodeAttr,
+      nodeAttrOwnerElement: nodeAttr.ownerElement === nodeImage,
       nodeImageAttrValue: nodeImage.getAttributeNode("src").value,
       nodeImageGetAttribute: nodeImage.getAttribute("src"),
       nodeImageOuterHTML: nodeImage.outerHTML,
+      nsNodeAttrAttached: nsNodeImage.getAttributeNode("src") === nsNodeAttr,
+      nsNodeAttrOwnerElement: nsNodeAttr.ownerElement === nsNodeImage,
+      nsNodeImageAttrValue: nsNodeImage.getAttributeNode("src").value,
+      nsNodeImageGetAttribute: nsNodeImage.getAttribute("src"),
+      oldNodeAttrIsNull: oldNodeAttr === null,
+      oldNsNodeAttrIsNull: oldNsNodeAttr === null,
       outerHTML: image.outerHTML,
       serialized: serializer.serializeToString(image),
     };
   }, imageUrl);
 
-  for (const value of Object.values(result)) {
+  for (const value of Object.values(result).filter((entry) => typeof entry === "string")) {
     expect(value).toContain(imageUrl);
     expect(value).not.toContain("data:image");
   }
+  expect(result).toMatchObject({
+    nodeAttrAttached: true,
+    nodeAttrOwnerElement: true,
+    nsNodeAttrAttached: true,
+    nsNodeAttrOwnerElement: true,
+    oldNodeAttrIsNull: true,
+    oldNsNodeAttrIsNull: true,
+  });
 
   await expect
     .poll(() => vectorCountsFor(extension, server.origin))
@@ -162,6 +183,7 @@ test("Noise passive decoys preserve original URLs through attribute nodes and se
       "attr.value-src": 1,
       "img.src": 1,
       "setAttributeNode-src": 1,
+      "setAttributeNodeNS-src": 1,
     });
 });
 

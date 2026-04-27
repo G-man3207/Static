@@ -35,6 +35,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Style text-node insertion and mutation probes now fail closed synchronously before extension URLs can be read back from `<style>` contents.
 - Clear log now resets pending page bridge batches before deleting storage, preventing queued Noise probes from recreating logs.
 - Popup diagnostics now resolve current-site probe history after quiet page loads that perform no new probes.
+- Noise passive decoys now preserve native `Attr` node identity for `setAttributeNode` and `setAttributeNodeNS` probes while still hiding internal data-URL replacements.
 
 ## [2.0.10] — 2026-04-24
 
