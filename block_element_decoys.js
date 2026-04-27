@@ -23,6 +23,7 @@
   ];
   const queuedProbeEvents = [];
   const animatedHrefProxies = new WeakMap();
+  const attrNodeOriginals = new WeakMap();
   const elementOriginals = new WeakMap();
   const MAX_QUEUED_PROBES = 1000;
   let bridgePort = null;
@@ -31,8 +32,6 @@
   let nativeAttrValueGetter = null;
   let nativeAttrValueSetter = null;
   let nativeGetAttribute = null;
-  let nativeSetAttributeForAttrNode = null;
-  let nativeSetAttributeNSForAttrNode = null;
   let trustedScriptUrlPolicy = undefined;
 
   const stealthFns = new WeakMap();
@@ -196,6 +195,14 @@
     return entry && entry[prop];
   };
 
+  const rememberAttrNodeOriginal = (attr, original) => {
+    if (isAttrNode(attr)) attrNodeOriginals.set(attr, String(original));
+  };
+
+  const forgetAttrNodeOriginal = (attr) => {
+    if (isAttrNode(attr)) attrNodeOriginals.delete(attr);
+  };
+
   const attrKeyFor = (name) => `attr:${String(name || "").toLowerCase()}`;
 
   const attrNsKeyFor = (ns, name) =>
@@ -216,6 +223,28 @@
     rememberOriginal(el, attrNsKeyFor(ns, name), url);
   };
 
+  const attrNodeFor = (el, name, ns = null) => {
+    try {
+      if (!el) return null;
+      if (ns) return el.getAttributeNodeNS(ns, attrLocalName(name));
+      return el.getAttributeNode(name);
+    } catch {
+      return null;
+    }
+  };
+
+  const rememberElementAttrNodeOriginal = (el, name, original, ns = null) => {
+    rememberAttrNodeOriginal(attrNodeFor(el, name, ns), original);
+  };
+
+  const rememberCurrentAttrNodeOriginal = (el, name, ns = null) => {
+    const original =
+      (ns && rememberedOriginal(el, attrNsKeyFor(ns, name))) ||
+      rememberedOriginal(el, attrKeyFor(name)) ||
+      rememberedOriginal(el, attrPropFor(name));
+    if (original) rememberElementAttrNodeOriginal(el, name, original, ns);
+  };
+
   const forgetAttributeOriginal = (el, name) => {
     forgetOriginal(el, attrKeyFor(name));
   };
@@ -223,6 +252,10 @@
   const forgetNamespacedAttributeOriginal = (el, ns, name) => {
     forgetAttributeOriginal(el, name);
     forgetOriginal(el, attrNsKeyFor(ns, name));
+  };
+
+  const forgetElementAttrNodeOriginal = (el, name, ns = null) => {
+    forgetAttrNodeOriginal(attrNodeFor(el, name, ns));
   };
 
   const pathFor = (url) => {
@@ -390,9 +423,13 @@
           if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
           postProbe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
           const replacement = replacementValueFor(this, prop, probe.mode, probe.kind);
-          if (replacement != null) desc.set.call(this, replacement);
+          if (replacement != null) {
+            desc.set.call(this, replacement);
+            rememberElementAttrNodeOriginal(this, prop, original);
+          }
           return;
         }
+        forgetElementAttrNodeOriginal(this, prop);
         forgetOriginal(this, prop);
         desc.set.call(this, value);
       },
@@ -453,7 +490,10 @@
   };
 
   const attrOriginalFor = (attr) => {
-    if (!isAttrNode(attr) || !attr.ownerElement) return "";
+    if (!isAttrNode(attr)) return "";
+    const attrNodeOriginal = attrNodeOriginals.get(attr);
+    if (attrNodeOriginal) return attrNodeOriginal;
+    if (!attr.ownerElement) return "";
     const name = attr.name || attr.localName;
     const ns = attr.namespaceURI;
     if (ns) {
@@ -486,6 +526,7 @@
         original
       );
     }
+    rememberAttrNodeOriginal(attr, original);
     if (prop === "srcset") rememberOriginal(el, "currentSrc", probe.url);
     postProbe(probe.url, probe.mode === "decoy" ? `${label}-${prop}-decoy` : label);
     if (writeAttr) setNativeAttrValue(attr, replacementUrlFor(probe.mode, probe.kind, prop));
@@ -496,6 +537,7 @@
     const prop = attrPropFor(attr.name || attr.localName);
     const probe = prop && elementProbe(attr.ownerElement, prop, value);
     if (!probe) {
+      forgetAttrNodeOriginal(attr);
       if (prop) {
         forgetOriginal(attr.ownerElement, prop);
         forgetAttributeOriginal(attr.ownerElement, attr.name || attr.localName);
@@ -533,6 +575,7 @@
     const setterHolder = {
       set [prop](value) {
         if (applyAttrValueProbe(this, value, `attr.${prop}`)) return;
+        forgetAttrNodeOriginal(this);
         desc.set.call(this, value);
       },
     };
@@ -735,8 +778,6 @@
     const origRemoveAttribute = Element.prototype.removeAttribute;
     const origRemoveAttributeNS = Element.prototype.removeAttributeNS;
     nativeGetAttribute = origGetAttribute;
-    nativeSetAttributeForAttrNode = origSetAttribute;
-    nativeSetAttributeNSForAttrNode = origSetAttributeNS;
     const wrapped = {
       setAttribute(name, value) {
         const prop = attrPropFor(name);
@@ -751,10 +792,15 @@
             probe.mode === "decoy" ? `setAttribute-${prop}-decoy` : "setAttribute"
           );
           const replacement = replacementValueFor(this, prop, probe.mode, probe.kind);
-          if (replacement != null) return origSetAttribute.call(this, name, replacement);
+          if (replacement != null) {
+            const result = origSetAttribute.call(this, name, replacement);
+            rememberElementAttrNodeOriginal(this, name, original);
+            return result;
+          }
           return;
         }
         if (prop) {
+          forgetElementAttrNodeOriginal(this, name);
           forgetOriginal(this, prop);
           forgetAttributeOriginal(this, name);
         }
@@ -773,10 +819,15 @@
             probe.mode === "decoy" ? `setAttributeNS-${prop}-decoy` : "setAttributeNS"
           );
           const replacement = replacementValueFor(this, prop, probe.mode, probe.kind);
-          if (replacement != null) return origSetAttributeNS.call(this, ns, name, replacement);
+          if (replacement != null) {
+            const result = origSetAttributeNS.call(this, ns, name, replacement);
+            rememberElementAttrNodeOriginal(this, name, original, ns);
+            return result;
+          }
           return;
         }
         if (prop) {
+          forgetElementAttrNodeOriginal(this, name, ns);
           forgetOriginal(this, prop);
           forgetNamespacedAttributeOriginal(this, ns, name);
         }
@@ -801,6 +852,7 @@
       removeAttribute(name) {
         const prop = attrPropFor(name);
         if (prop) {
+          rememberCurrentAttrNodeOriginal(this, name);
           forgetOriginal(this, prop);
           forgetAttributeOriginal(this, name);
         }
@@ -809,6 +861,7 @@
       removeAttributeNS(ns, name) {
         const prop = attrPropFor(name);
         if (prop) {
+          rememberCurrentAttrNodeOriginal(this, name, ns);
           forgetOriginal(this, prop);
           forgetNamespacedAttributeOriginal(this, ns, name);
         }
@@ -842,42 +895,54 @@
         return null;
       }
     };
-    const applyAttrNodeProbe = (el, attr, found, label) => {
+    const applyAttrNodeProbe = ({ el, attr, found, label, nativeSetter }) => {
+      const original = found.prop === "srcset" ? nativeAttrValueFor(attr) : found.probe.url;
+      const replacement = replacementValueFor(el, found.prop, found.probe.mode, found.probe.kind);
       const oldAttr = oldAttrFor(el, attr);
+      if (replacement == null) return oldAttr;
+      setNativeAttrValue(attr, replacement);
+      let result;
+      try {
+        result = nativeSetter.call(el, attr);
+      } catch (error) {
+        setNativeAttrValue(attr, original);
+        throw error;
+      }
       rememberAttrProbe({
         attr,
         el,
         label,
         probe: found.probe,
         prop: found.prop,
+        value: original,
         writeAttr: false,
       });
-      const replacement = replacementValueFor(el, found.prop, found.probe.mode, found.probe.kind);
-      if (replacement == null) return oldAttr;
-      if (attr.namespaceURI && nativeSetAttributeNSForAttrNode) {
-        nativeSetAttributeNSForAttrNode.call(el, attr.namespaceURI, attr.name, replacement);
-        return oldAttr;
-      }
-      if (nativeSetAttributeForAttrNode) {
-        nativeSetAttributeForAttrNode.call(el, attr.name, replacement);
-        return oldAttr;
-      }
-      return false;
+      return result;
     };
     const wrapped = {
       setAttributeNode(attr) {
         const found = attributeNodeProbe(this, attr);
         if (found) {
-          const result = applyAttrNodeProbe(this, attr, found, "setAttributeNode");
-          if (result !== false) return result;
+          return applyAttrNodeProbe({
+            attr,
+            el: this,
+            found,
+            label: "setAttributeNode",
+            nativeSetter: origSetAttributeNode,
+          });
         }
         return origSetAttributeNode.apply(this, arguments);
       },
       setAttributeNodeNS(attr) {
         const found = attributeNodeProbe(this, attr);
         if (found) {
-          const result = applyAttrNodeProbe(this, attr, found, "setAttributeNodeNS");
-          if (result !== false) return result;
+          return applyAttrNodeProbe({
+            attr,
+            el: this,
+            found,
+            label: "setAttributeNodeNS",
+            nativeSetter: origSetAttributeNodeNS,
+          });
         }
         return origSetAttributeNodeNS.apply(this, arguments);
       },
