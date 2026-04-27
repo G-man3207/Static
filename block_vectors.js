@@ -372,7 +372,8 @@
 
   const patchWorkerCtor = (Ctor, label) => {
     if (typeof Ctor !== "function") return Ctor;
-    const wrapped = function (url, opts) {
+    const wrapped = function (url) {
+      if (!new.target) return Reflect.apply(Ctor, this, arguments);
       if (isBad(url)) {
         bump(label, url);
         const origin = location && location.origin ? location.origin : "null";
@@ -383,7 +384,7 @@
           "SecurityError"
         );
       }
-      return new Ctor(url, opts);
+      return Reflect.construct(Ctor, arguments, new.target);
     };
     wrapped.prototype = Ctor.prototype;
     alignPrototypeConstructor(wrapped, Ctor);
@@ -403,11 +404,12 @@
     if (typeof window.Audio !== "function") return;
     const OrigAudio = window.Audio;
     const wrappedAudio = function Audio(src) {
+      if (!new.target) return Reflect.apply(OrigAudio, this, arguments);
       if (arguments.length > 0 && isBad(src)) {
         bump("Audio", src);
-        return new OrigAudio();
+        return Reflect.construct(OrigAudio, [], new.target);
       }
-      return new OrigAudio(...arguments);
+      return Reflect.construct(OrigAudio, arguments, new.target);
     };
     wrappedAudio.prototype = OrigAudio.prototype;
     alignPrototypeConstructor(wrappedAudio, OrigAudio);
@@ -513,7 +515,8 @@
     if (!window.EventSource) return;
     const origES = window.EventSource;
     const wrappedES = function EventSource(url, opts) {
-      if (!isBad(url)) return new origES(url, opts);
+      if (!new.target) return Reflect.apply(origES, this, arguments);
+      if (!isBad(url)) return Reflect.construct(origES, arguments, new.target);
       bump("EventSource", url);
       return makeBlockedEventSource(url, opts, origES);
     };

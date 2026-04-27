@@ -1196,6 +1196,7 @@
       return filtered || records;
     };
     const WrappedMutationObserver = function MutationObserver(callback) {
+      if (!new.target) return Reflect.apply(OrigMutationObserver, this, arguments);
       const callbackSource = currentAdaptiveSource();
       const callbackForPage =
         typeof callback === "function"
@@ -1205,8 +1206,10 @@
               return callback.call(this, filteredRecords, observerForCallback);
             }
           : callback;
-      const observer = new OrigMutationObserver(
-        wrapAsyncCallback(callbackForPage, callbackSource, "mutation-observer")
+      const observer = Reflect.construct(
+        OrigMutationObserver,
+        [wrapAsyncCallback(callbackForPage, callbackSource, "mutation-observer")],
+        new.target
       );
       const origObserve = observer.observe;
       observer.observe = stealth(

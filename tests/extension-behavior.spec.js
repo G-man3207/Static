@@ -41,6 +41,66 @@ test("keeps wrapped API surfaces close to native browser methods", async ({
   expectApiSurface(expect, await getApiSurface(page));
 });
 
+test("wrapped constructors throw before inspecting extension URLs when called without new", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(
+    ({ audioUrl, eventSourceUrl, workerUrl }) => {
+      const dispose = (value) => {
+        for (const method of ["terminate", "close", "disconnect"]) {
+          try {
+            value?.[method]?.();
+          } catch {}
+        }
+        try {
+          value?.port?.close?.();
+        } catch {}
+      };
+      const callWithoutNew = (Ctor, args) => {
+        if (typeof Ctor !== "function") return "unavailable";
+        try {
+          dispose(Ctor(...args));
+          return "returned";
+        } catch (error) {
+          return error.name;
+        }
+      };
+
+      return {
+        audio: callWithoutNew(Audio, [audioUrl]),
+        eventSource: callWithoutNew(EventSource, [eventSourceUrl]),
+        mutationObserver: callWithoutNew(MutationObserver, [() => {}]),
+        sharedWorker: callWithoutNew(globalThis.SharedWorker, [workerUrl]),
+        worker: callWithoutNew(Worker, [workerUrl]),
+      };
+    },
+    {
+      audioUrl: probedUrl(PROBED_ID, "/sound.mp3"),
+      eventSourceUrl: probedUrl(PROBED_ID, "/events"),
+      workerUrl: probedUrl(PROBED_ID, "/worker.js"),
+    }
+  );
+
+  expect(result).toMatchObject({
+    audio: "TypeError",
+    eventSource: "TypeError",
+    mutationObserver: "TypeError",
+    worker: "TypeError",
+  });
+  if (result.sharedWorker !== "unavailable") expect(result.sharedWorker).toBe("TypeError");
+
+  await page.waitForTimeout(300);
+  const storage = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get(["cumulative", "probe_log"])
+  );
+  expect(storage.cumulative).toBeUndefined();
+  expect(storage.probe_log).toBeUndefined();
+});
+
 test("does not expose the private bridge handshake to page listeners", async ({
   extension,
   server,
