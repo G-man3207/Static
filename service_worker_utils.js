@@ -8,6 +8,22 @@ globalThis.__static_sw_utils__ = (() => {
     return total;
   };
 
+  const countValue = (count) => (typeof count === "number" && count > 0 ? count : 0);
+
+  const knownPersonaIdsForCaps = () => {
+    const ids = new Set();
+    const config = globalThis.__static_config__ || {};
+    for (const slotIds of Object.values(config.conflictSlots || {})) {
+      for (const id of slotIds || []) {
+        if (typeof id === "string") ids.add(id.toLowerCase());
+      }
+    }
+    return ids;
+  };
+
+  const countPriorityFor = ([key, count], priorityIds) =>
+    (priorityIds && priorityIds.has(String(key).toLowerCase()) ? 1000000 : 0) + countValue(count);
+
   const mergeCounts = (target, source) => {
     let changed = false;
     for (const [key, value] of Object.entries(source || {})) {
@@ -19,10 +35,14 @@ globalThis.__static_sw_utils__ = (() => {
     return changed;
   };
 
-  const trimCountMap = (counts, maxEntries) => {
+  const trimCountMap = (counts, maxEntries, priorityIds = null) => {
     const entries = Object.entries(counts || {});
     if (entries.length <= maxEntries) return counts || {};
-    entries.sort((a, b) => b[1] - a[1]);
+    entries.sort(
+      (a, b) =>
+        countPriorityFor(b, priorityIds) - countPriorityFor(a, priorityIds) ||
+        a[0].localeCompare(b[0])
+    );
     return Object.fromEntries(entries.slice(0, maxEntries));
   };
 
@@ -74,12 +94,12 @@ globalThis.__static_sw_utils__ = (() => {
     return week;
   };
 
-  const enforcePlaybookCaps = (entry) => {
+  const enforcePlaybookCaps = (entry, priorityIds = knownPersonaIdsForCaps()) => {
     if (!entry.playbook || !entry.playbook.weeks) return;
     for (const week of Object.values(entry.playbook.weeks)) {
       week.vectorCounts = trimCountMap(week.vectorCounts, 50);
       week.pathKindCounts = trimCountMap(week.pathKindCounts, 50);
-      week.idCounts = trimCountMap(week.idCounts, 1000);
+      week.idCounts = trimCountMap(week.idCounts, 1000, priorityIds);
     }
     const weekKeys = Object.keys(entry.playbook.weeks).sort();
     if (weekKeys.length <= 10) return;
@@ -89,11 +109,12 @@ globalThis.__static_sw_utils__ = (() => {
   };
 
   const enforceCaps = (probeLog) => {
+    const priorityIds = knownPersonaIdsForCaps();
     for (const origin of Object.keys(probeLog)) {
       const entry = probeLog[origin];
       entry.idCounts ||= {};
-      entry.idCounts = trimCountMap(entry.idCounts, 2000);
-      enforcePlaybookCaps(entry);
+      entry.idCounts = trimCountMap(entry.idCounts, 2000, priorityIds);
+      enforcePlaybookCaps(entry, priorityIds);
     }
     const origins = Object.keys(probeLog);
     if (origins.length <= 100) return;

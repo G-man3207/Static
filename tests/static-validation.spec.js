@@ -19,6 +19,7 @@ const urlFiltersFor = (filePath) => {
 
 const loadServiceWorkerUtils = () => {
   const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
   vm.runInContext(readText("service_worker_utils.js"), context);
   return context.__static_sw_utils__;
 };
@@ -331,6 +332,56 @@ test("service worker probe-log caps enforce local privacy bounds", () => {
   expect(Object.keys(latestWeek.vectorCounts)).toHaveLength(50);
   expect(Object.keys(latestWeek.pathKindCounts)).toHaveLength(50);
   expect(Object.keys(latestWeek.idCounts)).toHaveLength(1000);
+});
+
+test("service worker ID caps preserve known persona IDs under canary pressure", () => {
+  const { enforceCaps } = loadServiceWorkerUtils();
+  const knownId = "nngceckbapebfimnlniiiahkandclblb";
+  const highCardinalityIds = {};
+  const highCardinalityWeekIds = {};
+
+  for (let index = 0; Object.keys(highCardinalityIds).length < 2000; index++) {
+    const id = extensionIdFor(index);
+    if (id !== knownId) highCardinalityIds[id] = 1000 + index;
+  }
+  for (let index = 3000; Object.keys(highCardinalityWeekIds).length < 1000; index++) {
+    const id = extensionIdFor(index);
+    if (id !== knownId) highCardinalityWeekIds[id] = 1000 + index;
+  }
+
+  const probeLog = {
+    "https://canary-pressure.test": {
+      idCounts: {
+        ...highCardinalityIds,
+        [knownId]: 2,
+      },
+      lastUpdated: Date.now(),
+      playbook: {
+        weeks: {
+          "2026-W15": {
+            total: 100,
+            vectorCounts: { fetch: 100 },
+            pathKindCounts: { manifest: 100 },
+            idCounts: {
+              ...highCardinalityWeekIds,
+              [knownId]: 2,
+            },
+            firstSeen: 1,
+            lastSeen: 2,
+          },
+        },
+      },
+    },
+  };
+
+  enforceCaps(probeLog);
+
+  const retained = probeLog["https://canary-pressure.test"];
+  const retainedWeek = retained.playbook.weeks["2026-W15"];
+  expect(Object.keys(retained.idCounts)).toHaveLength(2000);
+  expect(retained.idCounts[knownId]).toBe(2);
+  expect(Object.keys(retainedWeek.idCounts)).toHaveLength(1000);
+  expect(retainedWeek.idCounts[knownId]).toBe(2);
 });
 
 test("bridge caps high-cardinality probe ID maps before service-worker flush", () => {

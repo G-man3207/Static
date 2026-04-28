@@ -108,7 +108,7 @@ const sanitizeExtensionIdCounts = (counts) => {
       sanitized[safeId] = (sanitized[safeId] || 0) + count;
     }
   }
-  return trimCountMap(sanitized, MAX_CAPTURED_IDS);
+  return trimCountMap(sanitized, MAX_CAPTURED_IDS, knownPersonaIds());
 };
 
 const normalizedProbeBatch = (batch) => {

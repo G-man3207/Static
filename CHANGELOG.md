@@ -39,6 +39,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Noise passive decoys now preserve native `Attr` node identity for `setAttributeNode` and `setAttributeNodeNS` probes while still hiding internal data-URL replacements.
 - Wrapped constructors now preserve native no-`new` `TypeError` behavior before inspecting extension URLs, closing a detection and false probe-log side effect in Worker, SharedWorker, Audio, EventSource, and MutationObserver shims.
 - DOM marker scrubbing now catches open shadow roots attached shortly after their host element is inserted.
+- Probe-log caps now preserve known plausible extension IDs under high-cardinality unknown-ID pressure, so canary floods cannot evict Noise persona candidates from persistent logs or playbook summaries.
 
 ## [2.0.10] — 2026-04-24
 
