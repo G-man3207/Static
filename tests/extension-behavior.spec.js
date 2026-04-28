@@ -2243,6 +2243,47 @@ test("scrubs extension DOM markers on initial parse and later mutations", async 
   expect(later.classes).toEqual(["keep"]);
 });
 
+test("scrubs extension DOM markers from open shadow roots attached after host insertion", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(async () => {
+    const host = document.createElement("div");
+    host.id = "late-shadow-host";
+    document.body.appendChild(host);
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 25);
+    });
+
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `
+      <div id="shadow-marker" data-grammarly-extension="1" class="keep grammarly-card"></div>
+      <grammarly-card id="shadow-card"></grammarly-card>
+    `;
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 350);
+    });
+
+    const marker = root.getElementById("shadow-marker");
+    return {
+      cardCount: root.querySelectorAll("grammarly-card").length,
+      markerClasses: marker ? [...marker.classList] : [],
+      markerHasData: marker ? marker.hasAttribute("data-grammarly-extension") : null,
+    };
+  });
+
+  expect(result).toEqual({
+    cardCount: 0,
+    markerClasses: ["keep"],
+    markerHasData: false,
+  });
+});
+
 test("DOM marker scrubber hides transient markers from page MutationObservers", async ({
   extension,
   server,
