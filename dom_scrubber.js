@@ -18,7 +18,9 @@
     childList: true,
     subtree: true,
   };
+  const SHADOW_RESCAN_DELAYS_MS = [0, 50, 250, 1000];
   const observedRoots = new WeakSet();
+  const scheduledShadowScans = new WeakSet();
   let obs = null;
 
   const matchesAny = (patterns, value) => patterns.some((pattern) => pattern.test(value));
@@ -86,20 +88,50 @@
     }
   };
 
+  const scheduleShadowScan = (root) => {
+    if (!root || scheduledShadowScans.has(root)) return;
+    scheduledShadowScans.add(root);
+    let pending = SHADOW_RESCAN_DELAYS_MS.length;
+    for (const delay of SHADOW_RESCAN_DELAYS_MS) {
+      setTimeout(() => {
+        try {
+          scrubTree(root);
+        } finally {
+          pending--;
+          if (pending === 0) scheduledShadowScans.delete(root);
+        }
+      }, delay);
+    }
+  };
+
+  const scheduleDocumentShadowScan = () => {
+    scheduleShadowScan(document.documentElement || document);
+  };
+
   obs = new MutationObserver((muts) => {
     for (const m of muts) {
       if (m.addedNodes) {
         for (const node of m.addedNodes) {
-          if (node.nodeType === 1) scrubTree(node);
+          if (node.nodeType === 1) {
+            scrubTree(node);
+            scheduleShadowScan(node);
+          }
         }
       }
-      if (m.type === "attributes") scrubEl(m.target);
+      if (m.type === "attributes") {
+        scrubEl(m.target);
+        scheduleShadowScan(m.target);
+      }
     }
   });
 
   if (document.documentElement) scrubTree(document.documentElement);
+  scheduleDocumentShadowScan();
 
   try {
     obs.observe(document.documentElement || document, OBSERVE_OPTIONS);
   } catch {}
+
+  addEventListener("DOMContentLoaded", scheduleDocumentShadowScan, { once: true });
+  addEventListener("load", scheduleDocumentShadowScan, { once: true });
 })();
