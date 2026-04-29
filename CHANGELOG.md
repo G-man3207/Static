@@ -40,6 +40,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Wrapped constructors now preserve native no-`new` `TypeError` behavior before inspecting extension URLs, closing a detection and false probe-log side effect in Worker, SharedWorker, Audio, EventSource, and MutationObserver shims.
 - DOM marker scrubbing now catches open shadow roots attached shortly after their host element is inserted.
 - Probe-log caps now preserve known plausible extension IDs under high-cardinality unknown-ID pressure, so canary floods cannot evict Noise persona candidates from persistent logs or playbook summaries.
+- Noise passive decoys now keep `MutationObserver` old-value records and `takeRecords()` from exposing internal data-URL replacements.
 
 ## [2.0.10] — 2026-04-24
 

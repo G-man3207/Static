@@ -7,6 +7,7 @@
   const BRIDGE_EVENT = "__static_element_decoy_bridge_init__";
   const PNG_1X1_B64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const PNG_1X1_BINARY = atob(PNG_1X1_B64);
   const IMAGE_DECOY_PATHS = [
     /(?:^|\/)(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
     /(?:^|\/)(?:icons?|images?|img)\/(?:[^/]+\/)*(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
@@ -25,6 +26,7 @@
   const animatedHrefProxies = new WeakMap();
   const attrNodeOriginals = new WeakMap();
   const elementOriginals = new WeakMap();
+  const mutationOldValueOriginals = new WeakMap();
   const MAX_QUEUED_PROBES = 1000;
   let bridgePort = null;
   let noiseEnabled = false;
@@ -32,6 +34,7 @@
   let nativeAttrValueGetter = null;
   let nativeAttrValueSetter = null;
   let nativeGetAttribute = null;
+  let nativeGetAttributeNS = null;
   let trustedScriptUrlPolicy = undefined;
 
   const stealthFns = new WeakMap();
@@ -78,6 +81,22 @@
       cursor = Object.getPrototypeOf(cursor);
     }
     return null;
+  };
+
+  const alignPrototypeConstructor = (wrapped, original) => {
+    try {
+      const proto = original && original.prototype;
+      if (!proto) return;
+      const desc = Object.getOwnPropertyDescriptor(proto, "constructor") || {
+        configurable: true,
+        enumerable: false,
+        writable: true,
+      };
+      Object.defineProperty(proto, "constructor", {
+        ...desc,
+        value: wrapped,
+      });
+    } catch {}
   };
 
   const applyConfigUpdate = (data) => {
@@ -258,6 +277,73 @@
     forgetAttrNodeOriginal(attrNodeFor(el, name, ns));
   };
 
+  const mutationAttrKeyFor = (ns, name) =>
+    `${String(ns || "").toLowerCase()}:${attrLocalName(name)}`;
+
+  const nativeElementAttrValueFor = (el, name, ns = null) => {
+    try {
+      if (ns && nativeGetAttributeNS) return nativeGetAttributeNS.call(el, ns, attrLocalName(name));
+      if (nativeGetAttribute) return nativeGetAttribute.call(el, name);
+      return el && typeof el.getAttribute === "function" ? el.getAttribute(name) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const rememberMutationOldValueOriginal = ({ el, name, nativeValue, ns, original }) => {
+    if (!el || nativeValue == null) return;
+    const key = mutationAttrKeyFor(ns, name);
+    let originals = mutationOldValueOriginals.get(el);
+    if (!originals) {
+      originals = new Map();
+      mutationOldValueOriginals.set(el, originals);
+    }
+    originals.set(`${key}\n${String(nativeValue)}`, String(original));
+  };
+
+  const rememberNativeMutationValue = (el, name, ns, original) => {
+    rememberMutationOldValueOriginal({
+      el,
+      name,
+      nativeValue: nativeElementAttrValueFor(el, name, ns),
+      ns,
+      original,
+    });
+  };
+
+  const originalMutationOldValueFor = (record) => {
+    if (!record || record.type !== "attributes" || record.oldValue == null) return null;
+    const originals = mutationOldValueOriginals.get(record.target);
+    if (!originals) return null;
+    const key = mutationAttrKeyFor(record.attributeNamespace, record.attributeName);
+    return originals.get(`${key}\n${String(record.oldValue)}`) || null;
+  };
+
+  const mutationRecordForPage = (record) => {
+    const originalOldValue = originalMutationOldValueFor(record);
+    if (!originalOldValue) return record;
+    return new Proxy(record, {
+      get(target, prop) {
+        if (prop === "oldValue") return originalOldValue;
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+
+  const mutationRecordsForPage = (records) => {
+    let filtered = null;
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index];
+      const nextRecord = mutationRecordForPage(record);
+      if (nextRecord !== record && !filtered) {
+        filtered = Array.prototype.slice.call(records, 0, index);
+      }
+      if (filtered) filtered.push(nextRecord);
+    }
+    return filtered || records;
+  };
+
   const pathFor = (url) => {
     try {
       return new URL(url).pathname.toLowerCase();
@@ -310,17 +396,54 @@
     return null;
   };
 
-  const decoyUrlFor = (kind, prop) => {
-    if (kind === "image" && prop === "srcset") return `data:image/png;base64,${PNG_1X1_B64} 1x`;
-    if (kind === "image") return `data:image/png;base64,${PNG_1X1_B64}`;
-    if (kind === "script") return "data:application/javascript;charset=utf-8,";
-    if (kind === "style") return "data:text/css,";
-    if (kind === "html") return "data:text/html;charset=utf-8,<!doctype%20html>";
-    return "data:text/plain,";
+  const replacementTokenFor = (value) => {
+    let hash = 0x811c9dc5;
+    const text = String(value || "");
+    for (let index = 0; index < text.length; index++) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(36);
   };
 
-  const blockedUrlFor = (prop) =>
-    prop === "srcset" ? "data:image/png;base64,not-valid 1x" : "data:image/png;base64,not-valid";
+  const pngDataUrlFor = (original) => {
+    const token = `static:${replacementTokenFor(original)}`;
+    let binary = PNG_1X1_BINARY;
+    for (let index = 0; index < token.length; index++) {
+      binary += String.fromCharCode(token.charCodeAt(index) & 0xff);
+    }
+    return `data:image/png;base64,${btoa(binary)}`;
+  };
+
+  const textDataUrlFor = (mime, body) => `data:${mime},${encodeURIComponent(body)}`;
+
+  const decoyUrlFor = (kind, prop, original) => {
+    if (kind === "image" && prop === "srcset") {
+      return `${pngDataUrlFor(original)} 1x`;
+    }
+    if (kind === "image") return pngDataUrlFor(original);
+    if (kind === "script") {
+      return textDataUrlFor(
+        "application/javascript;charset=utf-8",
+        `/* static:${replacementTokenFor(original)} */`
+      );
+    }
+    if (kind === "style") {
+      return textDataUrlFor("text/css", `/* static:${replacementTokenFor(original)} */`);
+    }
+    if (kind === "html") {
+      return textDataUrlFor(
+        "text/html;charset=utf-8",
+        `<!doctype html><!-- static:${replacementTokenFor(original)} -->`
+      );
+    }
+    return textDataUrlFor("text/plain", `static:${replacementTokenFor(original)}`);
+  };
+
+  const blockedUrlFor = (prop, original) => {
+    const url = `data:image/png;base64,not-valid-${replacementTokenFor(original)}`;
+    return prop === "srcset" ? `${url} 1x` : url;
+  };
 
   const canHandlePassiveElement = (el, prop) => {
     const tag = String((el && el.tagName) || "").toLowerCase();
@@ -353,9 +476,9 @@
     return { kind, mode: shouldDecoy(url) && kind ? "decoy" : "block", url };
   };
 
-  const replacementUrlFor = (mode, kind, prop) => {
-    if (mode === "decoy") return decoyUrlFor(kind, prop);
-    return blockedUrlFor(prop);
+  const replacementUrlFor = (mode, kind, prop, original) => {
+    if (mode === "decoy") return decoyUrlFor(kind, prop, original);
+    return blockedUrlFor(prop, original);
   };
 
   const isScriptSrcSink = (el, prop) =>
@@ -397,8 +520,8 @@
     return trustedScriptUrlPolicy;
   };
 
-  const replacementValueFor = (el, prop, mode, kind) => {
-    const url = replacementUrlFor(mode, kind, prop);
+  const replacementValueFor = ({ el, kind, mode, original, prop }) => {
+    const url = replacementUrlFor(mode, kind, prop, original);
     if (!isScriptSrcSink(el, prop)) return url;
     if (!globalThis.trustedTypes) return url;
     const policy = trustedPolicyForScriptUrls();
@@ -422,9 +545,16 @@
           rememberOriginal(this, prop, original);
           if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
           postProbe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
-          const replacement = replacementValueFor(this, prop, probe.mode, probe.kind);
+          const replacement = replacementValueFor({
+            el: this,
+            kind: probe.kind,
+            mode: probe.mode,
+            original,
+            prop,
+          });
           if (replacement != null) {
             desc.set.call(this, replacement);
+            rememberNativeMutationValue(this, prop, null, original);
             rememberElementAttrNodeOriginal(this, prop, original);
           }
           return;
@@ -529,7 +659,16 @@
     rememberAttrNodeOriginal(attr, original);
     if (prop === "srcset") rememberOriginal(el, "currentSrc", probe.url);
     postProbe(probe.url, probe.mode === "decoy" ? `${label}-${prop}-decoy` : label);
-    if (writeAttr) setNativeAttrValue(attr, replacementUrlFor(probe.mode, probe.kind, prop));
+    if (writeAttr) {
+      setNativeAttrValue(attr, replacementUrlFor(probe.mode, probe.kind, prop, original));
+      rememberMutationOldValueOriginal({
+        el,
+        name: attr.name || attr.localName,
+        nativeValue: nativeAttrValueFor(attr),
+        ns: attr.namespaceURI,
+        original,
+      });
+    }
   };
 
   const applyAttrValueProbe = (attr, value, label) => {
@@ -770,6 +909,36 @@
     });
   };
 
+  const applyElementAttributeProbe = ({
+    baseLabel,
+    el,
+    name,
+    ns = null,
+    probe,
+    prop,
+    setReplacement,
+    value,
+  }) => {
+    const original = prop === "srcset" ? String(value) : probe.url;
+    rememberOriginal(el, prop, original);
+    if (ns) rememberNamespacedAttributeOriginal(el, ns, name, original);
+    else rememberAttributeOriginal(el, name, original);
+    if (prop === "srcset") rememberOriginal(el, "currentSrc", probe.url);
+    postProbe(probe.url, probe.mode === "decoy" ? `${baseLabel}-${prop}-decoy` : baseLabel);
+    const replacement = replacementValueFor({
+      el,
+      kind: probe.kind,
+      mode: probe.mode,
+      original,
+      prop,
+    });
+    if (replacement == null) return undefined;
+    const result = setReplacement(replacement);
+    rememberNativeMutationValue(el, name, ns, original);
+    rememberElementAttrNodeOriginal(el, name, original, ns);
+    return result;
+  };
+
   const patchAttributes = () => {
     const origSetAttribute = Element.prototype.setAttribute;
     const origSetAttributeNS = Element.prototype.setAttributeNS;
@@ -778,26 +947,21 @@
     const origRemoveAttribute = Element.prototype.removeAttribute;
     const origRemoveAttributeNS = Element.prototype.removeAttributeNS;
     nativeGetAttribute = origGetAttribute;
+    nativeGetAttributeNS = origGetAttributeNS;
     const wrapped = {
       setAttribute(name, value) {
         const prop = attrPropFor(name);
         const probe = prop && elementProbe(this, prop, value);
         if (probe) {
-          const original = prop === "srcset" ? String(value) : probe.url;
-          rememberOriginal(this, prop, original);
-          rememberAttributeOriginal(this, name, original);
-          if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
-          postProbe(
-            probe.url,
-            probe.mode === "decoy" ? `setAttribute-${prop}-decoy` : "setAttribute"
-          );
-          const replacement = replacementValueFor(this, prop, probe.mode, probe.kind);
-          if (replacement != null) {
-            const result = origSetAttribute.call(this, name, replacement);
-            rememberElementAttrNodeOriginal(this, name, original);
-            return result;
-          }
-          return;
+          return applyElementAttributeProbe({
+            baseLabel: "setAttribute",
+            el: this,
+            name,
+            probe,
+            prop,
+            setReplacement: (replacement) => origSetAttribute.call(this, name, replacement),
+            value,
+          });
         }
         if (prop) {
           forgetElementAttrNodeOriginal(this, name);
@@ -810,21 +974,16 @@
         const prop = attrPropFor(name);
         const probe = prop && elementProbe(this, prop, value);
         if (probe) {
-          const original = prop === "srcset" ? String(value) : probe.url;
-          rememberOriginal(this, prop, original);
-          rememberNamespacedAttributeOriginal(this, ns, name, original);
-          if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
-          postProbe(
-            probe.url,
-            probe.mode === "decoy" ? `setAttributeNS-${prop}-decoy` : "setAttributeNS"
-          );
-          const replacement = replacementValueFor(this, prop, probe.mode, probe.kind);
-          if (replacement != null) {
-            const result = origSetAttributeNS.call(this, ns, name, replacement);
-            rememberElementAttrNodeOriginal(this, name, original, ns);
-            return result;
-          }
-          return;
+          return applyElementAttributeProbe({
+            baseLabel: "setAttributeNS",
+            el: this,
+            name,
+            ns,
+            probe,
+            prop,
+            setReplacement: (replacement) => origSetAttributeNS.call(this, ns, name, replacement),
+            value,
+          });
         }
         if (prop) {
           forgetElementAttrNodeOriginal(this, name, ns);
@@ -897,7 +1056,13 @@
     };
     const applyAttrNodeProbe = ({ el, attr, found, label, nativeSetter }) => {
       const original = found.prop === "srcset" ? nativeAttrValueFor(attr) : found.probe.url;
-      const replacement = replacementValueFor(el, found.prop, found.probe.mode, found.probe.kind);
+      const replacement = replacementValueFor({
+        el,
+        kind: found.probe.kind,
+        mode: found.probe.mode,
+        original,
+        prop: found.prop,
+      });
       const oldAttr = oldAttrFor(el, attr);
       if (replacement == null) return oldAttr;
       setNativeAttrValue(attr, replacement);
@@ -916,6 +1081,13 @@
         prop: found.prop,
         value: original,
         writeAttr: false,
+      });
+      rememberMutationOldValueOriginal({
+        el,
+        name: attr.name || attr.localName,
+        nativeValue: nativeAttrValueFor(attr),
+        ns: attr.namespaceURI,
+        original,
       });
       return result;
     };
@@ -1002,6 +1174,41 @@
     });
   };
 
+  const patchMutationObserver = () => {
+    if (typeof MutationObserver !== "function") return;
+    const OrigMutationObserver = MutationObserver;
+    const WrappedMutationObserver = function MutationObserver(callback) {
+      if (!new.target) return Reflect.apply(OrigMutationObserver, this, arguments);
+      const callbackForPage =
+        typeof callback === "function"
+          ? function mutationObserverCallback(records, observer) {
+              return callback.call(this, mutationRecordsForPage(records), observer);
+            }
+          : callback;
+      const observer = Reflect.construct(OrigMutationObserver, [callbackForPage], new.target);
+      const origTakeRecords = observer.takeRecords;
+      if (typeof origTakeRecords === "function") {
+        observer.takeRecords = stealth(
+          function takeRecords() {
+            return mutationRecordsForPage(origTakeRecords.apply(this, arguments));
+          },
+          "takeRecords",
+          {
+            length: 0,
+            source: nativeSourceFor(origTakeRecords, "takeRecords"),
+          }
+        );
+      }
+      return observer;
+    };
+    WrappedMutationObserver.prototype = OrigMutationObserver.prototype;
+    alignPrototypeConstructor(WrappedMutationObserver, OrigMutationObserver);
+    window.MutationObserver = stealth(WrappedMutationObserver, "MutationObserver", {
+      length: 1,
+      source: nativeSourceFor(OrigMutationObserver, "MutationObserver"),
+    });
+  };
+
   const svgHrefProbe = (el, value) => {
     const url = isBad(value) ? getUrl(value) : "";
     if (!url) return null;
@@ -1029,7 +1236,7 @@
           rememberOriginal(el, "href", probe.url);
           rememberAttributeOriginal(el, "href", probe.url);
           postProbe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
-          target.baseVal = replacementUrlFor(probe.mode, probe.kind, "href");
+          target.baseVal = replacementUrlFor(probe.mode, probe.kind, "href", probe.url);
           return true;
         }
         forgetOriginal(el, "href");
@@ -1091,6 +1298,7 @@
   patchXmlSerializer();
   patchCurrentSrc();
   patchStyleSheetHref();
+  patchMutationObserver();
   if (typeof SVGUseElement !== "undefined") patchSvgHref(SVGUseElement, "svg.use.href");
   if (typeof SVGImageElement !== "undefined") patchSvgHref(SVGImageElement, "svg.image.href");
   if (typeof SVGScriptElement !== "undefined") patchSvgHref(SVGScriptElement, "svg.script.href");
