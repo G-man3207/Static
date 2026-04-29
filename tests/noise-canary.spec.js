@@ -187,6 +187,88 @@ test("Noise passive decoys preserve original URLs through attribute nodes and se
     });
 });
 
+test("Noise passive decoys preserve original URLs in mutation observer old values", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await seedNoisePersona(extension, server.origin);
+
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const firstUrl = probedUrl(PROBED_ID, "/icon.png");
+  const safeUrl = server.url("/ordinary-image.png");
+  const result = await page.evaluate(
+    async ({ first, safe }) => {
+      const waitForMutationDelivery = () =>
+        new Promise((resolve) => {
+          setTimeout(resolve, 25);
+        });
+      const image = new Image();
+      const setImageSrc = (value) => {
+        image.src = value;
+      };
+      document.body.appendChild(image);
+
+      const records = [];
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          records.push({
+            attr: image.getAttribute("src"),
+            attributeName: mutation.attributeName,
+            oldValue: mutation.oldValue,
+            src: image.src,
+          });
+        }
+      });
+      observer.observe(image, {
+        attributeFilter: ["src"],
+        attributeOldValue: true,
+        attributes: true,
+      });
+
+      setImageSrc(first);
+      await waitForMutationDelivery();
+      setImageSrc(safe);
+      const pendingAfterSafe = observer.takeRecords().map((mutation) => ({
+        attributeName: mutation.attributeName,
+        oldValue: mutation.oldValue,
+      }));
+      await waitForMutationDelivery();
+      observer.disconnect();
+
+      return {
+        finalAttr: image.getAttribute("src"),
+        finalSrc: image.src,
+        pendingAfterSafe,
+        records,
+      };
+    },
+    { first: firstUrl, safe: safeUrl }
+  );
+
+  expect(result).toEqual({
+    finalAttr: safeUrl,
+    finalSrc: safeUrl,
+    pendingAfterSafe: [
+      {
+        attributeName: "src",
+        oldValue: firstUrl,
+      },
+    ],
+    records: [
+      {
+        attr: firstUrl,
+        attributeName: "src",
+        oldValue: null,
+        src: firstUrl,
+      },
+    ],
+  });
+  expect(JSON.stringify(result)).not.toContain("data:image");
+});
+
 test("Noise mode fails closed for non-GET method canaries", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await seedNoisePersona(extension, server.origin);
