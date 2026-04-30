@@ -268,6 +268,39 @@ const collectAudioFingerprint = (page) =>
     return { length: data.length, signature: signature.toString(16) };
   });
 
+const collectOffscreenCanvasFingerprint = (page) =>
+  page.evaluate(async () => {
+    if (typeof OffscreenCanvas === "undefined") return null;
+    const canvas = new OffscreenCanvas(16, 16);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#123456";
+    ctx.fillRect(0, 0, 16, 16);
+
+    let getImageDataSignature = null;
+    try {
+      const data = ctx.getImageData(0, 0, 16, 16).data;
+      let sig = 2166136261;
+      for (let i = 0; i < data.length; i++) {
+        sig = Math.imul(sig ^ data[i], 16777619) >>> 0;
+      }
+      getImageDataSignature = sig.toString(16);
+    } catch {}
+
+    let blobHash = null;
+    try {
+      const blob = await canvas.convertToBlob();
+      const buffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let sig = 2166136261;
+      for (let i = 0; i < bytes.length; i++) {
+        sig = Math.imul(sig ^ bytes[i], 16777619) >>> 0;
+      }
+      blobHash = sig.toString(16);
+    } catch {}
+
+    return { blobHash, getImageDataSignature };
+  });
+
 test("Fingerprint masking returns a stable plausible per-origin device persona", async ({
   extension,
   server,
@@ -359,4 +392,48 @@ test("Fingerprint masking perturbs offline audio fingerprints without blocking r
   const secondPoisoned = await collectAudioFingerprint(page);
   expect(firstPoisoned).toEqual(secondPoisoned);
   expect(firstPoisoned.length).toBe(plain.length);
+});
+
+test("Fingerprint masking perturbs OffscreenCanvas getImageData and convertToBlob", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const plainOffscreen = await collectOffscreenCanvasFingerprint(page);
+  test.skip(!plainOffscreen, "OffscreenCanvas is unavailable in this browser");
+
+  const plainOffscreen2 = await collectOffscreenCanvasFingerprint(page);
+  expect(plainOffscreen2).toEqual(plainOffscreen);
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  await expect
+    .poll(async () => {
+      const maskedOffscreen = await collectOffscreenCanvasFingerprint(page);
+      if (!maskedOffscreen) return false;
+      return (
+        maskedOffscreen.getImageDataSignature !== plainOffscreen.getImageDataSignature &&
+        maskedOffscreen.blobHash !== plainOffscreen.blobHash
+      );
+    })
+    .toBe(true);
+
+  const maskedOffscreen = await collectOffscreenCanvasFingerprint(page);
+  expect(maskedOffscreen.getImageDataSignature).not.toBe(plainOffscreen.getImageDataSignature);
+  expect(maskedOffscreen.blobHash).not.toBe(plainOffscreen.blobHash);
+
+  const maskedOffscreen2 = await collectOffscreenCanvasFingerprint(page);
+  expect(maskedOffscreen2).toEqual(maskedOffscreen);
 });

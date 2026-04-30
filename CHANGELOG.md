@@ -16,6 +16,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Opt-in Device signal poisoning for high-entropy browser surfaces, with stable per-origin personas.
 - QA diagnostics mode for local compatibility testing, including anonymized issue reports.
 - Replay poisoning detection for Sentry Replay runtime setup, Hotjar, OpenReplay, and replay-specific Datadog/PostHog startup paths.
+- OffscreenCanvas fingerprint noise for Device signal poisoning: `OffscreenCanvas.prototype.convertToBlob` and `OffscreenCanvasRenderingContext2D.prototype.getImageData` are now patched alongside existing `HTMLCanvasElement` coverage, closing a gap where modern collectors could bypass canvas noise through OffscreenCanvas.
+- DNR fingerprint vendor rule for Kasada primary API domain `kasada.net` in addition to the existing `kasadacdn.com` CDN.
+- Playwright test coverage for OffscreenCanvas canvas noise under Device signal poisoning.
 
 ### Changed
 

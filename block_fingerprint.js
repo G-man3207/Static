@@ -707,6 +707,76 @@
     return clone;
   };
 
+  const cloneOffscreenCanvasWithNoise = (canvas) => {
+    const width = Math.max(1, Math.min(canvas.width || 1, 8192));
+    const height = Math.max(1, Math.min(canvas.height || 1, 8192));
+    const clone = new OffscreenCanvas(width, height);
+    const ctx = clone.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(canvas, 0, 0, width, height);
+    const x = persona().canvasSeed % width;
+    const y = Math.floor(persona().canvasSeed / Math.max(1, width)) % height;
+    const imageData = ctx.getImageData(x, y, 1, 1);
+    tweakPixel(imageData.data, persona().canvasSeed);
+    ctx.putImageData(imageData, x, y);
+    return clone;
+  };
+
+  const patchOffscreenCanvas = () => {
+    if (typeof OffscreenCanvas === "undefined") return;
+
+    const convertDesc = Object.getOwnPropertyDescriptor(OffscreenCanvas.prototype, "convertToBlob");
+    const origConvert = convertDesc && convertDesc.value;
+    if (typeof origConvert === "function") {
+      const wrapped = {
+        convertToBlob() {
+          if (!isMasking()) return origConvert.apply(this, arguments);
+          try {
+            const clone = cloneOffscreenCanvasWithNoise(this);
+            if (clone) return origConvert.apply(clone, arguments);
+          } catch {}
+          return origConvert.apply(this, arguments);
+        },
+      }.convertToBlob;
+      Object.defineProperty(OffscreenCanvas.prototype, "convertToBlob", {
+        ...convertDesc,
+        value: stealth(wrapped, "convertToBlob", {
+          length: origConvert.length,
+          source: nativeSourceFor(origConvert, "convertToBlob"),
+        }),
+      });
+    }
+
+    try {
+      const temp = new OffscreenCanvas(1, 1);
+      const tempCtx = temp.getContext("2d");
+      if (!tempCtx || typeof tempCtx.getImageData !== "function") return;
+      const proto = Object.getPrototypeOf(tempCtx);
+      if (!proto) return;
+      const imgDesc = Object.getOwnPropertyDescriptor(proto, "getImageData");
+      const origGetImageData = imgDesc && imgDesc.value;
+      if (typeof origGetImageData !== "function") return;
+      const alreadyPatched =
+        typeof CanvasRenderingContext2D !== "undefined" &&
+        CanvasRenderingContext2D.prototype.getImageData === origGetImageData;
+      if (alreadyPatched) return;
+      const wrappedGetImageData = {
+        getImageData() {
+          const imageData = origGetImageData.apply(this, arguments);
+          if (isMasking()) tweakPixel(imageData.data, persona().canvasSeed);
+          return imageData;
+        },
+      }.getImageData;
+      Object.defineProperty(proto, "getImageData", {
+        ...imgDesc,
+        value: stealth(wrappedGetImageData, "getImageData", {
+          length: origGetImageData.length,
+          source: nativeSourceFor(origGetImageData, "getImageData"),
+        }),
+      });
+    } catch {}
+  };
+
   const patchCanvas = () => {
     if (typeof HTMLCanvasElement === "undefined") return;
     const toDataUrlDesc = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "toDataURL");
@@ -846,6 +916,7 @@
     patchStorageEstimate();
     patchWebgl();
     patchCanvas();
+    patchOffscreenCanvas();
     patchAudioRendering();
   } catch {}
 })();

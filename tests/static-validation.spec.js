@@ -530,6 +530,7 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||px-client.net^",
     "||cdn.sift.com^",
     "||api.sift.com^",
+    "||kasada.net^",
     "||siftscience.com^",
   ]) {
     expect(fingerprintFilters.has(filter), `fingerprint_vendors missing ${filter}`).toBe(true);
