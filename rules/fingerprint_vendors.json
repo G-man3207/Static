@@ -457,5 +457,73 @@
         "other"
       ]
     }
+  },
+  {
+    "id": 28,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fptls2.com^",
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 29,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fptls3.com^",
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 30,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fptls4.com^",
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 31,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||cheqzone.com^",
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
   }
 ]
