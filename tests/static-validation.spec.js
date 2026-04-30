@@ -509,12 +509,15 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
   for (const filter of [
     "||api.fpjs.io^",
     "||api.fpjs.pro^",
+    "||botguard.net^",
+    "||castle.io^",
     "||datadome.co^",
     "||fpcdn.io^",
     "||fpjs.io^",
     "||fpjscdn.net^",
     "||fpnpmcdn.net^",
     "||fptls.com^",
+    "||geetest.com^",
     "||openfpcdn.io^",
     "||perimeterx.net^",
     "||px-cdn.net^",
@@ -540,4 +543,49 @@ test("fingerprint DNR connection rules include persistent transport resource typ
       );
     }
   }
+});
+
+test("conflictSlots cover key extension categories without cross-slot ID duplication", () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  const slots = context.__static_config__.conflictSlots;
+
+  const requiredSlots = [
+    "password_manager",
+    "ad_blocker",
+    "grammar",
+    "web3_wallet",
+    "react_devtools",
+    "translator",
+    "vpn_proxy",
+    "dark_mode",
+    "shopping",
+  ];
+  for (const slot of requiredSlots) {
+    expect(Array.isArray(slots[slot]), `conflictSlots.${slot} should be an array`).toBe(true);
+    expect(slots[slot].length, `conflictSlots.${slot} should not be empty`).toBeGreaterThan(0);
+    for (const id of slots[slot]) {
+      expect(id, `conflictSlots.${slot} ID should be 32 lowercase a-p chars`).toMatch(
+        /^[a-p]{32}$/
+      );
+    }
+  }
+
+  const allIds = requiredSlots.flatMap((slot) => slots[slot]);
+  const uniqueIds = new Set(allIds);
+  expect(uniqueIds.size, "no extension ID should appear in multiple slots").toBe(allIds.length);
+});
+
+test("conflictSlots include Proton Pass in the password_manager slot", () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  const slots = context.__static_config__.conflictSlots;
+  expect(slots.password_manager).toContain("cjnlpnbkjbnmdieljmighbdoljmgfibk");
+});
+
+test("conflictSlots include Dark Reader in the dark_mode slot", () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  const slots = context.__static_config__.conflictSlots;
+  expect(slots.dark_mode).toContain("eimadpbcbfnmbkopoojfekhnkhdbieeh");
 });
