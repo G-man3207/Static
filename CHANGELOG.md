@@ -8,6 +8,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Added
 
+- DNR fingerprint vendor rules for Castle.io (fraud prevention + device fingerprinting), GeeTest (CAPTCHA + device fingerprinting), and BotGuard/Blackwall (bot detection with client-side collection).
+- Noise persona conflict slots for VPN/proxy (`vpn_proxy`), dark mode (`dark_mode`), and shopping (`shopping`) extension categories, preventing implausible decoy combinations.
+- Proton Pass (`cjnlpnbkjbnmdieljmighbdoljmgfibk`) in the `password_manager` conflict slot.
+- Static validation tests for new fingerprint vendor domains and conflict-slot integrity (category coverage, cross-slot ID uniqueness, Proton Pass and Dark Reader presence).
+
 - Opt-in Device signal poisoning for high-entropy browser surfaces, with stable per-origin personas.
 - QA diagnostics mode for local compatibility testing, including anonymized issue reports.
 - Replay poisoning detection for Sentry Replay runtime setup, Hotjar, OpenReplay, and replay-specific Datadog/PostHog startup paths.

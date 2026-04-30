@@ -63,6 +63,7 @@
         "pnlccmojcmeohlpggmfnbbiapkmbliob", // RoboForm (newer)
         "fooolghllnmhmmndgjiamiiodkpenpbb", // RoboForm (legacy)
         "bmikpgodpkclnkgmnpphehdgcimmided", // NordPass
+        "cjnlpnbkjbnmdieljmighbdoljmgfibk", // Proton Pass
       ],
       ad_blocker: [
         "cjpalhdlnbpafiamejdnhcphjbkeiagm", // uBlock Origin
@@ -90,6 +91,16 @@
       translator: [
         "aapbdbdomjkkjkaonfhkkikfgjllcleb", // Google Translate
         "cofdbpoegempjloogbagkncekinflcnj", // DeepL
+      ],
+      vpn_proxy: [
+        "npggkinfhjadegenkdjokdacdkopdfdb", // ProtonVPN
+      ],
+      dark_mode: [
+        "eimadpbcbfnmbkopoojfekhnkhdbieeh", // Dark Reader
+      ],
+      shopping: [
+        "bfogiajgogklnfndlkggihnhakgkbjgg", // Rakuten
+        "lmelmgmclklieheidfjlabcjljeojmho", // Capital One Shopping
       ],
     },
 
