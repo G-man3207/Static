@@ -525,5 +525,22 @@
         "other"
       ]
     }
+  },
+  {
+    "id": 32,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||kasada.net^",
+      "resourceTypes": [
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
   }
 ]
