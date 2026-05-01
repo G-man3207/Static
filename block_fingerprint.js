@@ -677,17 +677,22 @@
     patchWebglCtor(globalThis.WebGL2RenderingContext);
   };
 
-  const tweakPixel = (data, seed) => {
+  const tweakPixels = (data, seed) => {
     if (!data || data.length < 4) return;
     const pixelCount = Math.max(1, Math.floor(data.length / 4));
-    const pixel = seed % pixelCount;
-    const base = pixel * 4;
-    const delta = seed % 2 === 0 ? 1 : -1;
-    for (let i = 0; i < 3; i++) {
-      const value = data[base + i];
-      data[base + i] = Math.max(0, Math.min(255, value + delta));
+    const tweakCount =
+      pixelCount < 4 ? 1 : Math.min(5, 2 + Math.floor(Math.log2(pixelCount + 1) / 3));
+    for (let t = 0; t < tweakCount; t++) {
+      const pixelSeed = (Math.imul(seed ^ (t + 1), 0x01000193) + t * 0x9e3779b9) >>> 0;
+      const pixel = pixelSeed % pixelCount;
+      const base = pixel * 4;
+      const magnitude = ((pixelSeed >>> 16) % 3) + 1;
+      const delta = pixelSeed & 1 ? magnitude : -magnitude;
+      for (let i = 0; i < 3; i++) {
+        data[base + i] = Math.max(0, Math.min(255, data[base + i] + delta));
+      }
+      if (data[base + 3] === 0) data[base + 3] = 1;
     }
-    if (data[base + 3] === 0) data[base + 3] = 1;
   };
 
   const cloneCanvasWithNoise = (canvas) => {
@@ -702,7 +707,7 @@
     const x = persona().canvasSeed % width;
     const y = Math.floor(persona().canvasSeed / Math.max(1, width)) % height;
     const imageData = ctx.getImageData(x, y, 1, 1);
-    tweakPixel(imageData.data, persona().canvasSeed);
+    tweakPixels(imageData.data, persona().canvasSeed);
     ctx.putImageData(imageData, x, y);
     return clone;
   };
@@ -717,7 +722,7 @@
     const x = persona().canvasSeed % width;
     const y = Math.floor(persona().canvasSeed / Math.max(1, width)) % height;
     const imageData = ctx.getImageData(x, y, 1, 1);
-    tweakPixel(imageData.data, persona().canvasSeed);
+    tweakPixels(imageData.data, persona().canvasSeed);
     ctx.putImageData(imageData, x, y);
     return clone;
   };
@@ -763,7 +768,7 @@
       const wrappedGetImageData = {
         getImageData() {
           const imageData = origGetImageData.apply(this, arguments);
-          if (isMasking()) tweakPixel(imageData.data, persona().canvasSeed);
+          if (isMasking()) tweakPixels(imageData.data, persona().canvasSeed);
           return imageData;
         },
       }.getImageData;
@@ -833,7 +838,7 @@
     const wrappedGetImageData = {
       getImageData() {
         const imageData = origGetImageData.apply(this, arguments);
-        if (isMasking()) tweakPixel(imageData.data, persona().canvasSeed);
+        if (isMasking()) tweakPixels(imageData.data, persona().canvasSeed);
         return imageData;
       },
     }.getImageData;
@@ -851,20 +856,24 @@
   const poisonAudioChannel = (buffer, channel, seed) => {
     const length = Math.max(0, Math.floor(buffer.length || 0));
     if (!length) return;
-    const sample = seed % length;
-    const delta = (seed & 1 ? 1 : -1) * (0.00005 + ((seed >>> 8) % 50) / 1000000);
-    if (
-      typeof buffer.copyFromChannel === "function" &&
-      typeof buffer.copyToChannel === "function"
-    ) {
-      const data = new Float32Array(length);
-      buffer.copyFromChannel(data, channel);
-      data[sample] = clampAudioSample((Number(data[sample]) || 0) + delta);
-      buffer.copyToChannel(data, channel);
-      return;
+    const tweakCount = length < 8 ? 1 : Math.min(3, 1 + Math.floor(Math.log2(length + 1) / 6));
+    const canCopy =
+      typeof buffer.copyFromChannel === "function" && typeof buffer.copyToChannel === "function";
+    for (let t = 0; t < tweakCount; t++) {
+      const sampleSeed = (Math.imul(seed ^ (t + 1), 0x9e3779b9) + t * 0x01000193) >>> 0;
+      const sample = sampleSeed % length;
+      const magnitude = 0.00005 + ((sampleSeed >>> 8) % 50) / 1000000;
+      const delta = sampleSeed & 1 ? magnitude : -magnitude;
+      if (canCopy) {
+        const segment = new Float32Array(1);
+        buffer.copyFromChannel(segment, channel, sample);
+        segment[0] = clampAudioSample((Number(segment[0]) || 0) + delta);
+        buffer.copyToChannel(segment, channel, sample);
+      } else {
+        const data = buffer.getChannelData(channel);
+        data[sample] = clampAudioSample((Number(data[sample]) || 0) + delta);
+      }
     }
-    const data = buffer.getChannelData(channel);
-    data[sample] = clampAudioSample((Number(data[sample]) || 0) + delta);
   };
 
   const poisonAudioBuffer = (buffer) => {

@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Added
 
+- DNR fingerprint vendor rules for Shape Security, ThreatMetrix/RiskMetrix, Kasada, Blackwall.ai, Cheq, ClearSale, SEON, Forter, and Incapsula/Imperva, expanding coverage of client-side fingerprint collection hosts.
+- DNR fingerprint vendor connection rules now include `sub_frame` and `stylesheet` resource types, closing escape paths where fingerprint vendors could load probes through subframes or CSS-driven requests.
+- Multi-pixel canvas noise for Device signal poisoning: canvas `getImageData` now perturbs 2–5 pixels (scaled by canvas size) with varied delta magnitudes (1–3) instead of a single pixel with ±1, making noise harder to isolate.
+- Multi-sample audio noise for Device signal poisoning: `OfflineAudioContext` now perturbs 1–3 samples per channel (scaled by buffer length) using single-element channel copy operations for efficiency.
 - DNR fingerprint vendor rules for Castle.io (fraud prevention + device fingerprinting), GeeTest (CAPTCHA + device fingerprinting), and BotGuard/Blackwall (bot detection with client-side collection).
 - Noise persona conflict slots for VPN/proxy (`vpn_proxy`), dark mode (`dark_mode`), and shopping (`shopping`) extension categories, preventing implausible decoy combinations.
 - Proton Pass (`cjnlpnbkjbnmdieljmighbdoljmgfibk`) in the `password_manager` conflict slot.
