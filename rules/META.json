@@ -1,9 +1,9 @@
 {
   "rulesets": {
     "fingerprint_vendors": {
-      "version": "1.0.9",
-      "last_verified": "2026-04-30",
-      "description": "Client-side fingerprinting and anti-bot vendors: Fingerprint Pro, open-source FingerprintJS CDN, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada (cdn + primary API), Sardine, Shape Security/F5, Castle.io, GeeTest, BotGuard/Blackwall. Includes current Fingerprint CDN/API domains, api.fpjs.pro, api.fpjs.io, npm loader CDN, HUMAN sensor/connect hosts, Sift JS/CSP plus api.sift.com hosts, Kasada primary API domain kasada.net, and persistent transport resource types.",
+      "version": "1.1.0",
+      "last_verified": "2026-05-01",
+      "description": "Client-side fingerprinting and anti-bot vendors: Fingerprint Pro, open-source FingerprintJS CDN, DataDome, PerimeterX/HUMAN, Sift, Forter (cdn + main API), ThreatMetrix/TransUnion (online-metrix.net + threatmetrix.net + riskmetrix.net), Iovation, Kasada (cdn + primary API + kasada.io), Sardine, Shape Security/F5 (shape.io + shapesecurity.com), Castle.io, GeeTest, BotGuard/Blackwall (botguard.net + blackwall.ai), CHEQ (cheqzone.com + cheq.ai), ClearSale, SEON, Imperva/Incapsula. Includes current Fingerprint CDN/API domains, api.fpjs.pro, api.fpjs.io, npm loader CDN, HUMAN sensor/connect hosts, Sift JS/CSP plus api.sift.com hosts, Kasada primary API domain kasada.net, persistent transport resource types, sub_frame, and stylesheet resource types.",
       "enabled_by_default": true
     },
     "captcha_vendors": {

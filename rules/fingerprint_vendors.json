@@ -6,6 +6,8 @@
     "condition": {
       "urlFilter": "||fpjs.io^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -23,6 +25,8 @@
     "condition": {
       "urlFilter": "||fpjs.sh^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -40,6 +44,8 @@
     "condition": {
       "urlFilter": "||fpcdn.io^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -57,6 +63,8 @@
     "condition": {
       "urlFilter": "||datadome.co^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -74,6 +82,8 @@
     "condition": {
       "urlFilter": "||perimeterx.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -91,6 +101,8 @@
     "condition": {
       "urlFilter": "||px-cdn.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -108,6 +120,8 @@
     "condition": {
       "urlFilter": "||px-cloud.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -125,6 +139,8 @@
     "condition": {
       "urlFilter": "||cdn.sift.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -142,6 +158,8 @@
     "condition": {
       "urlFilter": "||cdn.forter.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -159,6 +177,8 @@
     "condition": {
       "urlFilter": "||online-metrix.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -176,6 +196,8 @@
     "condition": {
       "urlFilter": "||iovation.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -193,6 +215,8 @@
     "condition": {
       "urlFilter": "||kasadacdn.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -210,6 +234,8 @@
     "condition": {
       "urlFilter": "||sardine.ai^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -227,6 +253,8 @@
     "condition": {
       "urlFilter": "||shape.io^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -244,6 +272,8 @@
     "condition": {
       "urlFilter": "||fpjscdn.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -261,6 +291,8 @@
     "condition": {
       "urlFilter": "||fptls.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -278,6 +310,8 @@
     "condition": {
       "urlFilter": "||pxchk.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -295,6 +329,8 @@
     "condition": {
       "urlFilter": "||px-client.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -312,6 +348,8 @@
     "condition": {
       "urlFilter": "||siftscience.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -329,6 +367,8 @@
     "condition": {
       "urlFilter": "||fpnpmcdn.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -346,6 +386,8 @@
     "condition": {
       "urlFilter": "||api.sift.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -363,6 +405,8 @@
     "condition": {
       "urlFilter": "||api.fpjs.pro^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -380,6 +424,8 @@
     "condition": {
       "urlFilter": "||openfpcdn.io^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -397,6 +443,8 @@
     "condition": {
       "urlFilter": "||api.fpjs.io^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -414,6 +462,8 @@
     "condition": {
       "urlFilter": "||castle.io^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -431,6 +481,8 @@
     "condition": {
       "urlFilter": "||geetest.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -448,6 +500,8 @@
     "condition": {
       "urlFilter": "||botguard.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -465,6 +519,8 @@
     "condition": {
       "urlFilter": "||fptls2.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -482,6 +538,8 @@
     "condition": {
       "urlFilter": "||fptls3.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -499,6 +557,8 @@
     "condition": {
       "urlFilter": "||fptls4.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -516,6 +576,8 @@
     "condition": {
       "urlFilter": "||cheqzone.com^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -533,6 +595,198 @@
     "condition": {
       "urlFilter": "||kasada.net^",
       "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 33,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||shapesecurity.com^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 34,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||threatmetrix.net^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 35,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||riskmetrix.net^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 36,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||kasada.io^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 37,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||blackwall.ai^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 38,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||cheq.ai^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 39,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||clear.sale^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 40,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||seon.io^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 41,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||forter.com^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 42,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||incapsula.com^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",

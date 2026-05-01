@@ -509,10 +509,14 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
   for (const filter of [
     "||api.fpjs.io^",
     "||api.fpjs.pro^",
+    "||blackwall.ai^",
     "||botguard.net^",
     "||castle.io^",
+    "||cheq.ai^",
     "||cheqzone.com^",
+    "||clear.sale^",
     "||datadome.co^",
+    "||forter.com^",
     "||fpcdn.io^",
     "||fpjs.io^",
     "||fpjscdn.net^",
@@ -522,31 +526,45 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||fptls3.com^",
     "||fptls4.com^",
     "||geetest.com^",
+    "||incapsula.com^",
+    "||kasada.io^",
+    "||kasada.net^",
     "||openfpcdn.io^",
     "||perimeterx.net^",
     "||px-cdn.net^",
     "||px-cloud.net^",
     "||pxchk.net^",
     "||px-client.net^",
+    "||riskmetrix.net^",
+    "||seon.io^",
+    "||shapesecurity.com^",
     "||cdn.sift.com^",
     "||api.sift.com^",
-    "||kasada.net^",
     "||siftscience.com^",
+    "||threatmetrix.net^",
   ]) {
     expect(fingerprintFilters.has(filter), `fingerprint_vendors missing ${filter}`).toBe(true);
   }
 });
 
-test("fingerprint DNR connection rules include persistent transport resource types", () => {
+test("fingerprint DNR connection rules include persistent transport and stealth resource types", () => {
   for (const filePath of ["rules/captcha_vendors.json", "rules/fingerprint_vendors.json"]) {
     for (const rule of readJson(filePath)) {
       const resourceTypes = rule.condition && rule.condition.resourceTypes;
       if (!Array.isArray(resourceTypes)) continue;
       if (!resourceTypes.includes("xmlhttprequest") && !resourceTypes.includes("ping")) continue;
-      expect(resourceTypes, `${filePath}: rule ${rule.id}`).toEqual(
+      expect(resourceTypes, `${filePath}: rule ${rule.id} missing websocket/webtransport`).toEqual(
         expect.arrayContaining(["websocket", "webtransport"])
       );
     }
+  }
+  for (const rule of readJson("rules/fingerprint_vendors.json")) {
+    const resourceTypes = rule.condition && rule.condition.resourceTypes;
+    if (!Array.isArray(resourceTypes)) continue;
+    expect(
+      resourceTypes,
+      `fingerprint_vendors rule ${rule.id} missing sub_frame/stylesheet`
+    ).toEqual(expect.arrayContaining(["sub_frame", "stylesheet"]));
   }
 });
 

@@ -437,3 +437,145 @@ test("Fingerprint masking perturbs OffscreenCanvas getImageData and convertToBlo
   const maskedOffscreen2 = await collectOffscreenCanvasFingerprint(page);
   expect(maskedOffscreen2).toEqual(maskedOffscreen);
 });
+
+test("Fingerprint masking applies multi-pixel canvas noise, not single-pixel", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const plainSignature = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#123456";
+    ctx.fillRect(0, 0, 64, 64);
+    const data = ctx.getImageData(0, 0, 64, 64).data;
+    let changed = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] !== 0x12 || data[i + 1] !== 0x34 || data[i + 2] !== 0x56) changed++;
+    }
+    return { changed, total: data.length / 4 };
+  });
+  expect(plainSignature.changed).toBe(0);
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  await expect
+    .poll(async () => {
+      return page.evaluate(() => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#123456";
+        ctx.fillRect(0, 0, 64, 64);
+        const data = ctx.getImageData(0, 0, 64, 64).data;
+        let changed = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] !== 0x12 || data[i + 1] !== 0x34 || data[i + 2] !== 0x56) changed++;
+        }
+        return changed;
+      });
+    })
+    .toBeGreaterThanOrEqual(2);
+
+  const maskedResult = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#123456";
+    ctx.fillRect(0, 0, 64, 64);
+    const data = ctx.getImageData(0, 0, 64, 64).data;
+    const changedPixels = [];
+    for (let i = 0; i < data.length; i += 4) {
+      const dr = data[i] - 0x12;
+      const dg = data[i + 1] - 0x34;
+      const db = data[i + 2] - 0x56;
+      if (dr !== 0 || dg !== 0 || db !== 0) {
+        changedPixels.push({ delta: Math.abs(dr), pixel: i / 4 });
+      }
+    }
+    return changedPixels;
+  });
+
+  expect(maskedResult.length).toBeGreaterThanOrEqual(2);
+  expect(maskedResult.length).toBeLessThanOrEqual(5);
+  const deltas = new Set(maskedResult.map((p) => p.delta));
+  expect(deltas.size).toBeGreaterThanOrEqual(1);
+  for (const { delta } of maskedResult) {
+    expect(delta).toBeGreaterThanOrEqual(1);
+    expect(delta).toBeLessThanOrEqual(3);
+  }
+});
+
+test("Fingerprint masking multi-pixel canvas noise is stable across reads", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  await expect
+    .poll(async () => {
+      return page.evaluate(() => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 32;
+        canvas.height = 32;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#abcdef";
+        ctx.fillRect(0, 0, 32, 32);
+        const data = ctx.getImageData(0, 0, 32, 32).data;
+        let changed = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] !== 0xab || data[i + 1] !== 0xcd || data[i + 2] !== 0xef) {
+            changed++;
+          }
+        }
+        return changed;
+      });
+    })
+    .toBeGreaterThanOrEqual(2);
+
+  const readCanvasPixels = () =>
+    page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 32;
+      canvas.height = 32;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#abcdef";
+      ctx.fillRect(0, 0, 32, 32);
+      return Array.from(ctx.getImageData(0, 0, 32, 32).data);
+    });
+
+  const first = await readCanvasPixels();
+  const second = await readCanvasPixels();
+  const third = await readCanvasPixels();
+  expect(second).toEqual(first);
+  expect(third).toEqual(first);
+});
