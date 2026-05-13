@@ -5,7 +5,7 @@
 <h1 align="center">Static</h1>
 
 <p align="center">
-  <strong>Anti-fingerprinting Chrome extension that blocks extension enumeration and extension-derived browser fingerprints — and optionally poisons probe logs with plausible decoys.</strong>
+  <strong>Anti-fingerprinting Chrome extension that blocks extension enumeration and extension-derived browser fingerprints. Optionally poisons probe logs with plausible decoys.</strong>
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 
 ## What it does (10-second version)
 
-Websites quietly probe your browser to figure out **which extensions you have installed** and fold those signals into browser fingerprints. Static blocks those probes, hides extension-made DOM/global markers, and in **Noise mode** feeds extension probes plausible-but-fake answers.
+Websites probe your browser to figure out **which extensions you have installed** and use those signals in browser fingerprints. Static blocks those probes, hides extension-made DOM/global markers, and in **Noise mode** feeds extension probes plausible-but-fake answers.
 
 Static is intentionally narrow. It is built to run alongside uBlock Origin or Privacy Badger, which are better suited for broad ad-tech, analytics, and third-party tracker blocking.
 
@@ -44,15 +44,15 @@ Static is intentionally narrow. It is built to run alongside uBlock Origin or Pr
 
 ## What it blocks
 
-1. **Extension enumeration.** Pages that iterate through extension IDs via `fetch("chrome-extension://<id>/<resource>")` (and XHR / `<script src>` / `<link href>` / `<img src>` / image `srcset` / image-input `src` / video `poster` / media and track `src` / `Audio(url)` / object/embed/source URLs / anchor, area, base, ping, form `action`, and `formaction` URLs / CSSOM `@import` rules / style text, CSS declaration, and style-attribute URLs / `sendBeacon` / `Worker` / `SharedWorker` / worklet `addModule` / `EventSource` / `serviceWorker.register` equivalents) to probe which extensions are installed. All those vectors are patched in the page's MAIN world to reject `chrome-extension://` (plus `moz-extension://`, `ms-browser-extension://`, `safari-web-extension://`, `edge-extension://`) transparently.
+1. **Extension enumeration.** Pages probe for installed extensions by hitting `chrome-extension://<id>/<resource>` URLs through many vectors: `fetch`, XHR, script/link/img tags, image `srcset`, video `poster`, media/track `src`, `Audio(url)`, object/embed/source, anchor/area/base/form URLs, CSSOM `@import`, style attributes, `sendBeacon`, `Worker`, `SharedWorker`, worklet `addModule`, `EventSource`, and `serviceWorker.register`. Static patches all of these in the page's MAIN world to reject `chrome-extension://` (and `moz-extension://`, `ms-browser-extension://`, `safari-web-extension://`, `edge-extension://`) transparently.
 2. **DOM-marker fingerprinting.** A MutationObserver strips attributes, classes, and custom-element tags that browser extensions leave on the DOM to announce their presence, while MAIN-world observer shims hide transient marker records from page-owned MutationObservers.
 3. **`window` global fingerprinting.** Devtools bridges and extension-presence markers (`__REACT_DEVTOOLS_GLOBAL_HOOK__`, `__GRAMMARLY_DESKTOP_INTEGRATION__`, etc.) are locked to `undefined` before page scripts run.
 4. **Fingerprint network checks (togglable).** Narrow Declarative-Net-Request rulesets block known:
-   - **Fingerprinting / anti-bot vendors** — Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
-   - **CAPTCHA / device-check vendors** _(off by default, breaks logins)_ — Arkose Labs / FunCAPTCHA, DataDome response pages, and Cloudflare Turnstile / Challenge Platform.
-5. **Device signal poisoning _(opt-in)._** Static can return a stable per-site machine persona for high-entropy Signal guide surfaces documented in BrowserGate-style collectors: OS/user-agent platform, CPU/RAM buckets, language, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, offline-audio render output, storage quota, battery, and network hints.
-6. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` of wrapped functions → native-looking strings, so the blocker's API overrides are indistinguishable from natives under any `toString` check.
-7. **Replay poisoning _(opt-in)._** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
+   - **Fingerprinting / anti-bot vendors**: Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
+   - **CAPTCHA / device-check vendors** (off by default, breaks logins): Arkose Labs / FunCAPTCHA, DataDome response pages, and Cloudflare Turnstile / Challenge Platform.
+5. **Device signal poisoning (opt-in).** Static can return a stable per-site machine persona for high-entropy browser signals: OS/user-agent platform, CPU/RAM buckets, language, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, offline-audio render output, storage quota, battery, and network hints.
+6. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` that maps wrapped functions to native-looking strings, so the blocker's API overrides look like real native functions under `toString` checks.
+7. **Replay poisoning (opt-in).** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
 
 The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds.
 
@@ -62,57 +62,34 @@ Static keeps a local, weekly summary of how each origin probes for extensions: p
 
 The probe log viewer ranks origins by **Severity** first, then shows a **Probe behavior** indicator per origin:
 
-- **High** — strong adaptive data-collection signals or sharply changed probe behavior.
-- **Medium** — changed probe behavior, threshold-level adaptive signals, or broad probing volume.
-- **Low** — limited probe activity without stronger drift or adaptive signals.
+- **High**: strong adaptive data-collection signals or sharply changed probe behavior.
+- **Medium**: changed probe behavior, threshold-level adaptive signals, or broad probing volume.
+- **Low**: limited probe activity without stronger drift or adaptive signals.
 
-- **Learning** — not enough baseline data yet.
-- **Stable** — no meaningful change from that origin's previous probe behavior.
-- **Changed** — the origin changed how it checks for extensions.
-- **High drift** — multiple signals shifted at once, such as new probe vectors plus path strategy or ID dictionary changes.
+- **Learning**: not enough baseline data yet.
+- **Stable**: no meaningful change from that origin's previous probe behavior.
+- **Changed**: the origin changed how it checks for extensions.
+- **High drift**: multiple signals shifted at once, such as new probe vectors plus path strategy or ID dictionary changes.
 
 Expanding an origin shows the concrete ranking reasons. Adaptive reason tokens such as `dom_observer`, `listener.keydown`, or `navigator.deviceMemory` include a local explanation of what browser surface was observed. The popup also shows a compact warning when the active site has recent `Changed` or `High drift` behavior.
 
 This is an early-warning system, not attribution. It means "this origin changed how it checks for extensions," not necessarily "this origin adapted to Static."
 
-Power-user diagnostics in the popup and log viewer expose the local evidence behind those labels:
-current origin, latest weekly probe vector mix, extension-resource path mix, one-shot ID pressure,
-Noise-mode eligibility thresholds, and the IDs currently eligible for an origin's decoy pool. These
-views derive only from the existing local probe and adaptive logs; they do not collect or transmit
-anything new.
+Power-user diagnostics in the popup and log viewer expose the local evidence behind those labels: current origin, latest weekly probe vector mix, extension-resource path mix, one-shot ID pressure, Noise-mode eligibility thresholds, and the IDs currently eligible for an origin's decoy pool. These views derive only from the existing local probe and adaptive logs; they do not collect or transmit anything new.
 
-QA diagnostics mode is available from the popup for compatibility testing. When enabled, Static keeps
-a bounded local trace of recent Static actions on visited sites: blocked probe vectors, coarse
-extension-resource path kinds, replay detections, and adaptive signal tokens. The log viewer can copy
-an issue-ready JSON report that hashes site origins, extension IDs, and replay-signal labels with a
-per-copy salt, so users can attach useful evidence to GitHub issues without publishing raw browsing
-or extension-label data.
+QA diagnostics mode is available from the popup for compatibility testing. When enabled, Static keeps a bounded local trace of recent actions on visited sites: blocked probe vectors, coarse extension-resource path kinds, replay detections, and adaptive signal tokens. The log viewer can copy an issue-ready JSON report that hashes site origins, extension IDs, and replay-signal labels with a per-copy salt, so users can attach useful evidence to GitHub issues without publishing raw browsing or extension-label data.
 
-## Adaptive behavior log _(observe-only)_
+## Adaptive behavior log (observe-only)
 
 Static also has a local-only adaptive behavior logger for future dynamic blocking work. It watches for correlated behavior windows such as canvas/WebGL/audio readback plus navigator reads and network transmission, environment snapshots plus crypto and network transmission, or document-wide mutation observation plus aggressive input hooks.
 
-It also records strong runtime vendor signatures for documented client-side integrations when they are
-served through first-party or proxied routes, such as `window.ddjskey` + `/tags.js` or versioned
-`/vX.Y.Z/tags.js` routes with the documented `/js/` collector inference, plus explicit
-`window.ddoptions.endpoint` deployments even when the DataDome tag is served from a custom path,
-`window._pxAppId` / `window._pxHostUrl` (HUMAN/PerimeterX), `window._sift.push(["_setAccount", ...])`
-(Sift), and current `window.Fingerprint.start(...)` / legacy `window.FingerprintJS.load(...)`
-(Fingerprint).
+It also records strong runtime vendor signatures for documented client-side integrations served through first-party or proxied routes. Examples include `window.ddjskey` + `/tags.js` or versioned `/vX.Y.Z/tags.js` routes with the documented `/js/` collector inference, plus explicit `window.ddoptions.endpoint` deployments even when the DataDome tag is served from a custom path. Other signatures: `window._pxAppId` / `window._pxHostUrl` (HUMAN/PerimeterX), `window._sift.push(["_setAccount", ...])` (Sift), and current `window.Fingerprint.start(...)` / legacy `window.FingerprintJS.load(...)` (Fingerprint).
 
-For behavior-only collectors that never expose a stable global, Static now also attributes the local
-adaptive finding to the external script source when possible, while still redacting high-entropy
-path segments and query tokens before storage.
+For behavior-only collectors that never expose a stable global, Static also attributes the local adaptive finding to the external script source when possible, while redacting high-entropy path segments and query tokens before storage.
 
-That source attribution now propagates across common async boundaries too. If a collector resumes in
-timers, promise callbacks, microtasks, or mutation-observer callbacks, Static keeps the redacted
-source label when possible and otherwise falls back to a local `runtime:*` label instead of the
-less useful generic `inline-or-runtime`.
+That source attribution propagates across common async boundaries too. If a collector resumes in timers, promise callbacks, microtasks, or mutation-observer callbacks, Static keeps the redacted source label when possible. Otherwise it falls back to a local `runtime:*` label instead of the generic `inline-or-runtime`.
 
-The same local attribution now survives event-driven handoffs for message-style flows too,
-including listener objects, `postMessage`, custom-event listeners, and `onmessage` handlers. High-
-frequency replay-sensitive DOM input/mouse event surfaces stay delegated to the replay shim so the
-two defenses do not fight each other.
+The same local attribution survives event-driven handoffs for message-style flows: listener objects, `postMessage`, custom-event listeners, and `onmessage` handlers. High-frequency replay-sensitive DOM input/mouse event surfaces stay delegated to the replay shim so the two defenses do not fight each other.
 
 This is intentionally **observe-only** today:
 
@@ -123,33 +100,32 @@ This is intentionally **observe-only** today:
 
 The design, cost model, calibration requirements, and future blocking stages are documented in `docs/adaptive-blocking.md`.
 
-## Noise mode _(opt-in)_
+## Noise mode (opt-in)
 
-Blocking a probe proves one thing: "some defense is present." **Noise mode** goes further — it learns each site's probe dictionary from its own behavior, then returns plausible decoy responses for a stable subset of those same IDs. The site sees its targets as "installed" and logs them; the logs get poisoned with IDs the site itself cared about.
+**Noise mode** learns each site's probe dictionary from its own behavior, then returns plausible decoy responses for a stable subset of those same IDs. The site sees its targets as "installed" and logs them. The logs get poisoned with IDs the site itself cared about.
 
-- **Self-calibrating.** Each site tells you, by what it probes for, what its threat model is. LinkedIn probes for scraper extensions; a crypto site probes for wallets. The decoy persona Static constructs is drawn from _that specific site's_ probe list, so the noise is maximally relevant to what they're looking for.
-- **Stable per origin.** The 3–8 ID persona for each origin is deterministic from `hash(user_secret + origin + week)`. Stable for a week (so you don't look like a bot changing extensions every pageview); rotates after that; different users' sets differ (no cross-user fingerprint because the secret is random per install).
-- **Conflict-aware.** IDs are bucketed into slots (password manager, ad blocker, grammar, web3 wallet, devtools, translator) and the persona picks at most one per slot — no "three password managers installed" tells.
-- **Canary-resistant by design.** Known plausible extension IDs can enter the replay pool after Static has seen them probed at least twice on that origin. Unknown extension-shaped IDs need stronger repeated evidence before Static will claim them, so cheap two-hit canaries do not become part of Static's own persona.
+- **Self-calibrating.** Each site reveals its threat model through what it probes for. LinkedIn probes for scraper extensions; a crypto site probes for wallets. Static builds the decoy persona from that specific site's probe list, so the noise matches what they are looking for.
+- **Stable per origin.** Each origin gets a persona of 3 to 8 IDs, deterministic from `hash(user_secret + origin + week)`. The persona stays stable for a week so you don't look like a bot changing extensions every pageview, then rotates. Different users get different sets because the secret is random per install.
+- **Conflict-aware.** IDs are bucketed into slots (password manager, ad blocker, grammar, web3 wallet, devtools, translator) and the persona picks at most one per slot. This avoids obvious tells like "three password managers installed."
+- **Canary-resistant.** Known plausible extension IDs enter the replay pool only after Static has seen them probed at least twice on that origin. Unknown extension-shaped IDs need stronger repeated evidence before Static will claim them, so cheap two-hit canaries do not become part of Static's own persona.
 - **Cold start is honest.** First visit to a site produces no poisoning because there's nothing logged yet. From the second pageview onward, the site gets noise.
 - **Decoy responses by plausible path.** Static-read `GET` / `HEAD` probes answer only for a conservative allowlist of plausible extension resource paths: `manifest.json`, common icon names, and common entrypoint-like `content.js` / `page.html` / `style.css` paths. Suspicious supported-suffix canaries like random `*.png` or `*.js` names stay blocked.
 
-**Scope in v2.1:** Noise mode decoys `fetch`, `XMLHttpRequest`, and passive element probes for eligible persona IDs. Images, `srcset` candidates, image inputs, video posters, scripts, and stylesheets receive small inert data-URL resources while page-visible `src` / `srcset` / `href` / `data` / `poster` getters, attribute-node APIs, clones, and HTML/XML serialization still report the original extension URL. Frames, navigation-adjacent URLs, form submissions, audio constructors, CSSOM `@import` rules, style text, CSS declaration URLs set through `setProperty` / `cssText`, and active surfaces with larger behavioral footprints (`iframe`, media streams, track files, `Worker`, `SharedWorker`, worklet `addModule`, `EventSource`, and `serviceWorker.register`) stay fail-closed.
+**Scope in v2.1:** Noise mode decoys `fetch`, `XMLHttpRequest`, and passive element probes for eligible persona IDs. Images, `srcset` candidates, image inputs, video posters, scripts, and stylesheets receive small inert data-URL resources. Page-visible `src` / `srcset` / `href` / `data` / `poster` getters, attribute-node APIs, clones, and HTML/XML serialization still report the original extension URL. Active surfaces with larger behavioral footprints stay fail-closed: frames, navigation-adjacent URLs, form submissions, audio constructors, CSSOM `@import` rules, style text, CSS declaration URLs set through `setProperty` / `cssText`, `iframe`, media streams, track files, `Worker`, `SharedWorker`, worklet `addModule`, `EventSource`, and `serviceWorker.register`.
 
 The cross-vector behavior contract is documented in `docs/noise-behavior.md`.
 
 **Privacy:** Probe logs are kept locally in `chrome.storage.local`. Capped at 100 origins × 2,000 IDs each, with weekly playbook summaries capped to the latest 10 weeks. Nothing leaves your machine unless you explicitly export.
 
-Two export formats and one clipboard report are available in the log viewer (click **View probe log**
-in the popup):
+Two export formats and one clipboard report are available in the log viewer (click **View probe log** in the popup):
 
-- **Export raw log** — full detail. Contains per-origin timestamps (`lastUpdated`), exact probe counts, weekly playbook summaries, your since-install cumulative counter, and the precise `exportedAt` moment. This is fine for your own archive but **should not be published** — timestamp + count patterns can cross-correlate users across sites if multiple raw dumps from different users ever end up in the same hands.
-- **Export for research** — anonymized. Replaces precise `exportedAt` with a coarse `"exportMonth": "YYYY-MM"` bucket, drops per-origin `lastUpdated`, drops the `cumulative` counter, coarsens per-ID counts into log-scale buckets (`"2-5"`, `"6-20"`, `"21-100"`, `"101-1000"`, `"1000+"`), drops any ID that was probed fewer than 2 times (canary filter), drops any origin with fewer than 3 surviving IDs (low-signal noise), and replaces origin/extension-ID labels with per-export salted hashes. Safer to publish, but intentionally less useful for cross-user correlation than the raw log.
-- **Copy issue report** — anonymized and bounded for GitHub issues. It hashes site origins, extension IDs, and replay-signal labels, omits local timestamps and full site URLs, and keeps the coarse vectors/path kinds needed to debug protection gaps or compatibility reports.
+- **Export raw log**: full detail. Contains per-origin timestamps (`lastUpdated`), exact probe counts, weekly playbook summaries, your since-install cumulative counter, and the precise `exportedAt` moment. This is fine for your own archive but **should not be published**. Timestamp + count patterns can cross-correlate users across sites if multiple raw dumps from different users ever end up in the same hands.
+- **Export for research**: anonymized. Replaces precise `exportedAt` with a coarse `"exportMonth": "YYYY-MM"` bucket, drops per-origin `lastUpdated`, drops the `cumulative` counter, coarsens per-ID counts into log-scale buckets (`"2-5"`, `"6-20"`, `"21-100"`, `"101-1000"`, `"1000+"`), drops any ID that was probed fewer than 2 times (canary filter), drops any origin with fewer than 3 surviving IDs (low-signal noise), and replaces origin/extension-ID labels with per-export salted hashes. Safer to publish, but intentionally less useful for cross-user correlation than the raw log.
+- **Copy issue report**: anonymized and bounded for GitHub issues. It hashes site origins, extension IDs, and replay-signal labels, omits local timestamps and full site URLs, and keeps the coarse vectors/path kinds needed to debug protection gaps or compatibility reports.
 
-Noise mode is **off by default** — turning it on is an active choice to shift Static from pure defense to counter-intelligence. Toggle it from the popup.
+Noise mode is **off by default**. Turning it on is an active choice to shift Static from pure defense to counter-intelligence. Toggle it from the popup.
 
-## Device signal poisoning _(opt-in)_
+## Device signal poisoning (opt-in)
 
 BrowserGate documents fingerprint collection beyond extension scans: user-agent and platform strings, CPU and memory buckets, language, screen values, timezone, WebGL, canvas, offline audio, storage, battery, and network hints. Device signal poisoning makes those reads return a plausible persona instead of the real machine profile.
 
@@ -161,28 +137,28 @@ BrowserGate documents fingerprint collection beyond extension scans: user-agent 
 
 Toggle Device signal poisoning from the popup.
 
-## Replay poisoning _(opt-in)_
+## Replay poisoning (opt-in)
 
-Replay poisoning is not a tracker-list replacement. It is an opt-in behavior-level defense for replay SDKs that still run because they are self-hosted, newly named, first-party proxied, or allowed by the user's tracker blocker. It can make the local recording stream less trustworthy without sending fake traffic to the vendor.
+Replay poisoning is an opt-in behavior-level defense for replay SDKs that still run because they are self-hosted, newly named, first-party proxied, or allowed by the user's tracker blocker. It makes the local recording stream less trustworthy without sending fake traffic to the vendor.
 
 Replay poisoning detects likely replay code from script URLs, known globals, and replay-looking listener sources, then wraps only those listeners:
 
-- **Off** — detect and log replay SDK signals locally, but do not alter events.
-- **Mask** — replay listeners see redacted input values (`redacted`, `redacted@example.invalid`, `0`) and generic key/input data. Normal page listeners still see the real value.
-- **Noise** — Mask plus small per-event coordinate and rectangle jitter, so pointer paths and element geometry become less stable.
-- **Chaos** — Noise plus local decoy click/focus/input/blur events delivered directly to detected replay listeners. These synthetic events are not dispatched through the DOM, so normal page handlers do not receive them.
+- **Off**: detect and log replay SDK signals locally, but do not alter events.
+- **Mask**: replay listeners see redacted input values (`redacted`, `redacted@example.invalid`, `0`) and generic key/input data. Normal page listeners still see the real value.
+- **Noise**: Mask plus small per-event coordinate and rectangle jitter, so pointer paths and element geometry become less stable.
+- **Chaos**: Noise plus local decoy click/focus/input/blur events delivered directly to detected replay listeners. These synthetic events are not dispatched through the DOM, so normal page handlers do not receive them.
 
 The feature is scoped to replay listeners rather than the whole page. It does not originate network requests, does not call replay vendor APIs, and does not store form contents. Replay detection signals are stored locally by origin so the popup can show when a site has active replay behavior.
 
-Sentry Replay is handled here too. Static looks for replay-specific Sentry signatures such as `replayIntegration`, `replayCanvasIntegration`, replay sample-rate options, `@sentry/replay`, `rrweb`, and Sentry CDN bundle paths containing `replay`. It intentionally does not block all `*.ingest.sentry.io` traffic because regular Sentry error monitoring and Session Replay share envelope transport URLs.
+Sentry Replay. Static looks for replay-specific Sentry signatures such as `replayIntegration`, `replayCanvasIntegration`, replay sample-rate options, `@sentry/replay`, `rrweb`, and Sentry CDN bundle paths containing `replay`. It intentionally does not block all `*.ingest.sentry.io` traffic because regular Sentry error monitoring and Session Replay share envelope transport URLs.
 
-Datadog Session Replay is handled narrowly. Static watches for replay-specific `DD_RUM` init/start signals such as `sessionReplaySampleRate`, legacy `premiumSampleRate` / `replaySampleRate`, and `startSessionReplayRecording()`, so self-hosted or first-party Datadog replay can still be detected without treating every `DD_RUM` install as a replay recorder.
+Datadog Session Replay. Static watches for replay-specific `DD_RUM` init/start signals such as `sessionReplaySampleRate`, legacy `premiumSampleRate` / `replaySampleRate`, and `startSessionReplayRecording()`. This detects self-hosted or first-party Datadog replay without treating every `DD_RUM` install as a replay recorder.
 
-Hotjar script/source labels are treated as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
+Hotjar. Script/source labels are treated as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
 
-For first-party reverse-proxy and bundled SDK deployments, Static treats PostHog's replay bundle names such as `lazy-recorder`, `posthog-recorder`, and `recorder-v2`, plus documented `posthog.init(...)` default recording starts and `posthog.startSessionRecording()` calls, as replay signals so the listener-scoped poisoning path still applies when domain lists cannot identify the vendor.
+PostHog. For first-party reverse-proxy and bundled SDK deployments, Static treats replay bundle names such as `lazy-recorder`, `posthog-recorder`, and `recorder-v2`, plus documented `posthog.init(...)` default recording starts and `posthog.startSessionRecording()` calls, as replay signals.
 
-First-party or bundled OpenReplay deployments are detected through `openreplay` script/source labels and documented `window.OpenReplay.start()` recording starts.
+OpenReplay. First-party or bundled deployments are detected through `openreplay` script/source labels and documented `window.OpenReplay.start()` recording starts.
 
 ## Install
 
@@ -195,8 +171,8 @@ First-party or bundled OpenReplay deployments are detected through `openreplay` 
 
 Each narrow fingerprinting network rule category lives in its own file under `rules/`. Toggle them two ways:
 
-- **From the popup** — click the extension icon. Each ruleset has a checkbox; changes apply live (no reload).
-- **From `manifest.json`** — each `rule_resources` entry has an `enabled` flag. This controls the initial state on fresh install; after that, user toggles from the popup persist.
+- **From the popup**: click the extension icon. Each ruleset has a checkbox; changes apply live (no reload).
+- **From `manifest.json`**: each `rule_resources` entry has an `enabled` flag. This controls the initial state on fresh install; after that, user toggles from the popup persist.
 
 ```json
 "rule_resources": [
@@ -207,7 +183,7 @@ Each narrow fingerprinting network rule category lives in its own file under `ru
 
 Static intentionally does not ship broad ad-tech, analytics, social pixel, or general session-replay network lists. Use uBlock Origin, Privacy Badger, or both for that layer.
 
-`rules/META.json` is a sidecar index with `version`, `last_verified`, and human-readable descriptions for each ruleset. It's consumed by nothing at runtime — it's there so maintainers and contributors can tell which blocklists are fresh.
+`rules/META.json` is a sidecar index with `version`, `last_verified`, and human-readable descriptions for each ruleset. Nothing consumes it at runtime. It exists so maintainers and contributors can tell which blocklists are fresh.
 
 ## Test
 
@@ -258,10 +234,10 @@ npm run check
 
 ## Extend coverage
 
-- **DOM markers to strip** — edit the regex arrays in `lists.js`.
-- **`window` globals to strip** — edit the `STRIP_GLOBALS` array in `block_globals.js`.
-- **Fingerprinting endpoints to block at the network layer** — add rules to an existing file under `rules/`, or create a new `rules/<category>.json` and register it in `manifest.json`'s `rule_resources` (and add an entry in `rules/META.json` + `popup.js`'s `RULESET_META`). Avoid general tracker or ad-tech lists; those belong in uBlock Origin / Privacy Badger.
-- **A new script-layer probe vector (some new Web API that takes a URL)** — add a wrapper in `block_vectors.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns. Fetch/XHR Noise-mode decoys live in `block.js`.
+- **DOM markers to strip**: edit the regex arrays in `lists.js`.
+- **`window` globals to strip**: edit the `STRIP_GLOBALS` array in `block_globals.js`.
+- **Fingerprinting endpoints to block at the network layer**: add rules to an existing file under `rules/`, or create a new `rules/<category>.json` and register it in `manifest.json`'s `rule_resources` (and add an entry in `rules/META.json` + `popup.js`'s `RULESET_META`). Avoid general tracker or ad-tech lists; those belong in uBlock Origin / Privacy Badger.
+- **A new script-layer probe vector (some new Web API that takes a URL)**: add a wrapper in `block_vectors.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns. Fetch/XHR Noise-mode decoys live in `block.js`.
 
 ## Layout
 
@@ -297,4 +273,4 @@ static/
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
