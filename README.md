@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://chromewebstore.google.com/detail/static/lljfncchalimoimbencbbblpdbhmeiil"><img src="https://img.shields.io/chrome-web-store/v/lljfncchalimoimbencbbblpdbhmeiil?label=Chrome%20Web%20Store&color=blue&logo=googlechrome&logoColor=white" alt="Chrome Web Store"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/G-man3207/Static?color=blue" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/manifest-v3-brightgreen" alt="Manifest V3">
   <img src="https://img.shields.io/github/v/release/G-man3207/Static" alt="Latest release">
@@ -37,7 +38,7 @@ Static is intentionally narrow. It is built to run alongside uBlock Origin or Pr
 3. Toggle **Developer mode** (top-right)
 4. Click **Load unpacked** and select the repo folder
 
-**From the Chrome Web Store:** _coming soon_
+**From the [Chrome Web Store](https://chromewebstore.google.com/detail/static/lljfncchalimoimbencbbblpdbhmeiil):** install Static directly with one click.
 
 ---
 
