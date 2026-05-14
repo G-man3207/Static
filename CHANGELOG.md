@@ -36,8 +36,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Removed
 
 - Removed broad LinkedIn telemetry, session-replay, and Datadog RUM network rulesets from the extension surface so Static stays focused on extension probing and fingerprinting rather than duplicating general tracker blockers.
+- Removed incorrect `||shape.io^` DNR rule (shape.io belongs to NinjaCat, not Shape Security/F5).
 
 ### Fixed
+
+- Edge-case tests now cover `Object.assign`, `Reflect.set`, and `Object.defineProperties` global blocking paths, verifying that Grammarly, Honey, Keeper, Dashlane, and Nordpass globals set via these methods all return `undefined`.
 
 - Device signal poisoning now preserves caller-requested `Intl.DateTimeFormat` time zones while still masking the default timezone.
 - Device signal poisoning now keeps masked User-Agent Client Hints method identities stable, closing a native-surface detection gap.

@@ -540,7 +540,6 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||riskmetrix.net^",
     "||seon.io^",
     "||shapesecurity.com^",
-    "||cdn.sift.com^",
     "||api.sift.com^",
     "||siftscience.com^",
     "||threatmetrix.net^",

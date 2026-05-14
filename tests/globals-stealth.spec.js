@@ -100,3 +100,41 @@ test("runs at document_start without exposing Static config or protected globals
     staticConfigType: "undefined",
   });
 });
+
+test("blocks protected globals set via Object.assign, Reflect.set, and Object.defineProperties", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(() => {
+    Object.assign(window, {
+      __GRAMMARLY_DESKTOP_INTEGRATION__: { source: "assign" },
+      __honeyExtensionInstalled: true,
+    });
+
+    Reflect.set(window, "__keeper_extension_installed", { source: "reflect" });
+
+    Object.defineProperties(window, {
+      __dashlaneExtensionInstalled: { value: true, configurable: true },
+      __nordpassExtensionInstalled: { value: true, configurable: true },
+    });
+
+    return {
+      grammarly: window.__GRAMMARLY_DESKTOP_INTEGRATION__,
+      honey: window.__honeyExtensionInstalled,
+      keeper: window.__keeper_extension_installed,
+      dashlane: window.__dashlaneExtensionInstalled,
+      nordpass: window.__nordpassExtensionInstalled,
+    };
+  });
+
+  expect(result).toEqual({
+    grammarly: undefined,
+    honey: undefined,
+    keeper: undefined,
+    dashlane: undefined,
+    nordpass: undefined,
+  });
+});
