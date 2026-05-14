@@ -247,25 +247,6 @@
     }
   },
   {
-    "id": 14,
-    "priority": 1,
-    "action": { "type": "block" },
-    "condition": {
-      "urlFilter": "||shape.io^",
-      "resourceTypes": [
-        "sub_frame",
-        "stylesheet",
-        "xmlhttprequest",
-        "ping",
-        "websocket",
-        "webtransport",
-        "image",
-        "script",
-        "other"
-      ]
-    }
-  },
-  {
     "id": 15,
     "priority": 1,
     "action": { "type": "block" },
