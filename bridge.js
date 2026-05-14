@@ -7,7 +7,9 @@
     "__static_element_decoy_bridge_init__",
     "__static_fingerprint_bridge_init__",
     "__static_noise_bridge_init__",
+    "__static_probe_bridge_init__",
     "__static_replay_bridge_init__",
+    "__static_style_probe_bridge_init__",
   ];
   const PROBE_EVENTS = [
     "__static_noise_bridge_init__",
@@ -16,6 +18,7 @@
   ];
   const configPorts = new Set();
   const pendingDiagnosticEvents = [];
+  let disabled = false;
   let pendingDelta = 0;
   let diagnosticsMode = false;
   let frameTotal = 0;
@@ -197,6 +200,7 @@
   };
 
   const handleProbeBlocked = (data) => {
+    if (disabled) return;
     pendingDelta++;
     bumpMap(pendingVectorCounts, normalizeVector(data.where));
     bumpMap(pendingPathKindCounts, pathKindFor(data.url));
@@ -210,6 +214,7 @@
   };
 
   const sendReplaySignal = (signal) => {
+    if (disabled) return;
     try {
       chrome.runtime.sendMessage({
         type: "static_replay_detected",
@@ -219,6 +224,7 @@
   };
 
   const sendAdaptiveSignal = (signal = {}) => {
+    if (disabled) return;
     try {
       chrome.runtime.sendMessage({
         type: "static_adaptive_signal",
@@ -262,6 +268,7 @@
       port.postMessage({
         type: "config_update",
         persona: Array.isArray(response.ids) ? response.ids : [],
+        disabled: !!response.disabled,
         fingerprintMode:
           typeof response.fingerprintMode === "string" ? response.fingerprintMode : "off",
         fingerprintPersona:
@@ -277,11 +284,54 @@
     }
   };
 
+  const checkDisabledState = async () => {
+    try {
+      const currentOrigin = location.origin;
+      if (!currentOrigin || currentOrigin === "null") return;
+      const { disabled_origins = {} } = await chrome.storage.local.get({ disabled_origins: {} });
+      const wasDisabled = disabled;
+      const nowDisabled = !!disabled_origins[currentOrigin];
+      disabled = nowDisabled;
+      if (nowDisabled && !wasDisabled) {
+        resetProbeState();
+      }
+      // If disabled state changed, send config to MAIN world scripts
+      if (nowDisabled !== wasDisabled) {
+        const config = {
+          type: "config_update",
+          disabled: nowDisabled,
+          persona: [],
+          fingerprintMode: "off",
+          fingerprintPersona: null,
+          diagnosticsMode: false,
+          noiseEnabled: false,
+          replayMode: "off",
+        };
+        for (const port of [...configPorts]) {
+          try {
+            port.postMessage(config);
+          } catch {
+            configPorts.delete(port);
+          }
+        }
+      }
+    } catch {}
+  };
+
   const refreshPersona = async () => {
     try {
+      // Yield so MAIN world scripts have time to initialize port listeners
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
       const response = await chrome.runtime.sendMessage({ type: "static_get_persona" });
       if (!response) return;
       diagnosticsMode = !!response.diagnosticsMode;
+      const wasDisabled = disabled;
+      disabled = !!response.disabled;
+      if (disabled && !wasDisabled) {
+        resetProbeState();
+      }
       for (const port of [...configPorts]) postConfig(port, response);
     } catch {}
   };
@@ -293,14 +343,20 @@
   ])) {
     createPort(eventName);
   }
-  refreshPersona();
+  // Check disabled state directly from storage first, then fetch persona
+  checkDisabledState().then(() => {
+    refreshPersona();
+  });
 
   addEventListener("pagehide", flush, { capture: true });
   document.addEventListener("visibilitychange", flushOnHidden, { capture: true });
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg && msg.type === "static_persona_update") {
-      if (msg.resetProbeState) resetProbeState();
+      if (msg.resetProbeState) {
+        resetProbeState();
+        disabled = false;
+      }
       refreshPersona()
         .then(() => sendResponse({ ok: true }))
         .catch(() => sendResponse({ ok: false }));

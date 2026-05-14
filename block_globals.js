@@ -80,12 +80,14 @@
   };
 
   const scrubGlobals = () => {
+    if (window.__staticDisabled) return;
     for (const target of SCRUB_TARGETS) {
       for (const key of STRIP_GLOBALS) scrubOwnProp(target, key);
     }
   };
 
   const filterDescriptors = (target, descriptors) => {
+    if (window.__staticDisabled) return descriptors;
     if (!isProtectedTarget(target) || !descriptors || typeof descriptors !== "object") {
       return descriptors;
     }
@@ -109,6 +111,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       defineProperty(target, key) {
+        if (window.__staticDisabled) return orig.apply(this, arguments);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
           scrubOwnProp(target, key);
           return target;
@@ -131,6 +134,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       defineProperties(target, descriptors) {
+        if (window.__staticDisabled) return orig.call(this, target, descriptors);
         const filtered = filterDescriptors(target, descriptors);
         return orig.call(this, target, filtered);
       },
@@ -150,6 +154,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       assign(target) {
+        if (window.__staticDisabled) return orig.apply(this, arguments);
         if (!isProtectedTarget(target)) return orig.apply(this, arguments);
         const sources = [];
         for (let i = 1; i < arguments.length; i++) {
@@ -187,6 +192,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       defineProperty(target, key, attributes) {
+        if (window.__staticDisabled) return orig.call(this, target, key, attributes);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
           scrubOwnProp(target, key);
           return true;
@@ -210,6 +216,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       set(target, key) {
+        if (window.__staticDisabled) return orig.apply(this, arguments);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
           scrubOwnProp(target, key);
           return true;
@@ -233,6 +240,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       [name](key) {
+        if (window.__staticDisabled) return orig.apply(this, arguments);
         if (isProtectedTarget(this) && isProtectedKey(key)) {
           scrubOwnProp(this, key);
           return undefined;
@@ -260,6 +268,7 @@
 
   let scrubTicks = 0;
   const scrubTimer = setInterval(() => {
+    if (window.__staticDisabled) return;
     scrubGlobals();
     scrubTicks++;
     if (scrubTicks >= FAST_SCRUB_TICKS) clearInterval(scrubTimer);

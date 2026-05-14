@@ -7,6 +7,7 @@
   const MAX_QUEUED_PROBES = 1000;
   const queuedProbeEvents = [];
   let bridgePort = null;
+  let disabled = false;
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
@@ -101,6 +102,12 @@
     try {
       bridgePort.start();
     } catch {}
+    bridgePort.onmessage = (portEvent) => {
+      const data = portEvent && portEvent.data;
+      if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
+        disabled = data.disabled;
+      }
+    };
     flushQueuedProbes();
     document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
   };
@@ -153,6 +160,10 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
+        if (disabled) {
+          desc.set.call(this, value);
+          return;
+        }
         const url = urlFinder(value);
         if (url) {
           bump(label, url);
@@ -296,6 +307,7 @@
         const argName = args.length >= 3 ? args[1] : args[0];
         const argValue = args.length >= 3 ? args[2] : args[1];
         const nextArgs = args.slice();
+        if (disabled) return origFn.apply(this, nextArgs);
         if (typeof argName === "string") {
           const normalizedName = argName.toLowerCase();
           const url = blockedAttrUrl(normalizedName, argValue);
@@ -336,6 +348,7 @@
       if (typeof origBeacon !== "function") return;
       const wrappedBeacon = {
         sendBeacon(url) {
+          if (disabled) return origBeacon.apply(this, arguments);
           if (isBad(url)) {
             bump("sendBeacon", url);
             throw new TypeError("Failed to execute 'sendBeacon' on 'Navigator': Invalid URL");

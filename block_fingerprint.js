@@ -47,6 +47,7 @@
   let bridgePort = null;
   let fingerprintMode = "off";
   let fingerprintPersona = null;
+  let disabled = false;
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
@@ -201,7 +202,7 @@
 
   const persona = () => fingerprintPersona || DEFAULT_PERSONA;
 
-  const isMasking = () => fingerprintMode === MODE_MASK;
+  const isMasking = () => !disabled && fingerprintMode === MODE_MASK;
 
   const applyConfigUpdate = (data) => {
     if (!data || data.type !== "config_update") return;
@@ -210,6 +211,9 @@
     }
     if (data.fingerprintPersona && typeof data.fingerprintPersona === "object") {
       fingerprintPersona = sanitizePersona(data.fingerprintPersona);
+    }
+    if (typeof data.disabled === "boolean") {
+      disabled = data.disabled;
     }
   };
 

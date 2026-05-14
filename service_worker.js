@@ -632,7 +632,9 @@ const detailsResponseFor = async (tabId, stored) => {
   const selectedPersonaIds =
     originProbeEntry && stored.noise_enabled ? await personaFor(origin) : [];
   const loggedOrigins = loggedOriginsFor(stored);
+  const disabledOrigins = stored.disabled_origins || {};
   return {
+    disabled: !!(origin && disabledOrigins[origin]),
     total: sumTabTotal(tabId),
     topIds: topIdsForTab(tabId, 5),
     cumulative: stored.cumulative,
@@ -663,6 +665,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
       cumulative: 0,
       diagnostic_log: {},
       diagnostics_mode: false,
+      disabled_origins: {},
       fingerprint_mode: "off",
       noise_enabled: false,
       probe_log: {},
@@ -679,22 +682,26 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
   (async () => {
     const {
       diagnostics_mode = false,
+      disabled_origins = {},
       fingerprint_mode = "off",
       noise_enabled = false,
       replay_mode = "off",
     } = await chrome.storage.local.get({
       diagnostics_mode: false,
+      disabled_origins: {},
       fingerprint_mode: "off",
       noise_enabled: false,
       replay_mode: "off",
     });
     const origin = rememberSenderOrigin(sender);
+    const disabled = !!(origin && disabled_origins[origin]);
     const fingerprintMode = fingerprint_mode === "mask" ? "mask" : "off";
     const fingerprintPersona =
       fingerprintMode === "mask" ? await fingerprintPersonaFor(origin) : null;
     if (!noise_enabled || !origin) {
       sendResponse({
         diagnosticsMode: diagnostics_mode,
+        disabled,
         fingerprintMode,
         fingerprintPersona,
         ids: [],
@@ -707,6 +714,7 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
     const ids = await personaFor(origin);
     sendResponse({
       diagnosticsMode: diagnostics_mode,
+      disabled,
       fingerprintMode,
       fingerprintPersona,
       ids,
@@ -760,6 +768,42 @@ const handleSetFingerprint = (msg, _sender, sendResponse) => {
     await chrome.storage.local.set({ fingerprint_mode: mode });
     await broadcastConfigUpdate();
     sendResponse({ ok: true, mode });
+  })();
+  return true;
+};
+
+const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
+  (async () => {
+    const origin = msg.origin;
+    const disabled = !!msg.disabled;
+    if (!origin) {
+      sendResponse({ ok: false, error: "no origin" });
+      return;
+    }
+    const { disabled_origins = {} } = await chrome.storage.local.get({ disabled_origins: {} });
+    if (disabled) {
+      disabled_origins[origin] = true;
+    } else {
+      delete disabled_origins[origin];
+    }
+    await chrome.storage.local.set({ disabled_origins });
+    // Notify the tab for this origin so content scripts can update immediately
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) => {
+        if (tab.id == null) return null;
+        const tabOrigin = originFromUrl(tab.url);
+        if (tabOrigin === origin) {
+          // Send direct disabled update to MAIN world scripts AND persona update to bridge
+          chrome.tabs
+            .sendMessage(tab.id, { type: "static_disabled_update", disabled })
+            .catch(() => {});
+          return chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {});
+        }
+        return null;
+      })
+    );
+    sendResponse({ ok: true });
   })();
   return true;
 };
@@ -841,6 +885,7 @@ const messageHandlers = {
   static_set_fingerprint: handleSetFingerprint,
   static_set_noise: handleSetNoise,
   static_set_replay: handleSetReplay,
+  static_set_site_disabled: handleSetSiteDisabled,
 };
 
 // ─── Message router ───────────────────────────────────────────────────────

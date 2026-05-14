@@ -11,6 +11,7 @@
   let nativeCssTextGetter = null;
   let nativeCssTextSetter = null;
   let bridgePort = null;
+  let disabled = false;
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
@@ -88,6 +89,12 @@
     try {
       bridgePort.start();
     } catch {}
+    bridgePort.onmessage = (event) => {
+      const msg = event.data;
+      if (msg && msg.type === "config_update" && typeof msg.disabled === "boolean") {
+        disabled = msg.disabled;
+      }
+    };
     flushQueuedProbes();
     document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
   };
@@ -283,6 +290,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       setProperty(name, value, priority) {
+        if (disabled) return orig.call(this, name, value, priority);
         const url = firstBadUrlIn(value);
         if (url) {
           bump("style.setProperty", url);
@@ -307,6 +315,10 @@
     nativeCssTextSetter = desc.set;
     const wrapped = {
       set cssText(value) {
+        if (disabled) {
+          desc.set.call(this, value);
+          return;
+        }
         const sanitized = sanitizeStyleDeclarationValue(value, "style.cssText");
         desc.set.call(this, sanitized.changed ? sanitized.value : value);
       },
@@ -329,6 +341,10 @@
       if (!desc || !desc.set) continue;
       const setterHolder = {
         set [prop](value) {
+          if (disabled) {
+            desc.set.call(this, value);
+            return;
+          }
           const sanitized = sanitizeStyleDeclarationValue(value, "style.property");
           desc.set.call(this, sanitized.changed ? sanitized.value : value);
         },
@@ -353,6 +369,10 @@
     if (!desc || !desc.set) return;
     const wrapped = {
       set textContent(value) {
+        if (disabled) {
+          desc.set.call(this, value);
+          return;
+        }
         if (isStyleElement(this) && blockStyleText("style.textContent", value)) {
           desc.set.call(this, "");
           return;
@@ -380,6 +400,10 @@
     if (!desc || !desc.set) return;
     const wrapped = {
       set [prop](value) {
+        if (disabled) {
+          desc.set.call(this, value);
+          return;
+        }
         if (isStyleTextNode(this) && blockStyleText(label, value)) {
           desc.set.call(this, "");
           return;
@@ -402,6 +426,10 @@
     if (!innerHTMLDesc || !innerHTMLDesc.set) return;
     const wrapped = {
       set innerHTML(value) {
+        if (disabled) {
+          innerHTMLDesc.set.call(this, value);
+          return;
+        }
         const nextValue =
           isStyleElement(this) && blockStyleText("style.innerHTML", value)
             ? ""
@@ -424,6 +452,10 @@
     if (!outerHTMLDesc || !outerHTMLDesc.set || !innerHTMLDesc) return;
     const wrapped = {
       set outerHTML(value) {
+        if (disabled) {
+          outerHTMLDesc.set.call(this, value);
+          return;
+        }
         outerHTMLDesc.set.call(this, sanitizeStyleMarkup(value, "style.outerHTML", innerHTMLDesc));
       },
     };
@@ -444,6 +476,7 @@
     if (typeof orig !== "function" || !innerHTMLDesc) return;
     const wrapped = {
       insertAdjacentHTML(position, html) {
+        if (disabled) return orig.call(this, position, html);
         const nextHtml =
           isStyleElement(this) && blockStyleText("style.insertAdjacentHTML", html)
             ? ""
@@ -466,6 +499,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       insertAdjacentText(position, text) {
+        if (disabled) return orig.call(this, position, text);
         const nextText =
           isStyleElement(this) && blockStyleText("style.insertAdjacentText", text) ? "" : text;
         return orig.call(this, position, nextText);
@@ -504,6 +538,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       [name](node, ...rest) {
+        if (disabled) return orig.call(this, node, ...rest);
         if (node && typeof node === "object") {
           if (isStyleElement(this)) scrubStyleTextPayload(node, label);
           scrubTree(node, label);
@@ -524,6 +559,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       [name](...args) {
+        if (disabled) return orig.apply(this, args);
         return orig.apply(this, scrubInsertionArgs(this, args, label));
       },
     }[name];
@@ -593,6 +629,7 @@
     const origSetAttributeNS = Element.prototype.setAttributeNS;
     const wrapped = {
       setAttribute(name, value) {
+        if (disabled) return origSetAttribute.apply(this, arguments);
         if (attrLocalName(name) === "style") {
           const sanitized = sanitizeStyleDeclarationValue(value, "style.setAttribute");
           return origSetAttribute.call(this, name, sanitized.changed ? sanitized.value : value);
@@ -600,6 +637,7 @@
         return origSetAttribute.apply(this, arguments);
       },
       setAttributeNS(ns, name, value) {
+        if (disabled) return origSetAttributeNS.apply(this, arguments);
         if (attrLocalName(name) === "style") {
           const sanitized = sanitizeStyleDeclarationValue(value, "style.setAttributeNS");
           return origSetAttributeNS.call(
