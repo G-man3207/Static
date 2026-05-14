@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Static",
-  "version": "2.0.10",
+  "version": "2.1.0",
   "description": "Blocks extension-enumeration probes and extension-derived browser fingerprinting.",
   "permissions": ["declarativeNetRequest", "storage"],
   "icons": {
