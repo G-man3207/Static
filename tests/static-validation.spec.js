@@ -526,6 +526,8 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||fptls3.com^",
     "||fptls4.com^",
     "||geetest.com^",
+    "||humansecurity.com^",
+    "||imperva.com^",
     "||incapsula.com^",
     "||kasada.io^",
     "||kasada.net^",
@@ -611,4 +613,11 @@ test("conflictSlots include Dark Reader in the dark_mode slot", () => {
   vm.runInContext(readText("lists.js"), context);
   const slots = context.__static_config__.conflictSlots;
   expect(slots.dark_mode).toContain("eimadpbcbfnmbkopoojfekhnkhdbieeh");
+});
+
+test("conflictSlots include Solflare in the web3_wallet slot", () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  const slots = context.__static_config__.conflictSlots;
+  expect(slots.web3_wallet).toContain("bhhhlkgekbhbdjncpdbjkmjnnapolepf");
 });
