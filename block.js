@@ -343,6 +343,12 @@
 
   const isDecoyableMethod = (method) => method === "GET" || method === "HEAD";
 
+  const byteLengthFor = (body) => {
+    if (typeof body === "string") return new TextEncoder().encode(body).length;
+    if (body instanceof Uint8Array) return body.byteLength;
+    return 0;
+  };
+
   const buildDecoyResponse = (url, method = "GET", decoyBody = buildDecoyBody(url)) => {
     if (!decoyBody) return null;
     const { body, contentType } = decoyBody;
@@ -351,7 +357,10 @@
       const response = new Response(responseBody, {
         status: 200,
         statusText: "OK",
-        headers: { "content-type": contentType },
+        headers: {
+          "content-length": String(byteLengthFor(body)),
+          "content-type": contentType,
+        },
       });
       fakeFetchResponses.set(response, { type: "basic", url: String(url) });
       return response;
@@ -424,6 +433,7 @@
 
   const emptyFakeXhr = (readyState) => ({
     allHeaders: "",
+    contentLength: null,
     contentType: null,
     readyState,
     response: "",
@@ -453,6 +463,7 @@
     const { contentType } = decoyBody;
     const body = method === "HEAD" ? "" : decoyBody.body;
     const text = method === "HEAD" ? "" : textBodyFor(body);
+    const contentLength = String(byteLengthFor(decoyBody.body));
     const responseType = String(xhr.responseType || "");
     const responseValue = responseValueFor(xhr, body, contentType, text);
     const fake = emptyFakeXhr(1);
@@ -463,7 +474,8 @@
       } catch {}
       try {
         Object.assign(fake, {
-          allHeaders: `content-type: ${contentType}\r\n`,
+          allHeaders: `content-type: ${contentType}\r\ncontent-length: ${contentLength}\r\n`,
+          contentLength,
           contentType,
           readyState: 2,
           responseURL: url,
@@ -562,7 +574,10 @@
       getResponseHeader(name) {
         const fake = fakeXhrResponses.get(this);
         if (fake) {
-          return String(name).toLowerCase() === "content-type" ? fake.contentType : null;
+          const lower = String(name).toLowerCase();
+          if (lower === "content-type") return fake.contentType;
+          if (lower === "content-length") return fake.contentLength;
+          return null;
         }
         const normalizedName = String(name == null ? "" : name)
           .trim()

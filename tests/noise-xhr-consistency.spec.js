@@ -35,6 +35,7 @@ const collectNoiseNetworkDetails = (page) =>
       }
       return {
         allHeaders: xhr.getAllResponseHeaders(),
+        contentLength: xhr.getResponseHeader("content-length"),
         contentType: xhr.getResponseHeader("content-type"),
         readyState: xhr.readyState,
         response: xhr.response,
@@ -72,19 +73,22 @@ const collectNoiseNetworkDetails = (page) =>
     const response = await fetch(url);
     const responseClone = response.clone();
     const head = await fetch(new Request(url, { method: "HEAD" }));
+    const manifestText = await responseClone.text();
     return {
       fetch: {
         cloneType: responseClone.type,
         cloneUrl: responseClone.url,
+        contentLength: response.headers.get("content-length"),
         instance: response instanceof Response,
         manifest: await response.json(),
         ownType: own(response, "type"),
         ownUrl: own(response, "url"),
         prototype: Object.getPrototypeOf(response) === Response.prototype,
-        responseText: await responseClone.text(),
+        responseText: manifestText,
         type: response.type,
         url: response.url,
       },
+      headContentLength: head.headers.get("content-length"),
       headText: await head.text(),
       xhrHead: await xhrAsync("HEAD"),
       xhrJson: await xhrAsync("GET", "json"),
@@ -93,8 +97,9 @@ const collectNoiseNetworkDetails = (page) =>
     };
   }, manifestUrl());
 
-const expectHeadXhr = (xhrHead) => {
+const expectHeadXhr = (xhrHead, expectedContentLength) => {
   expect(xhrHead).toMatchObject({
+    contentLength: expectedContentLength,
     contentType: "application/json; charset=utf-8",
     readyState: 4,
     response: "",
@@ -103,6 +108,7 @@ const expectHeadXhr = (xhrHead) => {
     status: 200,
   });
   expect(xhrHead.allHeaders).toContain("content-type: application/json; charset=utf-8");
+  expect(xhrHead.allHeaders).toContain(`content-length: ${expectedContentLength}`);
 };
 
 const probeFetch = (page) =>
@@ -139,6 +145,7 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
   expect(result.fetch).toMatchObject({
     cloneType: "basic",
     cloneUrl: manifestUrl(),
+    contentLength: String(result.fetch.responseText.length),
     instance: true,
     manifest: {
       manifest_version: 3,
@@ -152,8 +159,10 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
     url: manifestUrl(),
   });
   expect(JSON.parse(result.fetch.responseText)).toMatchObject({ name: "Browser Extension" });
+  expect(result.headContentLength).toBe(result.fetch.contentLength);
   expect(result.headText).toBe("");
   expect(result.xhrText).toMatchObject({
+    contentLength: result.fetch.contentLength,
     contentType: "application/json; charset=utf-8",
     ownGetHeader: false,
     ownReadyState: false,
@@ -165,9 +174,10 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
     status: 200,
   });
   expect(result.xhrText.allHeaders).toContain("content-type: application/json; charset=utf-8");
+  expect(result.xhrText.allHeaders).toContain(`content-length: ${result.fetch.contentLength}`);
   expect(JSON.parse(result.xhrText.responseText)).toMatchObject({ name: "Browser Extension" });
-  expectHeadXhr(result.xhrHead);
-  expectHeadXhr(result.xhrSyncHead);
+  expectHeadXhr(result.xhrHead, result.fetch.contentLength);
+  expectHeadXhr(result.xhrSyncHead, result.fetch.contentLength);
   expect(result.xhrJson).toMatchObject({
     ownResponse: false,
     ownResponseText: false,

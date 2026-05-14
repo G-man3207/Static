@@ -35,6 +35,7 @@ async function probeNetwork(page, urls) {
       request.addEventListener("loadend", () => {
         resolve({
           body: request.responseText,
+          contentLength: request.getResponseHeader("content-length"),
           contentType: request.getResponseHeader("content-type"),
           ownGetHeader: Object.prototype.hasOwnProperty.call(request, "getResponseHeader"),
           responseURL: request.responseURL,
@@ -46,6 +47,7 @@ async function probeNetwork(page, urls) {
     });
     return {
       fetch: {
+        contentLength: response.headers.get("content-length"),
         contentType: response.headers.get("content-type"),
         instance: response instanceof Response,
         manifest,
@@ -58,6 +60,7 @@ async function probeNetwork(page, urls) {
       },
       head: {
         body: await head.text(),
+        contentLength: head.headers.get("content-length"),
         status: head.status,
         url: head.url,
       },
@@ -336,6 +339,10 @@ async function getProbeVectorCounts(extension, origin) {
 function checkNetwork(probe, urls) {
   const fetchBody = JSON.parse(probe.network.fetch.responseText);
   const xhrBody = JSON.parse(probe.network.xhr.body);
+  const contentLengthAgrees =
+    probe.network.fetch.contentLength === probe.network.xhr.contentLength &&
+    probe.network.fetch.contentLength === probe.network.head.contentLength &&
+    probe.network.fetch.contentLength === String(probe.network.fetch.responseText.length);
   return (
     probe.network.fetch.status === 200 &&
     probe.network.fetch.ok === true &&
@@ -348,7 +355,8 @@ function checkNetwork(probe, urls) {
     probe.network.xhr.status === 200 &&
     probe.network.xhr.ownGetHeader === false &&
     probe.network.xhr.responseURL === urls.manifestUrl &&
-    fetchBody.name === xhrBody.name
+    fetchBody.name === xhrBody.name &&
+    contentLengthAgrees
   );
 }
 

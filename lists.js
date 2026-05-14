@@ -82,6 +82,7 @@
         "hnfanknocfeofbddgcijnmhnfnkdnaad", // Coinbase Wallet
         "bfnaelmomeimhlpmgjnjophhpkkoljpa", // Phantom
         "ibnejdfjmmkpcnlpebklmnkoeoihofec", // TronLink
+        "bhhhlkgekbhbdjncpdbjkmjnnapolepf", // Solflare
       ],
       react_devtools: [
         "fmkadmapgofadopljbjfkapdkoienihi", // React DevTools
