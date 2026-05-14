@@ -9,6 +9,7 @@
   let bridgePort = null;
   let persona = new Set();
   let noiseEnabled = false;
+  let disabled = false;
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
@@ -53,6 +54,10 @@
     }
     if (typeof data.noiseEnabled === "boolean") {
       noiseEnabled = data.noiseEnabled;
+    }
+    if (typeof data.disabled === "boolean") {
+      disabled = data.disabled;
+      window.__staticDisabled = disabled;
     }
   };
 
@@ -414,6 +419,7 @@
     if (typeof origFetch !== "function") return;
     const wrappedFetch = {
       fetch(input) {
+        if (disabled) return origFetch.apply(this, arguments);
         if (isBad(input)) {
           const url = getUrl(input);
           const method = fetchMethodFor(input, arguments[1]);
@@ -543,6 +549,7 @@
     };
     const wrappedOpen = {
       open(method, url, ...rest) {
+        if (disabled) return origOpen.call(this, method, url, ...rest);
         const bad = isBad(url);
         if (bad) {
           blockedXHRs.set(this, {
@@ -557,6 +564,7 @@
     }.open;
     const wrappedSend = {
       send(...args) {
+        if (disabled) return origSend.apply(this, args);
         if (!blockedXHRs.has(this)) return origSend.apply(this, args);
         const blocked = blockedXHRs.get(this);
         blockedXHRs.delete(this);

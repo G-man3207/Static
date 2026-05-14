@@ -31,6 +31,7 @@
   let bridgePort = null;
   let noiseEnabled = false;
   let persona = new Set();
+  let disabled = false;
   let nativeAttrValueGetter = null;
   let nativeAttrValueSetter = null;
   let nativeGetAttribute = null;
@@ -105,6 +106,7 @@
       persona = new Set(data.persona.filter((id) => typeof id === "string"));
     }
     if (typeof data.noiseEnabled === "boolean") noiseEnabled = data.noiseEnabled;
+    if (typeof data.disabled === "boolean") disabled = data.disabled;
   };
 
   const postProbe = (url, where) => {
@@ -470,6 +472,7 @@
   };
 
   const elementProbe = (el, prop, value) => {
+    if (disabled) return null;
     const url = probeUrlFor(prop, value);
     if (!url || !canHandlePassiveElement(el, prop)) return null;
     const kind = passiveDecoyKindFor(url, prop, el);
@@ -1210,6 +1213,7 @@
   };
 
   const svgHrefProbe = (el, value) => {
+    if (disabled) return null;
     const url = isBad(value) ? getUrl(value) : "";
     if (!url) return null;
     const kind = passiveDecoyKindFor(url, "href", el);

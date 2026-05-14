@@ -2364,6 +2364,48 @@ test("DOM marker scrubber hides transient markers from page MutationObservers", 
   expect(serialized).not.toContain("onepassword-pill");
 });
 
+test("per-site disable stops blocking extension probes", async ({ extension, server }) => {
+  const probedId = "nngceckbapebfimnlniiiahkandclblb";
+  const probeUrl = `chrome-extension://${probedId}/manifest.json`;
+
+  // Set disabled state BEFORE navigation
+  await extension.serviceWorker.evaluate(
+    (origin) =>
+      chrome.storage.local.set({
+        disabled_origins: { [origin]: true },
+      }),
+    server.origin
+  );
+
+  // Navigate fresh — bridge should check disabled_origins on init
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  // Wait for bridge to initialize and propagate disabled state
+  await page.waitForTimeout(500);
+
+  // Fire a probe — when disabled, the fetch passes through to origFetch
+  // (fails because extension not installed) and the error is swallowed.
+  // Critically, our blocker's probe-logging path is NOT triggered.
+  await page.evaluate(async (url) => {
+    await fetch(url).catch(() => {});
+  }, probeUrl);
+  await page.waitForTimeout(600);
+
+  // With disabled=true, the bridge's handleProbeBlocked should have been
+  // a no-op, so no probe data should have reached the service worker.
+  const storage = await extension.serviceWorker.evaluate(
+    (origin) =>
+      chrome.storage.local.get(["cumulative", "probe_log"]).then((stored) => ({
+        cumulative: stored.cumulative || 0,
+        logged: !!(stored.probe_log && stored.probe_log[origin]),
+      })),
+    server.origin
+  );
+  expect(storage.cumulative).toBe(0);
+  expect(storage.logged).toBe(false);
+});
+
 test("Clear log removes probe state and Noise identity while preserving preferences", async ({
   extension,
 }) => {

@@ -4,6 +4,12 @@ All notable changes to Static will be documented here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Per-site whitelist. Users can now disable Static's protections on individual sites from the popup. When a site is disabled, all extension-probe blocking, DOM scrubbing, global stripping, and opt-in poisoning modes are bypassed. The disabled state persists across sessions and updates instantly on the current page.
+
 ## [2.1.0] — 2026-05-14
 
 ### Added

@@ -13,6 +13,7 @@
   const TAG_PATTERNS = CFG.domStripTags || [];
   const CLASS_PATTERNS = CFG.domStripClasses || [];
   if (!ATTR_PATTERNS.length && !TAG_PATTERNS.length && !CLASS_PATTERNS.length) return;
+  let disabled = false;
   const OBSERVE_OPTIONS = {
     attributes: true,
     childList: true,
@@ -22,6 +23,19 @@
   const observedRoots = new WeakSet();
   const scheduledShadowScans = new WeakSet();
   let obs = null;
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === "static_persona_update") {
+      chrome.runtime
+        .sendMessage({ type: "static_get_persona" })
+        .then((response) => {
+          if (response && typeof response.disabled === "boolean") {
+            disabled = response.disabled;
+          }
+        })
+        .catch(() => {});
+    }
+  });
 
   const matchesAny = (patterns, value) => patterns.some((pattern) => pattern.test(value));
 
@@ -81,7 +95,7 @@
   };
 
   const scrubTree = (root) => {
-    if (!root) return;
+    if (!root || disabled) return;
     scrubEl(root);
     if (root.querySelectorAll) {
       for (const el of root.querySelectorAll("*")) scrubEl(el);
@@ -109,6 +123,7 @@
   };
 
   obs = new MutationObserver((muts) => {
+    if (disabled) return;
     for (const m of muts) {
       if (m.addedNodes) {
         for (const node of m.addedNodes) {

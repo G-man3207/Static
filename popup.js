@@ -293,6 +293,52 @@ const renderPowerDiagnostics = (resp) => {
   }
 };
 
+const renderSiteSection = (resp) => {
+  const toggle = document.getElementById("site-toggle");
+  const statusText = document.getElementById("site-status-text");
+  const section = document.getElementById("site-control");
+  const isDisabled = !!(resp && resp.disabled);
+
+  toggle.checked = !isDisabled;
+
+  const updateUI = () => {
+    if (isDisabled) {
+      statusText.textContent = "Paused on this site";
+      statusText.className = "site-status-paused";
+    } else {
+      statusText.textContent = "Protecting this site";
+      statusText.className = "site-status-active";
+    }
+  };
+  updateUI();
+
+  if (!resp || !resp.origin) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+
+  toggle.addEventListener("change", async ({ currentTarget }) => {
+    const el = currentTarget;
+    const checked = el.checked;
+    const desiredDisabled = !checked;
+    const localResp = resp;
+    try {
+      await chrome.runtime.sendMessage({
+        type: "static_set_site_disabled",
+        disabled: desiredDisabled,
+        origin: localResp.origin,
+      });
+      localResp.disabled = desiredDisabled;
+      updateUI();
+      await pushConfigUpdateToActiveTab();
+    } catch (e) {
+      console.error("[Static] site toggle failed", e);
+      el.checked = checked;
+    }
+  });
+};
+
 const renderDetails = (resp) => {
   const total = resp && typeof resp.total === "number" ? resp.total : 0;
   const cumulative = resp && typeof resp.cumulative === "number" ? resp.cumulative : 0;
@@ -556,6 +602,7 @@ const renderRulesets = (enabledArr, counts) => {
   ]);
 
   renderDetails(details);
+  renderSiteSection(details);
   renderNoiseSection(details);
   renderDiagnosticsSection(details);
   renderFingerprintSection(details);

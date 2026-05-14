@@ -212,11 +212,13 @@
     nativeRemoveAttribute = Element.prototype.removeAttribute;
     const wrapped = {
       setAttribute(name, value) {
+        if (window.__staticDisabled) return origSetAttribute.call(this, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttribute.call(this, name, normalized.value);
       },
       setAttributeNS(ns, name, value) {
+        if (window.__staticDisabled) return origSetAttributeNS.call(this, ns, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttributeNS.call(this, ns, name, normalized.value);
@@ -234,6 +236,10 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
+        if (window.__staticDisabled) {
+          desc.set.call(this, value);
+          return;
+        }
         if (beforeSet) beforeSet(this);
         desc.set.call(this, normalize(value));
       },
@@ -256,6 +262,10 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
+        if (window.__staticDisabled) {
+          desc.set.call(this, value);
+          return;
+        }
         if (value && this.hasAttribute("allow")) return;
         desc.set.call(this, value);
       },
@@ -277,6 +287,10 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
+        if (window.__staticDisabled) {
+          desc.set.call(this, value);
+          return;
+        }
         desc.set.call(this, sanitizeIframeMarkup(value));
       },
     };
@@ -298,6 +312,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       insertAdjacentHTML(position, html) {
+        if (window.__staticDisabled) return orig.call(this, position, html);
         return orig.call(this, position, sanitizeIframeMarkup(html));
       },
     }.insertAdjacentHTML;
@@ -328,6 +343,10 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set value(nextValue) {
+        if (window.__staticDisabled) {
+          desc.set.call(this, nextValue);
+          return;
+        }
         const value = isSandboxTokenList(this) ? normalizeSandboxValue(nextValue) : nextValue;
         desc.set.call(this, value);
       },
@@ -349,6 +368,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       add(...tokens) {
+        if (window.__staticDisabled) return orig.apply(this, tokens);
         if (!isSandboxTokenList(this)) return orig.apply(this, tokens);
         const normalized = normalizeSandboxTokens(tokens);
         if (!normalized.length) return;
@@ -367,6 +387,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       toggle(token, force) {
+        if (window.__staticDisabled) return orig.apply(this, arguments);
         if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
         const [normalized] = normalizeSandboxTokens([token]);
         if (!normalized) return false;
@@ -389,6 +410,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       replace(token, newToken) {
+        if (window.__staticDisabled) return orig.apply(this, arguments);
         if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
         const oldToken = String(token || "")
           .trim()

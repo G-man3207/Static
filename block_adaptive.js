@@ -72,6 +72,7 @@
     human: { appId: "", hostUrl: "", jsClientReason: "", jsClientSrc: "", source: "" },
     sift: { account: false, scriptUrl: "", source: "", trackPageview: false },
   };
+  let disabled = false;
   let bridgePort = null;
   let activeAdaptiveSource = "";
   const asyncSourceWrappers = new WeakMap();
@@ -150,6 +151,7 @@
   });
 
   const postAdaptiveSignal = (signal) => {
+    if (disabled) return;
     const safeSignal = sanitizeSignal(signal);
     if (bridgePort) {
       try {
@@ -189,6 +191,12 @@
     try {
       bridgePort.start();
     } catch {}
+    bridgePort.onmessage = (event) => {
+      const msg = event && event.data;
+      if (msg && msg.type === "config_update" && msg.disabled != null) {
+        disabled = !!msg.disabled;
+      }
+    };
     flushQueuedSignals();
     document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
   };
@@ -920,6 +928,7 @@
 
   let vendorScanTicks = 0;
   const scanVendorRuntime = () => {
+    if (disabled) return;
     vendorScanTicks++;
     try {
       if (window.ddjskey != null) {

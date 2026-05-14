@@ -136,6 +136,17 @@
       .adaptive[hidden] {
         display: none;
       }
+      .site-section {
+        padding: 12px 16px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .site-status-active {
+        color: #246236;
+      }
+      .site-status-paused {
+        color: var(--accent);
+      }
       details {
         margin-top: 10px;
       }
@@ -682,6 +693,29 @@
       <div class="cumulative" id="cumulative"></div>
       <div class="drift" id="drift" hidden></div>
       <div class="adaptive" id="adaptive" hidden></div>
+    </div>
+
+    <div class="section site-section" id="site-control">
+      <div class="toggle-row">
+        <div class="col">
+          <div class="ttl" id="site-title">
+            <span id="site-title-text">Site status</span>
+          </div>
+          <div class="desc" id="site-desc">
+            <span id="site-status-text">Protecting this site</span>
+          </div>
+        </div>
+        <label class="switch">
+          <input
+            type="checkbox"
+            id="site-toggle"
+            checked
+            aria-labelledby="site-title-text"
+            aria-describedby="site-desc"
+          />
+          <span class="switch-bg"></span>
+        </label>
+      </div>
     </div>
 
     <details class="advanced-panel" id="advanced-controls">

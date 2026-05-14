@@ -36,6 +36,7 @@
   let replayNoiseStarted = false;
   let decoySurface = null;
   let replayScanTicks = 0;
+  let disabled = false;
 
   const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
@@ -499,9 +500,13 @@
       replayMode = data.replayMode;
       if (replayDetected) startReplayNoise();
     }
+    if (typeof data.disabled === "boolean") {
+      disabled = data.disabled;
+    }
   };
 
   const postReplayDetected = (signal) => {
+    if (disabled) return;
     const safeSignal = signal == null ? "unknown" : String(signal).slice(0, 96);
     if (bridgePort) {
       try {
@@ -754,7 +759,7 @@
     const origRemoveEventListener = EventTarget.prototype.removeEventListener;
     const wrappedAddEventListener = {
       addEventListener(type, listener, options) {
-        if (!listener || !shouldWrapReplayListener(type, listener)) {
+        if (disabled || !listener || !shouldWrapReplayListener(type, listener)) {
           return origAddEventListener.apply(this, arguments);
         }
         const wrapped = getReplayListenerWrapper(listener);
@@ -765,6 +770,9 @@
     }.addEventListener;
     const wrappedRemoveEventListener = {
       removeEventListener(type, listener, options) {
+        if (disabled) {
+          return origRemoveEventListener.apply(this, arguments);
+        }
         forgetActiveReplayListener(this, type, listener);
         return origRemoveEventListener.call(
           this,
@@ -903,7 +911,9 @@
   };
 
   function startReplayNoise() {
-    if (replayNoiseStarted || (replayMode !== "noise" && replayMode !== "chaos")) return;
+    if (disabled || replayNoiseStarted || (replayMode !== "noise" && replayMode !== "chaos")) {
+      return;
+    }
     replayNoiseStarted = true;
     let sent = 0;
     const loop = () => {
@@ -919,6 +929,7 @@
   }
 
   const scanReplaySignals = () => {
+    if (disabled) return;
     replayScanTicks++;
     try {
       instrumentDatadogGlobal(window.DD_RUM);
