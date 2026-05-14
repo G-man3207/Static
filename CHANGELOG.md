@@ -4,7 +4,7 @@ All notable changes to Static will be documented here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.1.0] — 2026-05-14
 
 ### Added
 
@@ -187,7 +187,8 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.0.10...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/G-man3207/Static/compare/v2.0.10...v2.1.0
 [2.0.10]: https://github.com/G-man3207/Static/compare/v2.0.4...v2.0.10
 [2.0.4]: https://github.com/G-man3207/Static/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/G-man3207/Static/compare/v2.0.2...v2.0.3
