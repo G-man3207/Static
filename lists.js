@@ -35,7 +35,14 @@
 
     // Custom-element tag names (matched against tagName). Elements with a
     // matching tag are removed from the DOM entirely.
-    domStripTags: [/^grammarly-/i, /^lastpass-/i, /^dashlane-/i, /^honey-/i, /^onepassword-/i],
+    domStripTags: [
+      /^grammarly-/i,
+      /^lastpass-/i,
+      /^dashlane-/i,
+      /^honey-/i,
+      /^onepassword-/i,
+      /^protonpass-/i,
+    ],
 
     // CSS class names to strip (element stays; just the class).
     domStripClasses: [
@@ -46,6 +53,7 @@
       /^dashlane($|-)/i,
       /^honey($|-)/i,
       /^onepassword($|-)/i,
+      /^protonpass($|-)/i,
     ],
 
     // Known-extension ID groups used by Noise-mode persona generation.
@@ -72,6 +80,7 @@
         "bgnkhhnnamicmpeenaelnjfhikgbkllg", // AdGuard
         "pkehgijcmpdhfbdbbnkijodmdjhbjlgp", // Privacy Badger
         "ddkjiahejlhfcafbddmgiahcphecmpfh", // uBlock Origin Lite
+        "mlomiejdfkolichcflejclcbmpeaniij", // Ghostery
       ],
       grammar: [
         "kbfnbcaeplbcioakkpcpgfkobkghlhen", // Grammarly
@@ -83,6 +92,8 @@
         "bfnaelmomeimhlpmgjnjophhpkkoljpa", // Phantom
         "ibnejdfjmmkpcnlpebklmnkoeoihofec", // TronLink
         "bhhhlkgekbhbdjncpdbjkmjnnapolepf", // Solflare
+        "acmacodkjbdgmoleebolmdjonilkdbch", // Rabby Wallet
+        "egjidjbpglichdcongccjofoobgmfgei", // Trust Wallet
       ],
       react_devtools: [
         "fmkadmapgofadopljbjfkapdkoienihi", // React DevTools
@@ -102,6 +113,7 @@
       shopping: [
         "bfogiajgogklnfndlkggihnhakgkbjgg", // Rakuten
         "lmelmgmclklieheidfjlabcjljeojmho", // Capital One Shopping
+        "bmnlcjabgnpnenekpadlanbbkooimhnj", // Honey
       ],
     },
 

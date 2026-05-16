@@ -6,6 +6,7 @@
     "condition": {
       "urlFilter": "||arkoselabs.com^",
       "resourceTypes": [
+        "sub_frame",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -23,6 +24,7 @@
     "condition": {
       "urlFilter": "||funcaptcha.com^",
       "resourceTypes": [
+        "sub_frame",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -57,6 +59,42 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||challenges.cloudflare.com^",
+      "resourceTypes": [
+        "sub_frame",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 5,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||hcaptcha.com^",
+      "resourceTypes": [
+        "sub_frame",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 6,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||hcaptcha.net^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",

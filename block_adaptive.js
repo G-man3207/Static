@@ -6,7 +6,8 @@
   const ADAPTIVE_COOLDOWN_MS = 7000;
   const ADAPTIVE_TRIGGER_SCORE = 7;
   const ADAPTIVE_SOURCE_URL_RE = /\b(?:https?):\/\/[^\s)]+/g;
-  const STATIC_INTERNAL_OBSERVER_RE = /chrome-extension:\/\/[a-p]{32}\/block_style_vectors\.js/i;
+  const STATIC_INTERNAL_OBSERVER_RE =
+    /(?:chrome|edge)-extension:\/\/[a-p]{32}\/block_style_vectors\.js|(?:moz|safari-web)-extension:\/\/[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}\/block_style_vectors\.js/i;
   const ADAPTIVE_WEIGHTS = {
     canvas: 4,
     webgl: 4,

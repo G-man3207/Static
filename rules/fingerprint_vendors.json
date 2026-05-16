@@ -247,6 +247,25 @@
     }
   },
   {
+    "id": 14,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||datadome.io^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
     "id": 15,
     "priority": 1,
     "action": { "type": "block" },
@@ -803,6 +822,25 @@
     "action": { "type": "block" },
     "condition": {
       "urlFilter": "||imperva.com^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 45,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fingerprintjs.com^",
       "resourceTypes": [
         "sub_frame",
         "stylesheet",
