@@ -2529,6 +2529,24 @@ test("per-site disable stops blocking active vectors and CSSOM probes", async ({
       results.cssReplace = e.name;
     }
 
+    // sendBeacon
+    try {
+      navigator.sendBeacon(url);
+      results.sendBeacon = "sent";
+    } catch (e) {
+      results.sendBeacon = e.name;
+    }
+
+    // Style attribute MutationObserver: setAttribute passes through when
+    // disabled, and the observer must not scrub the extension URL.
+    const div = document.createElement("div");
+    div.setAttribute("style", `background-image: url("${url}");`);
+    document.body.appendChild(div);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    results.styleAttr = div.style.backgroundImage;
+
     return results;
   }, probeUrl);
 
@@ -2548,6 +2566,9 @@ test("per-site disable stops blocking active vectors and CSSOM probes", async ({
   // EventSource and serviceWorker.register should not have been intercepted
   // by Static's wrappers when disabled. We don't assert specific native
   // behavior because it varies by Chromium version.
+
+  // Style attribute MutationObserver must not scrub the extension URL.
+  expect(vectors.styleAttr).toContain("chrome-extension://");
 
   await page.waitForTimeout(300);
   const storage = await extension.serviceWorker.evaluate(
