@@ -1,15 +1,15 @@
 {
   "rulesets": {
     "fingerprint_vendors": {
-      "version": "1.4.0",
+      "version": "1.5.0",
       "last_verified": "2026-05-16",
-      "description": "Client-side fingerprinting and anti-bot vendors: Fingerprint Pro, open-source FingerprintJS CDN, DataDome, PerimeterX/HUMAN (perimeterx.net + humansecurity.com), Sift, Forter (cdn + main API), ThreatMetrix/TransUnion (online-metrix.net + threatmetrix.net + riskmetrix.net), Iovation, Kasada (cdn + primary API + kasada.io), Sardine, Shape Security/F5 (shapesecurity.com), Castle.io, GeeTest, BotGuard/Blackwall (botguard.net + blackwall.ai), CHEQ (cheqzone.com + cheq.ai), ClearSale, SEON, Imperva/Incapsula (incapsula.com + imperva.com), plus datadome.io and fingerprintjs.com. Includes current Fingerprint CDN/API domains, api.fpjs.pro, api.fpjs.io, npm loader CDN, HUMAN sensor/connect hosts, Sift JS/CSP plus api.sift.com hosts, Kasada primary API domain kasada.net, persistent transport resource types, sub_frame, and stylesheet resource types.",
+      "description": "Client-side fingerprinting and anti-bot vendors: Fingerprint Pro, open-source FingerprintJS CDN, DataDome, PerimeterX/HUMAN (perimeterx.net + humansecurity.com), Sift, Forter (cdn + main API), ThreatMetrix/TransUnion (online-metrix.net + threatmetrix.net + riskmetrix.net), Iovation, Kasada (cdn + primary API + kasada.io), Sardine, Shape Security/F5 (shapesecurity.com), Castle.io, GeeTest, BotGuard/Blackwall (botguard.net + blackwall.ai), CHEQ (cheqzone.com + cheq.ai), ClearSale, SEON, Imperva/Incapsula (incapsula.com + imperva.com), BioCatch (we-stats.com + biocatch.com), NuData Security (nudatasecurity.com), TypingDNA (typingdna.com), Feedzai (feedzai.com), Riskified (riskified.com), Socure (socure.com), Kount (kount.com + kount.net), Signifyd (signifyd.com), plus datadome.io and fingerprintjs.com. Includes current Fingerprint CDN/API domains, api.fpjs.pro, api.fpjs.io, npm loader CDN, HUMAN sensor/connect hosts, Sift JS/CSP plus api.sift.com hosts, Kasada primary API domain kasada.net, persistent transport resource types, sub_frame, and stylesheet resource types.",
       "enabled_by_default": true
     },
     "captcha_vendors": {
-      "version": "1.1.0",
+      "version": "1.2.0",
       "last_verified": "2026-05-16",
-      "description": "CAPTCHA / device-attestation vendors (Arkose Labs, FunCAPTCHA, DataDome response pages under captcha-delivery.com, Cloudflare Turnstile / Challenge Platform under challenges.cloudflare.com, and hCaptcha under hcaptcha.com / hcaptcha.net). Connection-oriented rules include websocket and webtransport resource types. DISABLED BY DEFAULT — blocking these will break logins on sites that use them as CAPTCHA or device-check challenges (X signup, Roblox, several crypto exchanges, Cloudflare-protected forms, some enterprise SSO flows, Discord, Reddit).",
+      "description": "CAPTCHA / device-attestation vendors (Arkose Labs, FunCAPTCHA, DataDome response pages under captcha-delivery.com, Cloudflare Turnstile / Challenge Platform under challenges.cloudflare.com, hCaptcha under hcaptcha.com / hcaptcha.net, Google reCAPTCHA under google.com/recaptcha / recaptcha.net / gstatic.com/recaptcha, Friendly Captcha under friendlycaptcha.com / frcapi.com, ALTCHA under altcha.org, MTCaptcha under mtcaptcha.com, and Prosopo Procaptcha under prosopo.io / procaptcha.io). Connection-oriented rules include websocket and webtransport resource types. DISABLED BY DEFAULT — blocking these will break logins on sites that use them as CAPTCHA or device-check challenges (X signup, Roblox, several crypto exchanges, Cloudflare-protected forms, some enterprise SSO flows, Discord, Reddit).",
       "enabled_by_default": false
     }
   }

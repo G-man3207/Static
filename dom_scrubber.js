@@ -122,31 +122,46 @@
     scheduleShadowScan(document.documentElement || document);
   };
 
-  obs = new MutationObserver((muts) => {
-    if (disabled) return;
-    for (const m of muts) {
-      if (m.addedNodes) {
-        for (const node of m.addedNodes) {
-          if (node.nodeType === 1) {
-            scrubTree(node);
-            scheduleShadowScan(node);
+  const startScrubbing = () => {
+    obs = new MutationObserver((muts) => {
+      if (disabled) return;
+      for (const m of muts) {
+        if (m.addedNodes) {
+          for (const node of m.addedNodes) {
+            if (node.nodeType === 1) {
+              scrubTree(node);
+              scheduleShadowScan(node);
+            }
           }
         }
+        if (m.type === "attributes") {
+          scrubEl(m.target);
+          scheduleShadowScan(m.target);
+        }
       }
-      if (m.type === "attributes") {
-        scrubEl(m.target);
-        scheduleShadowScan(m.target);
-      }
+    });
+
+    if (!disabled && document.documentElement) {
+      scrubTree(document.documentElement);
+      scheduleDocumentShadowScan();
     }
-  });
 
-  if (document.documentElement) scrubTree(document.documentElement);
-  scheduleDocumentShadowScan();
+    try {
+      obs.observe(document.documentElement || document, OBSERVE_OPTIONS);
+    } catch {}
 
-  try {
-    obs.observe(document.documentElement || document, OBSERVE_OPTIONS);
-  } catch {}
+    addEventListener("DOMContentLoaded", scheduleDocumentShadowScan, { once: true });
+    addEventListener("load", scheduleDocumentShadowScan, { once: true });
+  };
 
-  addEventListener("DOMContentLoaded", scheduleDocumentShadowScan, { once: true });
-  addEventListener("load", scheduleDocumentShadowScan, { once: true });
+  (async () => {
+    try {
+      const currentOrigin = location.origin;
+      if (currentOrigin && currentOrigin !== "null") {
+        const { disabled_origins = {} } = await chrome.storage.local.get({ disabled_origins: {} });
+        disabled = !!disabled_origins[currentOrigin];
+      }
+    } catch {}
+    startScrubbing();
+  })();
 })();

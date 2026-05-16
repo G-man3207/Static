@@ -49,20 +49,34 @@
   let fingerprintPersona = null;
   let disabled = false;
 
-  const stealthFns = new WeakMap();
+  const STEALTH_KEY = "__ss2605__";
+  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
+  if (!globalThis[STEALTH_KEY]) {
+    try {
+      Object.defineProperty(globalThis, STEALTH_KEY, {
+        value: stealthFns,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
+    } catch {
+      globalThis[STEALTH_KEY] = stealthFns;
+    }
+    const origFnToString = Function.prototype.toString;
+    const patchedFnToString = {
+      toString() {
+        if (stealthFns.has(this)) return stealthFns.get(this);
+        return origFnToString.call(this);
+      },
+    }.toString;
+    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
+    try {
+      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
+      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
+    } catch {}
+    Function.prototype.toString = patchedFnToString;
+  }
   const origFnToString = Function.prototype.toString;
-  const patchedFnToString = {
-    toString() {
-      if (stealthFns.has(this)) return stealthFns.get(this);
-      return origFnToString.call(this);
-    },
-  }.toString;
-  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-  try {
-    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
-  Function.prototype.toString = patchedFnToString;
 
   const stealth = (fn, nativeName, opts = {}) => {
     stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
@@ -611,6 +625,28 @@
         source: nativeSourceFor(origResolved, "resolvedOptions"),
       }),
     });
+
+    for (const method of ["toLocaleString", "toLocaleDateString", "toLocaleTimeString"]) {
+      const desc = Object.getOwnPropertyDescriptor(Date.prototype, method);
+      const orig = desc && desc.value;
+      if (typeof orig !== "function") continue;
+      const wrapped = {
+        [method](...args) {
+          if (!isMasking()) return orig.apply(this, args);
+          const locale = args[0];
+          const options = args[1] && typeof args[1] === "object" ? { ...args[1] } : {};
+          if (!options.timeZone) options.timeZone = persona().timeZone;
+          return orig.call(this, locale, options);
+        },
+      }[method];
+      Object.defineProperty(Date.prototype, method, {
+        ...desc,
+        value: stealth(wrapped, method, {
+          length: orig.length,
+          source: nativeSourceFor(orig, method),
+        }),
+      });
+    }
   };
 
   const patchNetworkInformation = () => {

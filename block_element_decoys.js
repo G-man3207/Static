@@ -38,20 +38,34 @@
   let nativeGetAttributeNS = null;
   let trustedScriptUrlPolicy = undefined;
 
-  const stealthFns = new WeakMap();
+  const STEALTH_KEY = "__ss2605__";
+  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
+  if (!globalThis[STEALTH_KEY]) {
+    try {
+      Object.defineProperty(globalThis, STEALTH_KEY, {
+        value: stealthFns,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
+    } catch {
+      globalThis[STEALTH_KEY] = stealthFns;
+    }
+    const origFnToString = Function.prototype.toString;
+    const patchedFnToString = {
+      toString() {
+        if (stealthFns.has(this)) return stealthFns.get(this);
+        return origFnToString.call(this);
+      },
+    }.toString;
+    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
+    try {
+      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
+      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
+    } catch {}
+    Function.prototype.toString = patchedFnToString;
+  }
   const origFnToString = Function.prototype.toString;
-  const patchedFnToString = {
-    toString() {
-      if (stealthFns.has(this)) return stealthFns.get(this);
-      return origFnToString.call(this);
-    },
-  }.toString;
-  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-  try {
-    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
-  Function.prototype.toString = patchedFnToString;
 
   const stealth = (fn, nativeName, opts = {}) => {
     stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
@@ -800,11 +814,26 @@
   const replaceSerializedAttrOnce = (html, name, nativeValue, originalValue) => {
     const nativeEscaped = escapeSerializedAttr(nativeValue);
     if (!nativeEscaped || !html.includes(nativeEscaped)) return html;
-    const pattern = new RegExp(
-      `(\\s${escapeRegExp(String(name).toLowerCase())}\\s*=\\s*")${escapeRegExp(nativeEscaped)}(")`,
-      "i"
+    const attrName = escapeRegExp(String(name).toLowerCase());
+    const originalEscaped = escapeSerializedAttr(originalValue);
+    // Double-quoted
+    let next = html.replace(
+      new RegExp(`(\\s${attrName}\\s*=\\s*")${escapeRegExp(nativeEscaped)}(")`, "i"),
+      `$1${originalEscaped}$2`
     );
-    return html.replace(pattern, `$1${escapeSerializedAttr(originalValue)}$2`);
+    // Single-quoted
+    next = next.replace(
+      new RegExp(`(\\s${attrName}\\s*=\\s*')${escapeRegExp(nativeEscaped)}(')`, "i"),
+      `$1${originalEscaped}$2`
+    );
+    // Unquoted (value must not contain spaces or tag delimiters)
+    if (!/[\s"'=<>`]/.test(nativeValue)) {
+      next = next.replace(
+        new RegExp(`(\\s${attrName}\\s*=\\s*)${escapeRegExp(nativeEscaped)}(\\s|>|/>)`, "i"),
+        `$1${originalEscaped}$2`
+      );
+    }
+    return next;
   };
 
   const serializedAttrEntriesFor = (el) => {
