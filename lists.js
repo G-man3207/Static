@@ -30,6 +30,8 @@
       /^data-keeper(-|$)/i,
       /^data-roboform(-|$)/i,
       /^data-nordpass(-|$)/i,
+      /^data-bitwarden(-|$)/i,
+      /^data-protonpass(-|$)/i,
       /^__lpform_/i,
     ],
 
@@ -72,6 +74,13 @@
         "fooolghllnmhmmndgjiamiiodkpenpbb", // RoboForm (legacy)
         "bmikpgodpkclnkgmnpphehdgcimmided", // NordPass
         "cjnlpnbkjbnmdieljmighbdoljmgfibk", // Proton Pass
+      ],
+      userscript_manager: [
+        "dhdgffkkebhmkfjojejmpbldmpobfkfo", // Tampermonkey
+        "clngdbkpkpeebahjckkjfobafhncgmne", // Stylus
+      ],
+      privacy: [
+        "bkdgflcldnnnapblkhphbgpggdiikppg", // DuckDuckGo Privacy Essentials
       ],
       ad_blocker: [
         "cjpalhdlnbpafiamejdnhcphjbkeiagm", // uBlock Origin

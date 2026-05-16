@@ -38,20 +38,34 @@
   let replayScanTicks = 0;
   let disabled = false;
 
-  const stealthFns = new WeakMap();
+  const STEALTH_KEY = "__ss2605__";
+  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
+  if (!globalThis[STEALTH_KEY]) {
+    try {
+      Object.defineProperty(globalThis, STEALTH_KEY, {
+        value: stealthFns,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
+    } catch {
+      globalThis[STEALTH_KEY] = stealthFns;
+    }
+    const origFnToString = Function.prototype.toString;
+    const patchedFnToString = {
+      toString() {
+        if (stealthFns.has(this)) return stealthFns.get(this);
+        return origFnToString.call(this);
+      },
+    }.toString;
+    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
+    try {
+      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
+      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
+    } catch {}
+    Function.prototype.toString = patchedFnToString;
+  }
   const origFnToString = Function.prototype.toString;
-  const patchedFnToString = {
-    toString() {
-      if (stealthFns.has(this)) return stealthFns.get(this);
-      return origFnToString.call(this);
-    },
-  }.toString;
-  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-  try {
-    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
-  Function.prototype.toString = patchedFnToString;
 
   const stealth = (fn, nativeName, opts = {}) => {
     stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
@@ -746,7 +760,7 @@
   };
 
   const invokeReplayListener = (listener, thisArg, event) => {
-    const eventForListener = replayMode === "off" ? event : proxiedReplayEvent(event);
+    const eventForListener = disabled || replayMode === "off" ? event : proxiedReplayEvent(event);
     if (typeof listener === "function") return listener.call(thisArg, eventForListener);
     if (listener && typeof listener.handleEvent === "function") {
       return listener.handleEvent(eventForListener);
@@ -967,7 +981,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        maybeDetectReplayScript(value);
+        if (!disabled) maybeDetectReplayScript(value);
         desc.set.call(this, value);
       },
     };

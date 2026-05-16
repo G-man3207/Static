@@ -339,14 +339,19 @@
     } catch {}
   };
 
-  for (const eventName of new Set([
-    ...PROBE_EVENTS,
-    ...CONFIG_EVENTS,
-    "__static_adaptive_bridge_init__",
-  ])) {
+  const allEvents = new Set([...PROBE_EVENTS, ...CONFIG_EVENTS, "__static_adaptive_bridge_init__"]);
+  for (const eventName of allEvents) {
     createPort(eventName);
   }
-  // Check disabled state directly from storage first, then fetch persona
+  // Re-dispatch after a tick so any MAIN-world scripts that missed the
+  // synchronous dispatch (race between ISOLATED and MAIN worlds) get a port.
+  setTimeout(() => {
+    for (const eventName of allEvents) {
+      createPort(eventName);
+    }
+  }, 0);
+  // Check disabled state directly from storage first, then fetch persona.
+  // refreshPersona already yields, so it naturally runs after the timeout above.
   checkDisabledState().then(() => {
     refreshPersona();
   });

@@ -511,6 +511,7 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
   for (const filter of [
     "||api.fpjs.io^",
     "||api.fpjs.pro^",
+    "||biocatch.com^",
     "||blackwall.ai^",
     "||botguard.net^",
     "||castle.io^",
@@ -519,6 +520,7 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||clear.sale^",
     "||datadome.co^",
     "||datadome.io^",
+    "||feedzai.com^",
     "||fingerprintjs.com^",
     "||forter.com^",
     "||fpcdn.io^",
@@ -535,18 +537,26 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||incapsula.com^",
     "||kasada.io^",
     "||kasada.net^",
+    "||kount.com^",
+    "||kount.net^",
+    "||nudatasecurity.com^",
     "||openfpcdn.io^",
     "||perimeterx.net^",
     "||px-cdn.net^",
     "||px-cloud.net^",
     "||pxchk.net^",
     "||px-client.net^",
+    "||riskified.com^",
     "||riskmetrix.net^",
     "||seon.io^",
     "||shapesecurity.com^",
+    "||signifyd.com^",
     "||api.sift.com^",
     "||siftscience.com^",
+    "||socure.com^",
     "||threatmetrix.net^",
+    "||typingdna.com^",
+    "||we-stats.com^",
   ]) {
     expect(fingerprintFilters.has(filter), `fingerprint_vendors missing ${filter}`).toBe(true);
   }
@@ -588,6 +598,8 @@ test("conflictSlots cover key extension categories without cross-slot ID duplica
     "vpn_proxy",
     "dark_mode",
     "shopping",
+    "userscript_manager",
+    "privacy",
   ];
   for (const slot of requiredSlots) {
     expect(Array.isArray(slots[slot]), `conflictSlots.${slot} should be an array`).toBe(true);
@@ -623,6 +635,20 @@ test("conflictSlots include Solflare in the web3_wallet slot", () => {
   vm.runInContext(readText("lists.js"), context);
   const slots = context.__static_config__.conflictSlots;
   expect(slots.web3_wallet).toContain("bhhhlkgekbhbdjncpdbjkmjnnapolepf");
+});
+
+test("conflictSlots include DuckDuckGo Privacy Essentials in the privacy slot", () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  const slots = context.__static_config__.conflictSlots;
+  expect(slots.privacy).toContain("bkdgflcldnnnapblkhphbgpggdiikppg");
+});
+
+test("conflictSlots include Tampermonkey in the userscript_manager slot", () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  const slots = context.__static_config__.conflictSlots;
+  expect(slots.userscript_manager).toContain("dhdgffkkebhmkfjojejmpbldmpobfkfo");
 });
 
 test("conflictSlots include Honey in the shopping slot", () => {

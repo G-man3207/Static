@@ -2583,6 +2583,97 @@ test("per-site disable stops blocking active vectors and CSSOM probes", async ({
   expect(storage.logged).toBe(false);
 });
 
+test("per-site disable stops DOM scrubber from stripping extension markers", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(
+    (origin) =>
+      chrome.storage.local.set({
+        disabled_origins: { [origin]: true },
+      }),
+    server.origin
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/dom.html"));
+  await page.waitForTimeout(500);
+
+  const result = await page.evaluate(() => {
+    const target = document.getElementById("target");
+    const custom = document.getElementById("custom-card");
+    return {
+      hasGrammarlyAttr: target && target.hasAttribute("data-grammarly-extension"),
+      hasLastpassAttr: target && target.hasAttribute("data-lastpass-root"),
+      hasGrammarlyClass: target && target.classList.contains("grammarly-card"),
+      customCardPresent: !!custom,
+    };
+  });
+
+  // When disabled, the DOM scrubber should NOT remove markers
+  expect(result.hasGrammarlyAttr).toBe(true);
+  expect(result.hasLastpassAttr).toBe(true);
+  expect(result.hasGrammarlyClass).toBe(true);
+  expect(result.customCardPresent).toBe(true);
+});
+
+test("per-site disable stops replay poisoning while allowing detection logging", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(
+    (origin) =>
+      chrome.storage.local.set({
+        disabled_origins: { [origin]: true },
+        replay_mode: "mask",
+      }),
+    server.origin
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/replay.html"));
+  await page.waitForTimeout(500);
+
+  const result = await page.evaluate(() => {
+    document.getElementById("secret").value = "real@example.com";
+    document.getElementById("secret").dispatchEvent(new Event("input", { bubbles: true }));
+    return {
+      appValue: window.__appValues.at(-1),
+      replayValue: window.__replayRecords.at(-1)?.value,
+    };
+  });
+
+  // When disabled, replay listeners should see the REAL value (no masking)
+  expect(result.appValue).toBe("real@example.com");
+  expect(result.replayValue).toBe("real@example.com");
+});
+
+test("per-site disable stops fingerprint masking", async ({ extension, server }) => {
+  await extension.serviceWorker.evaluate(
+    (origin) =>
+      chrome.storage.local.set({
+        disabled_origins: { [origin]: true },
+        fingerprint_mode: "mask",
+      }),
+    server.origin
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => ({
+    platform: navigator.platform,
+    userAgent: navigator.userAgent,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  }));
+
+  // When disabled, native values should be returned, not the masked personas
+  expect(["Win32", "MacIntel", "Linux x86_64"]).toContain(result.platform);
+  // Masked userAgent always contains Chrome/120.0.0.0; real UAs vary
+  expect(result.userAgent).not.toContain("Chrome/120.0.0.0");
+});
+
 test("Clear log removes probe state and Noise identity while preserving preferences", async ({
   extension,
 }) => {
