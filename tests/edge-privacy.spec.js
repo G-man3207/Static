@@ -726,6 +726,83 @@ test("invalid Chrome extension IDs are blocked but not logged or decoyed", async
   expect(seededInvalid).toBe("TypeError");
 });
 
+test("Noise decoys work for moz-extension and safari-web-extension UUID IDs", async ({
+  extension,
+  server,
+}) => {
+  const mozId = "12345678-1234-1234-1234-123456789abc";
+  const safariId = "abcdef12-3456-7890-abcd-ef1234567890";
+  const mozImageUrl = `moz-extension://${mozId}/icon.png`;
+  const safariImageUrl = `safari-web-extension://${safariId}/icon.png`;
+
+  await extension.serviceWorker.evaluate(
+    ({ origin, moz, safari }) =>
+      chrome.storage.local.set({
+        noise_enabled: true,
+        probe_log: {
+          [origin]: {
+            idCounts: { [moz]: 20, [safari]: 20 },
+            lastUpdated: Date.now(),
+          },
+        },
+        user_secret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      }),
+    { origin: server.origin, moz: mozId, safari: safariId }
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(
+    async ({ mozImage, safariImage }) => {
+      const testImage = (src) =>
+        new Promise((resolve) => {
+          const img = document.createElement("img");
+          img.addEventListener("load", () =>
+            resolve({
+              naturalWidth: img.naturalWidth,
+              naturalHeight: img.naturalHeight,
+              src: img.src,
+              currentSrc: img.currentSrc,
+              event: "load",
+            })
+          );
+          img.addEventListener("error", () =>
+            resolve({
+              naturalWidth: img.naturalWidth,
+              naturalHeight: img.naturalHeight,
+              src: img.src,
+              currentSrc: img.currentSrc,
+              event: "error",
+            })
+          );
+          img.src = src;
+        });
+
+      const [mozResult, safariResult] = await Promise.all([
+        testImage(mozImage),
+        testImage(safariImage),
+      ]);
+
+      return { mozResult, safariResult };
+    },
+    { mozImage: mozImageUrl, safariImage: safariImageUrl }
+  );
+
+  // Decoyed images load the 1x1 transparent PNG (naturalWidth === 1)
+  expect(result.mozResult.event).toBe("load");
+  expect(result.mozResult.naturalWidth).toBe(1);
+  expect(result.safariResult.event).toBe("load");
+  expect(result.safariResult.naturalWidth).toBe(1);
+
+  // Visible getters return the original extension URL for stealth
+  expect(result.mozResult.src).toBe(mozImageUrl);
+  expect(result.mozResult.currentSrc).toBe(mozImageUrl);
+  expect(result.safariResult.src).toBe(safariImageUrl);
+  expect(result.safariResult.currentSrc).toBe(safariImageUrl);
+});
+
 test("adaptive logs redact high-entropy endpoint path segments", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-private.html"));

@@ -397,6 +397,7 @@
     if (typeof Ctor !== "function") return Ctor;
     const wrapped = function (url) {
       if (!new.target) return Reflect.apply(Ctor, this, arguments);
+      if (disabled) return Reflect.construct(Ctor, arguments, new.target);
       if (isBad(url)) {
         bump(label, url);
         const origin = location && location.origin ? location.origin : "null";
@@ -428,6 +429,7 @@
     const OrigAudio = window.Audio;
     const wrappedAudio = function Audio(src) {
       if (!new.target) return Reflect.apply(OrigAudio, this, arguments);
+      if (disabled) return Reflect.construct(OrigAudio, arguments, new.target);
       if (arguments.length > 0 && isBad(src)) {
         bump("Audio", src);
         return Reflect.construct(OrigAudio, [], new.target);
@@ -539,6 +541,7 @@
     const origES = window.EventSource;
     const wrappedES = function EventSource(url, opts) {
       if (!new.target) return Reflect.apply(origES, this, arguments);
+      if (disabled) return Reflect.construct(origES, arguments, new.target);
       if (!isBad(url)) return Reflect.construct(origES, arguments, new.target);
       bump("EventSource", url);
       return makeBlockedEventSource(url, opts, origES);
@@ -563,6 +566,7 @@
       if (typeof origRegister !== "function") return;
       const wrappedRegister = {
         register(url) {
+          if (disabled) return origRegister.apply(this, arguments);
           if (isBad(url)) {
             bump("serviceWorker.register", url);
             return Promise.reject(new TypeError("Failed to register a ServiceWorker"));
@@ -584,6 +588,7 @@
     if (typeof orig !== "function") return;
     const wrappedAddModule = {
       addModule(moduleURL) {
+        if (disabled) return orig.apply(this, arguments);
         if (isBad(moduleURL)) {
           const url = getUrl(moduleURL);
           bump("Worklet.addModule", url);
@@ -610,6 +615,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       [name](...args) {
+        if (disabled) return orig.apply(this, args);
         const target = name === "addRule" ? `${args[0] || ""} ${args[1] || ""}` : args[0];
         const url = firstBadUrlIn(target);
         if (url) {

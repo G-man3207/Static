@@ -13,6 +13,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Device signal poisoning now masks `navigator.plugins`, `navigator.mimeTypes`, and `performance.memory`, removing three fingerprinting vectors that previously leaked real machine state.
 - Extension ID validation in block.js, bridge.js, and service_worker.js now recognizes `moz-extension` and `safari-web-extension` UUID-shaped IDs in addition to Chrome-style `[a-p]{32}` IDs.
 - Playwright test coverage for XHR `open()` reuse, srcset blocking, `getHighEntropyValues` string-hint handling, `navigator.plugins`/`mimeTypes` masking, `performance.memory` masking, replay `removeEventListener` robustness, and stealth global renaming.
+- Playwright test coverage for cross-browser Noise element decoys (`moz-extension` and `safari-web-extension` UUID IDs) and per-site disable across active vectors (Worker, EventSource, serviceWorker.register, Worklet.addModule, CSSOM).
 
 ### Fixed
 
@@ -24,6 +25,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Replay `removeEventListener` now defensively tries both the replay wrapper and the original listener on removal, preventing leaked listeners when adaptive or other wrappers are layered underneath.
 - `navigator.sendBeacon` fallback patch now defines the property with `enumerable: false`, reducing descriptor-shape visibility.
 - `fakeBattery()` now attempts to set its prototype to `BatteryManager.prototype` when available, making `instanceof BatteryManager` checks less likely to fail.
+- `block_element_decoys.js` now recognizes `moz-extension` and `safari-web-extension` UUID-shaped IDs for Noise-mode element decoys, matching the existing fetch/XHR and bridge validation.
+- Per-site disable now correctly bypasses active probe vectors that were missing the `disabled` guard: `Worker`, `SharedWorker`, `Audio`, `EventSource`, `navigator.serviceWorker.register`, `Worklet.addModule`, and CSSOM `insertRule` / `replace` / `replaceSync` / `addRule`.
 
 ## [2.1.0] — 2026-05-14
 

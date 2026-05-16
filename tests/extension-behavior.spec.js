@@ -2460,6 +2460,108 @@ test("per-site disable stops blocking extension probes", async ({ extension, ser
   expect(storage.logged).toBe(false);
 });
 
+test("per-site disable stops blocking active vectors and CSSOM probes", async ({
+  extension,
+  server,
+}) => {
+  const probedId = "nngceckbapebfimnlniiiahkandclblb";
+  const probeUrl = `chrome-extension://${probedId}/manifest.json`;
+
+  await extension.serviceWorker.evaluate(
+    (origin) =>
+      chrome.storage.local.set({
+        disabled_origins: { [origin]: true },
+      }),
+    server.origin
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(500);
+
+  const vectors = await page.evaluate(async (url) => {
+    const results = {};
+
+    // EventSource
+    try {
+      const es = new EventSource(url);
+      es.close();
+      results.EventSource = "constructed";
+    } catch (e) {
+      results.EventSource = e.name;
+    }
+
+    // Worker
+    try {
+      // Worker constructor throws SecurityError for cross-origin URLs in most browsers
+      // but when disabled it should attempt the real constructor.
+      // We use a blob URL to avoid the cross-origin error and test the disabled path.
+      // Instead, test that the wrapped constructor does not throw our custom error.
+      new Worker(url);
+      results.Worker = "constructed";
+    } catch (e) {
+      results.Worker = e.name;
+    }
+
+    // serviceWorker.register
+    try {
+      await navigator.serviceWorker.register(url);
+      results.serviceWorker = "registered";
+    } catch (e) {
+      results.serviceWorker = e.name;
+    }
+
+    // CSSOM insertRule
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.insertRule(`@import url("${url}");`);
+      results.cssInsertRule = "inserted";
+    } catch (e) {
+      results.cssInsertRule = e.name;
+    }
+
+    // CSSOM replace
+    try {
+      const sheet = new CSSStyleSheet();
+      await sheet.replace(`@import url("${url}");`);
+      results.cssReplace = "replaced";
+    } catch (e) {
+      results.cssReplace = e.name;
+    }
+
+    return results;
+  }, probeUrl);
+
+  // When disabled, these should NOT produce our custom blocking behavior.
+  // The only strict invariant is that no probes are logged.  The exact
+  // native exception (or success) for chrome-extension:// URLs varies by
+  // browser and vector, so we only assert against Static's own shapes.
+
+  // Worker: real constructor throws SecurityError for chrome-extension URLs
+  expect(vectors.Worker).toBe("SecurityError");
+
+  // CSSOM: when disabled the real browser parses the rule.  Chromium may
+  // throw SyntaxError for @import with chrome-extension:// URLs in
+  // constructed stylesheets — that is native behavior, not our blocker.
+  // We only care that the probe was not logged.
+
+  // EventSource and serviceWorker.register should not have been intercepted
+  // by Static's wrappers when disabled. We don't assert specific native
+  // behavior because it varies by Chromium version.
+
+  await page.waitForTimeout(300);
+  const storage = await extension.serviceWorker.evaluate(
+    (origin) =>
+      chrome.storage.local.get(["cumulative", "probe_log"]).then((stored) => ({
+        cumulative: stored.cumulative || 0,
+        logged: !!(stored.probe_log && stored.probe_log[origin]),
+      })),
+    server.origin
+  );
+  expect(storage.cumulative).toBe(0);
+  expect(storage.logged).toBe(false);
+});
+
 test("Clear log removes probe state and Noise identity while preserving preferences", async ({
   extension,
 }) => {
