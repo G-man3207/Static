@@ -212,13 +212,13 @@
     nativeRemoveAttribute = Element.prototype.removeAttribute;
     const wrapped = {
       setAttribute(name, value) {
-        if (window.__staticDisabled) return origSetAttribute.call(this, name, value);
+        if (window.__perf) return origSetAttribute.call(this, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttribute.call(this, name, normalized.value);
       },
       setAttributeNS(ns, name, value) {
-        if (window.__staticDisabled) return origSetAttributeNS.call(this, ns, name, value);
+        if (window.__perf) return origSetAttributeNS.call(this, ns, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttributeNS.call(this, ns, name, normalized.value);
@@ -236,7 +236,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (window.__staticDisabled) {
+        if (window.__perf) {
           desc.set.call(this, value);
           return;
         }
@@ -262,7 +262,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (window.__staticDisabled) {
+        if (window.__perf) {
           desc.set.call(this, value);
           return;
         }
@@ -287,7 +287,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (window.__staticDisabled) {
+        if (window.__perf) {
           desc.set.call(this, value);
           return;
         }
@@ -312,7 +312,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       insertAdjacentHTML(position, html) {
-        if (window.__staticDisabled) return orig.call(this, position, html);
+        if (window.__perf) return orig.call(this, position, html);
         return orig.call(this, position, sanitizeIframeMarkup(html));
       },
     }.insertAdjacentHTML;
@@ -343,7 +343,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set value(nextValue) {
-        if (window.__staticDisabled) {
+        if (window.__perf) {
           desc.set.call(this, nextValue);
           return;
         }
@@ -368,7 +368,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       add(...tokens) {
-        if (window.__staticDisabled) return orig.apply(this, tokens);
+        if (window.__perf) return orig.apply(this, tokens);
         if (!isSandboxTokenList(this)) return orig.apply(this, tokens);
         const normalized = normalizeSandboxTokens(tokens);
         if (!normalized.length) return;
@@ -387,7 +387,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       toggle(token, force) {
-        if (window.__staticDisabled) return orig.apply(this, arguments);
+        if (window.__perf) return orig.apply(this, arguments);
         if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
         const [normalized] = normalizeSandboxTokens([token]);
         if (!normalized) return false;
@@ -410,7 +410,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       replace(token, newToken) {
-        if (window.__staticDisabled) return orig.apply(this, arguments);
+        if (window.__perf) return orig.apply(this, arguments);
         if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
         const oldToken = String(token || "")
           .trim()

@@ -111,15 +111,20 @@
     }
   };
 
+  const EXT_ID_RE_BY_SCHEME = {
+    "chrome-extension": CHROME_EXT_ID_RE,
+    "edge-extension": CHROME_EXT_ID_RE,
+    "moz-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
+    "safari-web-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
+  };
+
   const extensionPathFor = (url) => {
     try {
       const parsed = new URL(String(url || ""));
       const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
       const id = parsed.hostname.toLowerCase();
-      if (
-        (scheme === "chrome-extension" || scheme === "edge-extension") &&
-        CHROME_EXT_ID_RE.test(id)
-      ) {
+      const idRe = EXT_ID_RE_BY_SCHEME[scheme];
+      if (idRe && idRe.test(id)) {
         return parsed.pathname.slice(0, 96);
       }
     } catch {}
@@ -131,10 +136,8 @@
       const parsed = new URL(String(url || ""));
       const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
       const id = parsed.hostname.toLowerCase();
-      if (
-        (scheme === "chrome-extension" || scheme === "edge-extension") &&
-        CHROME_EXT_ID_RE.test(id)
-      ) {
+      const idRe = EXT_ID_RE_BY_SCHEME[scheme];
+      if (idRe && idRe.test(id)) {
         return id;
       }
     } catch {}

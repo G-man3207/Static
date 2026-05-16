@@ -188,6 +188,7 @@
     guardProp(HTMLLinkElement.prototype, "href", "link.href");
     guardProp(HTMLScriptElement.prototype, "src", "script.src");
     guardProp(HTMLImageElement.prototype, "src", "img.src");
+    guardProp(HTMLImageElement.prototype, "srcset", "img.srcset", firstBadUrlIn);
     guardProp(HTMLIFrameElement.prototype, "src", "iframe.src");
     if (typeof HTMLAnchorElement !== "undefined") {
       guardProp(HTMLAnchorElement.prototype, "href", "anchor.href");
@@ -220,6 +221,7 @@
     }
     if (typeof HTMLSourceElement !== "undefined") {
       guardProp(HTMLSourceElement.prototype, "src", "source.src");
+      guardProp(HTMLSourceElement.prototype, "srcset", "source.srcset", firstBadUrlIn);
     }
     if (typeof HTMLEmbedElement !== "undefined") {
       guardProp(HTMLEmbedElement.prototype, "src", "embed.src");
@@ -300,6 +302,9 @@
       ) {
         return badUrlFor(value);
       }
+      if (localName === "srcset") {
+        return firstBadUrlIn(value);
+      }
       return "";
     };
     const wrapped = {
@@ -379,7 +384,12 @@
       },
     }.sendBeacon;
     try {
-      navigator.sendBeacon = stealth(wrappedBeacon, "sendBeacon", { length: 1 });
+      Object.defineProperty(navigator, "sendBeacon", {
+        value: stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      });
     } catch {}
   };
 

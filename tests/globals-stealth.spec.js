@@ -138,3 +138,21 @@ test("blocks protected globals set via Object.assign, Reflect.set, and Object.de
     nordpass: undefined,
   });
 });
+
+test("does not expose obvious extension presence globals", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(() => ({
+    hasStaticDisabled: Object.prototype.hasOwnProperty.call(window, "__staticDisabled"),
+    hasPerf: Object.prototype.hasOwnProperty.call(window, "__perf"),
+    perfEnumerable:
+      Object.prototype.hasOwnProperty.call(window, "__perf") &&
+      Object.getOwnPropertyDescriptor(window, "__perf")?.enumerable,
+  }));
+
+  expect(result.hasStaticDisabled).toBe(false);
+  if (result.hasPerf) {
+    expect(result.perfEnumerable).toBe(false);
+  }
+});

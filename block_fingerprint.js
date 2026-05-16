@@ -308,6 +308,22 @@
         navigatorValueFor(prop, original)
       );
     }
+    if (typeof navigator !== "undefined" && navigator.plugins) {
+      patchGetter(Navigator.prototype, "plugins", "get plugins", (original) => {
+        if (!isMasking()) return original;
+        return typeof original === "object" && original != null
+          ? Object.setPrototypeOf([], Object.getPrototypeOf(original))
+          : [];
+      });
+    }
+    if (typeof navigator !== "undefined" && navigator.mimeTypes) {
+      patchGetter(Navigator.prototype, "mimeTypes", "get mimeTypes", (original) => {
+        if (!isMasking()) return original;
+        return typeof original === "object" && original != null
+          ? Object.setPrototypeOf([], Object.getPrototypeOf(original))
+          : [];
+      });
+    }
   };
 
   const screenValueFor = (prop, original) => {
@@ -368,7 +384,7 @@
   };
 
   const maskedHighEntropyValues = (target, hints) => {
-    const wanted = Array.from(hints || []);
+    const wanted = typeof hints === "string" ? [hints] : Array.from(hints || []);
     const base =
       target && typeof target.getHighEntropyValues === "function"
         ? target.getHighEntropyValues(hints).catch(() => ({}))
@@ -585,19 +601,25 @@
     }
   };
 
-  const fakeBattery = () => ({
-    charging: true,
-    chargingTime: 0,
-    dischargingTime: Infinity,
-    dispatchEvent: () => false,
-    level: 1,
-    onchargingchange: null,
-    onchargingtimechange: null,
-    ondischargingtimechange: null,
-    onlevelchange: null,
-    removeEventListener: () => {},
-    addEventListener: () => {},
-  });
+  const fakeBattery = () => {
+    const battery = {
+      charging: true,
+      chargingTime: 0,
+      dischargingTime: Infinity,
+      level: 1,
+      onchargingchange: null,
+      onchargingtimechange: null,
+      ondischargingtimechange: null,
+      onlevelchange: null,
+    };
+    try {
+      const BatteryManager = window.BatteryManager;
+      if (BatteryManager && BatteryManager.prototype) {
+        Object.setPrototypeOf(battery, BatteryManager.prototype);
+      }
+    } catch {}
+    return battery;
+  };
 
   const patchBattery = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
@@ -618,6 +640,48 @@
         source: nativeSourceFor(orig, "getBattery"),
       }),
     });
+  };
+
+  const patchPerformanceMemory = () => {
+    const perf = window.performance;
+    if (!perf) return;
+    const found = descriptorOwnerFor(perf, "memory");
+    if (!found || !found.desc) return;
+    const { desc, owner } = found;
+    if (desc.get) {
+      Object.defineProperty(owner, "memory", {
+        ...desc,
+        get: stealth(
+          function get() {
+            const original = desc.get.call(this);
+            if (!isMasking()) return original;
+            return {
+              jsHeapSizeLimit: 2197815296,
+              totalJSHeapSize: 12345678,
+              usedJSHeapSize: 9876543,
+            };
+          },
+          "get memory",
+          { length: 0, source: nativeSourceFor(desc.get, "get memory") }
+        ),
+      });
+    } else if ("value" in desc) {
+      Object.defineProperty(owner, "memory", {
+        ...desc,
+        get: stealth(
+          function get() {
+            if (!isMasking()) return desc.value;
+            return {
+              jsHeapSizeLimit: 2197815296,
+              totalJSHeapSize: 12345678,
+              usedJSHeapSize: 9876543,
+            };
+          },
+          "get memory",
+          { length: 0, source: nativeSourceFor(() => {}, "get memory") }
+        ),
+      });
+    }
   };
 
   const patchStorageEstimate = () => {
@@ -927,6 +991,7 @@
     patchNetworkInformation();
     patchBattery();
     patchStorageEstimate();
+    patchPerformanceMemory();
     patchWebgl();
     patchCanvas();
     patchOffscreenCanvas();

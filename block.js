@@ -57,7 +57,16 @@
     }
     if (typeof data.disabled === "boolean") {
       disabled = data.disabled;
-      window.__staticDisabled = disabled;
+      try {
+        Object.defineProperty(window, "__perf", {
+          value: disabled,
+          writable: true,
+          configurable: false,
+          enumerable: false,
+        });
+      } catch {
+        window.__perf = disabled;
+      }
     }
   };
 
@@ -131,15 +140,20 @@
     }
   };
 
+  const EXT_ID_RE_BY_SCHEME = {
+    "chrome-extension": CHROME_EXT_ID_RE,
+    "edge-extension": CHROME_EXT_ID_RE,
+    "moz-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
+    "safari-web-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
+  };
+
   const extensionIdentityFor = (url) => {
     try {
       const parsed = new URL(String(url || ""));
       const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
       const id = parsed.hostname.toLowerCase();
-      if (
-        (scheme === "chrome-extension" || scheme === "edge-extension") &&
-        CHROME_EXT_ID_RE.test(id)
-      ) {
+      const idRe = EXT_ID_RE_BY_SCHEME[scheme];
+      if (idRe && idRe.test(id)) {
         return { id, scheme };
       }
     } catch {}
@@ -367,7 +381,7 @@
           "content-type": contentType,
         },
       });
-      fakeFetchResponses.set(response, { type: "basic", url: String(url) });
+      fakeFetchResponses.set(response, { type: "default", url: String(url) });
       return response;
     } catch {
       return new Response("", { status: 200 });
@@ -557,7 +571,10 @@
             method: String(method || "GET").toUpperCase(),
             url: getUrl(url),
           });
-        } else fakeXhrResponses.delete(this);
+        } else {
+          blockedXHRs.delete(this);
+          fakeXhrResponses.delete(this);
+        }
         visibleHeaderCache.delete(this);
         return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
       },

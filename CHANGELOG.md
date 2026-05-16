@@ -9,10 +9,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Added
 
 - Per-site whitelist. Users can now disable Static's protections on individual sites from the popup. When a site is disabled, all extension-probe blocking, DOM scrubbing, global stripping, and opt-in poisoning modes are bypassed. The disabled state persists across sessions and updates instantly on the current page.
+- `img.srcset` and `source.srcset` property setters and `setAttribute`/`setAttributeNS` paths are now blocked for extension URLs, closing a probe vector that bypassed previous protections.
+- Device signal poisoning now masks `navigator.plugins`, `navigator.mimeTypes`, and `performance.memory`, removing three fingerprinting vectors that previously leaked real machine state.
+- Extension ID validation in block.js, bridge.js, and service_worker.js now recognizes `moz-extension` and `safari-web-extension` UUID-shaped IDs in addition to Chrome-style `[a-p]{32}` IDs.
+- Playwright test coverage for XHR `open()` reuse, srcset blocking, `getHighEntropyValues` string-hint handling, `navigator.plugins`/`mimeTypes` masking, `performance.memory` masking, replay `removeEventListener` robustness, and stealth global renaming.
 
 ### Fixed
 
 - Popup and probe-log UI no longer use SVG filter textures that can trigger delayed repainting in Chrome extension surfaces.
+- `window.__staticDisabled` detection vector renamed to `window.__perf` and made non-enumerable where possible, reducing the obviousness of Static's presence to page-side probing.
+- XHR `open()` reuse bug: re-opening an XMLHttpRequest with a non-extension URL after it was opened with an extension URL now correctly clears the blocked state, preventing subsequent legitimate requests from being incorrectly blocked or faked.
+- Fetch Noise decoy `Response.type` now returns `"default"` instead of `"basic"`, matching the native behavior of `new Response()` and removing a stealth leak that could distinguish decoys from real responses.
+- `navigator.userAgentData.getHighEntropyValues` no longer splits string hints into individual characters when a single string is passed instead of an array.
+- Replay `removeEventListener` now defensively tries both the replay wrapper and the original listener on removal, preventing leaked listeners when adaptive or other wrappers are layered underneath.
+- `navigator.sendBeacon` fallback patch now defines the property with `enumerable: false`, reducing descriptor-shape visibility.
+- `fakeBattery()` now attempts to set its prototype to `BatteryManager.prototype` when available, making `instanceof BatteryManager` checks less likely to fail.
 
 ## [2.1.0] — 2026-05-14
 
