@@ -634,13 +634,35 @@ test("Fingerprint masking empties navigator.plugins and mimeTypes", async ({
     );
   });
 
-  const result = await page.evaluate(() => ({
-    pluginsLength: navigator.plugins ? navigator.plugins.length : null,
-    mimeTypesLength: navigator.mimeTypes ? navigator.mimeTypes.length : null,
-  }));
+  const result = await page.evaluate(() => {
+    const plugins = navigator.plugins;
+    const mimeTypes = navigator.mimeTypes;
+    return {
+      pluginsLength: plugins ? plugins.length : null,
+      mimeTypesLength: mimeTypes ? mimeTypes.length : null,
+      pluginsIsArray: Array.isArray(plugins),
+      mimeTypesIsArray: Array.isArray(mimeTypes),
+      pluginsInstanceofPluginArray:
+        typeof PluginArray !== "undefined" && plugins instanceof PluginArray,
+      mimeTypesInstanceofMimeTypeArray:
+        typeof MimeTypeArray !== "undefined" && mimeTypes instanceof MimeTypeArray,
+      pluginsHasItem: plugins && typeof plugins.item === "function",
+      pluginsHasNamedItem: plugins && typeof plugins.namedItem === "function",
+      mimeTypesHasItem: mimeTypes && typeof mimeTypes.item === "function",
+      mimeTypesHasNamedItem: mimeTypes && typeof mimeTypes.namedItem === "function",
+    };
+  });
 
   expect(result.pluginsLength).toBe(0);
   expect(result.mimeTypesLength).toBe(0);
+  expect(result.pluginsIsArray).toBe(false);
+  expect(result.mimeTypesIsArray).toBe(false);
+  expect(result.pluginsInstanceofPluginArray).toBe(true);
+  expect(result.mimeTypesInstanceofMimeTypeArray).toBe(true);
+  expect(result.pluginsHasItem).toBe(true);
+  expect(result.pluginsHasNamedItem).toBe(true);
+  expect(result.mimeTypesHasItem).toBe(true);
+  expect(result.mimeTypesHasNamedItem).toBe(true);
 });
 
 test("Fingerprint masking masks performance.memory", async ({ extension, server }) => {
@@ -664,14 +686,14 @@ test("Fingerprint masking masks performance.memory", async ({ extension, server 
     if (!memory) return { skipped: true };
     return {
       skipped: false,
-      hasJsHeapSizeLimit: typeof memory.jsHeapSizeLimit === "number",
-      hasTotalJSHeapSize: typeof memory.totalJSHeapSize === "number",
-      hasUsedJSHeapSize: typeof memory.usedJSHeapSize === "number",
+      jsHeapSizeLimit: memory.jsHeapSizeLimit,
+      totalJSHeapSize: memory.totalJSHeapSize,
+      usedJSHeapSize: memory.usedJSHeapSize,
     };
   });
 
   if (result.skipped) return;
-  expect(result.hasJsHeapSizeLimit).toBe(true);
-  expect(result.hasTotalJSHeapSize).toBe(true);
-  expect(result.hasUsedJSHeapSize).toBe(true);
+  expect(result.jsHeapSizeLimit).toBe(2197815296);
+  expect(result.totalJSHeapSize).toBe(12345678);
+  expect(result.usedJSHeapSize).toBe(9876543);
 });

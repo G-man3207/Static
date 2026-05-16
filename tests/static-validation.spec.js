@@ -505,6 +505,8 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     captchaFilters.has("||challenges.cloudflare.com^"),
     "captcha_vendors missing Cloudflare Turnstile / Challenge Platform"
   ).toBe(true);
+  expect(captchaFilters.has("||hcaptcha.com^"), "captcha_vendors missing hCaptcha").toBe(true);
+  expect(captchaFilters.has("||hcaptcha.net^"), "captcha_vendors missing hCaptcha net").toBe(true);
 
   for (const filter of [
     "||api.fpjs.io^",
@@ -516,6 +518,8 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||cheqzone.com^",
     "||clear.sale^",
     "||datadome.co^",
+    "||datadome.io^",
+    "||fingerprintjs.com^",
     "||forter.com^",
     "||fpcdn.io^",
     "||fpjs.io^",
@@ -619,4 +623,11 @@ test("conflictSlots include Solflare in the web3_wallet slot", () => {
   vm.runInContext(readText("lists.js"), context);
   const slots = context.__static_config__.conflictSlots;
   expect(slots.web3_wallet).toContain("bhhhlkgekbhbdjncpdbjkmjnnapolepf");
+});
+
+test("conflictSlots include Honey in the shopping slot", () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  const slots = context.__static_config__.conflictSlots;
+  expect(slots.shopping).toContain("bmnlcjabgnpnenekpadlanbbkooimhnj");
 });

@@ -500,6 +500,7 @@
     );
     const fake = new Proxy(target, {
       get(t, prop, receiver) {
+        if (prop === Symbol.toStringTag) return "EventSource";
         if (prop === "readyState") return readyState;
         if (prop === "url") return String(url);
         if (prop === "withCredentials") return !!(opts && opts.withCredentials);

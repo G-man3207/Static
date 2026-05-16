@@ -302,26 +302,52 @@
       "platform",
       "userAgent",
       "vendor",
-      "webdriver",
     ]) {
       patchGetter(Navigator.prototype, prop, `get ${prop}`, (original) =>
         navigatorValueFor(prop, original)
       );
     }
+    // navigator.webdriver may be a data property in some browsers (e.g. Chrome),
+    // so patch it explicitly instead of relying on patchGetter which skips non-getters.
+    try {
+      const webdriverDesc =
+        Object.getOwnPropertyDescriptor(Navigator.prototype, "webdriver") ||
+        (Object.getOwnPropertyDescriptor(window, "navigator") &&
+          Object.getOwnPropertyDescriptor(navigator, "webdriver"));
+      if (webdriverDesc) {
+        if (typeof webdriverDesc.get === "function") {
+          patchGetter(Navigator.prototype, "webdriver", "get webdriver", (original) =>
+            navigatorValueFor("webdriver", original)
+          );
+        } else if ("value" in webdriverDesc) {
+          Object.defineProperty(webdriverDesc.owner || navigator, "webdriver", {
+            ...webdriverDesc,
+            value: navigatorValueFor("webdriver", webdriverDesc.value),
+          });
+        }
+      }
+    } catch {}
+    const fakeArrayLike = (original) => {
+      if (typeof original !== "object" || original == null) return null;
+      const fake = Object.create(Object.getPrototypeOf(original));
+      Object.defineProperty(fake, "length", {
+        value: 0,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      return fake;
+    };
     if (typeof navigator !== "undefined" && navigator.plugins) {
       patchGetter(Navigator.prototype, "plugins", "get plugins", (original) => {
         if (!isMasking()) return original;
-        return typeof original === "object" && original != null
-          ? Object.setPrototypeOf([], Object.getPrototypeOf(original))
-          : [];
+        return fakeArrayLike(original) || [];
       });
     }
     if (typeof navigator !== "undefined" && navigator.mimeTypes) {
       patchGetter(Navigator.prototype, "mimeTypes", "get mimeTypes", (original) => {
         if (!isMasking()) return original;
-        return typeof original === "object" && original != null
-          ? Object.setPrototypeOf([], Object.getPrototypeOf(original))
-          : [];
+        return fakeArrayLike(original) || [];
       });
     }
   };
@@ -601,7 +627,9 @@
     }
   };
 
+  let cachedFakeBattery = null;
   const fakeBattery = () => {
+    if (cachedFakeBattery) return cachedFakeBattery;
     const battery = {
       charging: true,
       chargingTime: 0,
@@ -618,6 +646,7 @@
         Object.setPrototypeOf(battery, BatteryManager.prototype);
       }
     } catch {}
+    cachedFakeBattery = battery;
     return battery;
   };
 

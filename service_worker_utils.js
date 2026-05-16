@@ -163,7 +163,10 @@ globalThis.__static_sw_utils__ = (() => {
 
   const eligibilityKindFor = (id, count, knownIds, config) => {
     const chromeExtIdRe = /^[a-p]{32}$/;
-    if (!chromeExtIdRe.test(id) || typeof count !== "number") return null;
+    const uuidExtIdRe = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+    if (!(chromeExtIdRe.test(id) || uuidExtIdRe.test(id)) || typeof count !== "number") {
+      return null;
+    }
     const known = knownIds.has(id);
     const min = known ? config.personaMinCount || 2 : config.unknownPersonaMinCount || 20;
     return count >= min ? (known ? "known" : "unknown") : null;

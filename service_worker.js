@@ -546,11 +546,8 @@ const originFromUrl = (url) => {
   }
 };
 
-const originFromSender = (sender) => {
-  const senderOrigin = originFromUrl(sender && sender.origin);
-  if (senderOrigin && senderOrigin !== "null") return senderOrigin;
-  const senderUrlOrigin = originFromUrl(sender && sender.url);
-  return senderUrlOrigin && senderUrlOrigin !== "null" ? senderUrlOrigin : null;
+const topLevelOriginFromSender = (sender) => {
+  return originFromUrl(sender && sender.tab && sender.tab.url);
 };
 
 const mapIdCounts = (idCounts) => {
@@ -558,7 +555,7 @@ const mapIdCounts = (idCounts) => {
 };
 
 const rememberSenderOrigin = (sender) => {
-  const origin = originFromSender(sender);
+  const origin = topLevelOriginFromSender(sender);
   if (origin && sender.tab) getOrInitTab(sender.tab.id).origin = origin;
   return origin;
 };
@@ -798,10 +795,12 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
         const tabOrigin = originFromUrl(tab.url);
         if (tabOrigin === origin) {
           // Send direct disabled update to MAIN world scripts AND persona update to bridge
-          chrome.tabs
-            .sendMessage(tab.id, { type: "static_disabled_update", disabled })
-            .catch(() => {});
-          return chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {});
+          return Promise.all([
+            chrome.tabs
+              .sendMessage(tab.id, { type: "static_disabled_update", disabled })
+              .catch(() => {}),
+            chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {}),
+          ]);
         }
         return null;
       })
