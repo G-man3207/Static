@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- integration coverage is easier to maintain in one fixture-backed file */
 const { expect, test } = require("./helpers/extension-fixture");
 
 const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
@@ -837,6 +838,52 @@ test("shareable export hashes origin and extension ID labels", async ({ extensio
     "21-100",
     "6-20",
   ]);
+});
+
+test("extension URL probes through img.srcset and source.srcset are blocked", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(
+    (imageUrl) => {
+      const img = document.createElement("img");
+      img.srcset = imageUrl;
+      const imgAttr = document.createElement("img");
+      imgAttr.setAttribute("srcset", imageUrl);
+
+      const source = document.createElement("source");
+      source.srcset = imageUrl;
+      const sourceAttr = document.createElement("source");
+      sourceAttr.setAttribute("srcset", imageUrl);
+
+      return {
+        img: { attr: img.getAttribute("srcset"), srcset: img.srcset },
+        imgAttr: { attr: imgAttr.getAttribute("srcset"), srcset: imgAttr.srcset },
+        source: { attr: source.getAttribute("srcset"), srcset: source.srcset },
+        sourceAttr: { attr: sourceAttr.getAttribute("srcset"), srcset: sourceAttr.srcset },
+      };
+    },
+    probedUrl(PROBED_ID, "/icon.png")
+  );
+
+  const imageUrl = probedUrl(PROBED_ID, "/icon.png");
+  expect(result).toEqual({
+    img: { attr: imageUrl, srcset: imageUrl },
+    imgAttr: { attr: imageUrl, srcset: imageUrl },
+    source: { attr: imageUrl, srcset: imageUrl },
+    sourceAttr: { attr: imageUrl, srcset: imageUrl },
+  });
+
+  await expect
+    .poll(() => vectorCountsFor(extension, server.origin))
+    .toMatchObject({
+      "img.srcset": 1,
+      setAttribute: 2,
+      "source.srcset": 1,
+    });
 });
 
 test("DOM scrubber follows open shadow roots", async ({ extension, server }) => {

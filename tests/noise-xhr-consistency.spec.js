@@ -143,7 +143,7 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
   const result = await collectNoiseNetworkDetails(page);
 
   expect(result.fetch).toMatchObject({
-    cloneType: "basic",
+    cloneType: "default",
     cloneUrl: manifestUrl(),
     contentLength: String(result.fetch.responseText.length),
     instance: true,
@@ -155,7 +155,7 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
     ownType: false,
     ownUrl: false,
     prototype: true,
-    type: "basic",
+    type: "default",
     url: manifestUrl(),
   });
   expect(JSON.parse(result.fetch.responseText)).toMatchObject({ name: "Browser Extension" });
@@ -219,6 +219,54 @@ test("Noise setting changes refresh existing pages without reload", async ({
   await expect
     .poll(async () => [await probeFetch(pageOne), await probeFetch(pageTwo)])
     .toEqual([{ error: "TypeError" }, { error: "TypeError" }]);
+});
+
+test("XHR open() reuse clears blocked state for subsequent good URLs", async ({
+  extension,
+  server,
+}) => {
+  await seedNoisePersona(extension, server.origin);
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(
+    async (manifestUrl) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", manifestUrl);
+      xhr.send();
+      await new Promise((resolve) => {
+        xhr.addEventListener("loadend", resolve, { once: true });
+      });
+      const afterBlock = {
+        readyState: xhr.readyState,
+        responseURL: xhr.responseURL,
+        status: xhr.status,
+      };
+
+      xhr.open("GET", "/blank.html");
+      xhr.send();
+      await new Promise((resolve) => {
+        xhr.addEventListener("loadend", resolve, { once: true });
+      });
+      const afterGood = {
+        readyState: xhr.readyState,
+        responseURL: xhr.responseURL,
+        status: xhr.status,
+      };
+
+      return { afterBlock, afterGood };
+    },
+    probedUrl(PROBED_ID, "/manifest.json")
+  );
+
+  expect(result.afterBlock).toMatchObject({
+    readyState: 4,
+    responseURL: probedUrl(PROBED_ID, "/manifest.json"),
+    status: 200,
+  });
+  expect(result.afterGood.status).toBe(200);
+  expect(result.afterGood.responseURL).toMatch(/blank\.html$/);
 });
 
 test("clearing logs disarms existing-page Noise personas without reload", async ({

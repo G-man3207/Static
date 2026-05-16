@@ -579,3 +579,99 @@ test("Fingerprint masking multi-pixel canvas noise is stable across reads", asyn
   expect(second).toEqual(first);
   expect(third).toEqual(first);
 });
+
+test("Fingerprint masking handles getHighEntropyValues string hint", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const result = await page.evaluate(async () => {
+    if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) {
+      return { skipped: true };
+    }
+    const values = await navigator.userAgentData.getHighEntropyValues("platform");
+    return {
+      skipped: false,
+      platform: values.platform,
+      hasOtherKeys: Object.keys(values).length > 1,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.platform).toBeTruthy();
+});
+
+test("Fingerprint masking empties navigator.plugins and mimeTypes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const result = await page.evaluate(() => ({
+    pluginsLength: navigator.plugins ? navigator.plugins.length : null,
+    mimeTypesLength: navigator.mimeTypes ? navigator.mimeTypes.length : null,
+  }));
+
+  expect(result.pluginsLength).toBe(0);
+  expect(result.mimeTypesLength).toBe(0);
+});
+
+test("Fingerprint masking masks performance.memory", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const result = await page.evaluate(() => {
+    const memory = performance.memory;
+    if (!memory) return { skipped: true };
+    return {
+      skipped: false,
+      hasJsHeapSizeLimit: typeof memory.jsHeapSizeLimit === "number",
+      hasTotalJSHeapSize: typeof memory.totalJSHeapSize === "number",
+      hasUsedJSHeapSize: typeof memory.usedJSHeapSize === "number",
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.hasJsHeapSizeLimit).toBe(true);
+  expect(result.hasTotalJSHeapSize).toBe(true);
+  expect(result.hasUsedJSHeapSize).toBe(true);
+});

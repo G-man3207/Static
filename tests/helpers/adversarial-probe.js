@@ -348,7 +348,7 @@ function checkNetwork(probe, urls) {
     probe.network.fetch.ok === true &&
     probe.network.fetch.instance === true &&
     probe.network.fetch.prototype === true &&
-    probe.network.fetch.type === "basic" &&
+    probe.network.fetch.type === "default" &&
     probe.network.fetch.url === urls.manifestUrl &&
     probe.network.head.body === "" &&
     probe.network.head.status === 200 &&

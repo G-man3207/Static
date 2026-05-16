@@ -909,6 +909,30 @@ test("Replay noise mode jitters coordinates for replay listeners only", async ({
   );
 });
 
+test("Replay removeEventListener correctly removes replay-wrapped listeners", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
+
+  await page.goto(server.url("/replay.html"));
+  await expect.poll(() => page.evaluate(() => Array.isArray(window.__replayRecords))).toBe(true);
+  await page.waitForTimeout(300);
+
+  const observed = await page.evaluate(() => {
+    const recorder = window.LogRocketRecorder;
+    document.removeEventListener("input", recorder, true);
+    document.getElementById("secret").value = "";
+    document.getElementById("secret").dispatchEvent(new Event("input", { bubbles: true }));
+    return {
+      replayCountAfterRemove: window.__replayRecords.filter((r) => r.type === "input").length,
+    };
+  });
+
+  expect(observed.replayCountAfterRemove).toBe(0);
+});
+
 test("Replay poisoning detects Sentry Replay bundle signatures", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));

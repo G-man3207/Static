@@ -774,12 +774,11 @@
           return origRemoveEventListener.apply(this, arguments);
         }
         forgetActiveReplayListener(this, type, listener);
-        return origRemoveEventListener.call(
-          this,
-          type,
-          replayListenerWrappers.get(listener) || listener,
-          options
-        );
+        const wrapped = replayListenerWrappers.get(listener);
+        if (wrapped) {
+          origRemoveEventListener.call(this, type, wrapped, options);
+        }
+        return origRemoveEventListener.call(this, type, listener, options);
       },
     }.removeEventListener;
     EventTarget.prototype.addEventListener = stealth(wrappedAddEventListener, "addEventListener", {

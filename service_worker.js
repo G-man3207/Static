@@ -31,6 +31,9 @@ const {
 // ─── In-memory per-tab state ──────────────────────────────────────────────
 const perTabState = new Map(); // tabId -> { origin, frames: Map<frameId, {total, idCounts}> }
 const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
+const UUID_EXT_ID_RE = /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+const isValidExtensionId = (id) =>
+  typeof id === "string" && (CHROME_EXT_ID_RE.test(id) || UUID_EXT_ID_RE.test(id));
 const MAX_CAPTURED_IDS = 2000;
 const MAX_DIAGNOSTIC_EVENTS_PER_ORIGIN = 120;
 const MAX_DIAGNOSTIC_ORIGINS = 25;
@@ -104,7 +107,7 @@ const sanitizeExtensionIdCounts = (counts) => {
   const sanitized = {};
   for (const [id, count] of Object.entries(counts || {})) {
     const safeId = id.toLowerCase();
-    if (CHROME_EXT_ID_RE.test(safeId) && typeof count === "number" && count > 0) {
+    if (isValidExtensionId(safeId) && typeof count === "number" && count > 0) {
       sanitized[safeId] = (sanitized[safeId] || 0) + count;
     }
   }
@@ -239,7 +242,7 @@ const normalizeDiagnosticEvent = (event, now) => {
     return {
       ...base,
       action: "blocked",
-      extensionId: CHROME_EXT_ID_RE.test(extensionId) ? extensionId : null,
+      extensionId: isValidExtensionId(extensionId) ? extensionId : null,
       extensionPath: safeDiagnosticText(event.extensionPath, "", 96),
       pathKind: safeDiagnosticText(event.pathKind, "unknown", 32),
       vector: safeDiagnosticText(event.vector, "unknown", 48),
@@ -362,7 +365,7 @@ const eligiblePersonaIds = (entry) => {
     .filter(([id, c]) => {
       const safeId = id.toLowerCase();
       const threshold = knownIds.has(safeId) ? minCount : unknownMinCount;
-      return CHROME_EXT_ID_RE.test(safeId) && typeof c === "number" && c >= threshold;
+      return isValidExtensionId(safeId) && typeof c === "number" && c >= threshold;
     })
     .map(([id]) => id.toLowerCase());
 };
