@@ -659,6 +659,7 @@
   const observeStyleAttributes = () => {
     if (typeof MutationObserver === "undefined" || !document.documentElement) return false;
     const observer = new MutationObserver((records) => {
+      if (disabled) return;
       for (const record of records) {
         if (record.type === "characterData") {
           scrubStyleTextNode(record.target && record.target.parentNode, "style.text");

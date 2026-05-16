@@ -375,6 +375,7 @@
     const origBeacon = navigator.sendBeacon.bind(navigator);
     const wrappedBeacon = {
       sendBeacon(url) {
+        if (disabled) return origBeacon.apply(this, arguments);
         const data = arguments[1];
         if (isBad(url)) {
           bump("sendBeacon", url);
