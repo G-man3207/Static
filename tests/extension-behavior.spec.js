@@ -2,6 +2,7 @@
 const http = require("http");
 const { expect, test } = require("./helpers/extension-fixture");
 const { expectApiSurface, getApiSurface } = require("./helpers/api-surface");
+const { visibleContentRatio } = require("./helpers/png");
 
 const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const OTHER_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -943,6 +944,11 @@ const openPopupAdvancedControls = async (popupPage) => {
   await expect(popupPage.locator("#advanced-controls")).toHaveAttribute("open", "");
 };
 
+const expectPopupScreenshotToContainPaintedContent = async (target, label) => {
+  const ratio = visibleContentRatio(await target.screenshot({ animations: "disabled" }));
+  expect(ratio, label).toBeGreaterThan(0.015);
+};
+
 test("popup keeps detailed controls folded by default", async ({ extension }) => {
   const popupPage = await extension.context.newPage();
   await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
@@ -964,6 +970,30 @@ test("popup keeps detailed controls folded by default", async ({ extension }) =>
   await expect(popupPage.locator("#diagnostics-title-text")).toBeVisible();
   await expect(popupPage.locator("#rulesets")).toBeVisible();
   await expect(popupPage.getByText("Power diagnostics")).toBeVisible();
+});
+
+test("popup paints visible content before pointer-driven invalidation", async ({ extension }) => {
+  const popupPage = await extension.context.newPage();
+  await popupPage.setViewportSize({ width: 320, height: 460 });
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+  await expect(popupPage.locator("#count")).toBeVisible();
+  await expectPopupScreenshotToContainPaintedContent(
+    popupPage.locator("body"),
+    "collapsed popup first paint"
+  );
+  await popupPage.waitForFunction(
+    () => document.querySelectorAll("#rulesets input[type='checkbox']").length > 0
+  );
+
+  await popupPage.locator("#advanced-controls").evaluate((details) => {
+    details.open = true;
+  });
+  await expect(popupPage.locator("#noise-title-text")).toBeVisible();
+  await expectPopupScreenshotToContainPaintedContent(
+    popupPage.locator("#advanced-controls"),
+    "advanced controls paint after opening"
+  );
 });
 
 test("popup toggles QA diagnostics mode", async ({ extension }) => {

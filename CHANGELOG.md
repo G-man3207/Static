@@ -10,6 +10,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 - Per-site whitelist. Users can now disable Static's protections on individual sites from the popup. When a site is disabled, all extension-probe blocking, DOM scrubbing, global stripping, and opt-in poisoning modes are bypassed. The disabled state persists across sessions and updates instantly on the current page.
 
+### Fixed
+
+- Popup and probe-log UI no longer use SVG filter textures that can trigger delayed repainting in Chrome extension surfaces.
+
 ## [2.1.0] — 2026-05-14
 
 ### Added
