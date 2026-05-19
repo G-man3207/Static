@@ -41,6 +41,7 @@
     {
       "matches": ["<all_urls>"],
       "js": [
+        "block_utils.js",
         "block_adaptive.js",
         "block.js",
         "block_vectors.js",

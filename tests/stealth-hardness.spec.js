@@ -1,6 +1,6 @@
 const { expect, test } = require("./helpers/extension-fixture");
 
-test("shared stealth WeakMap prevents toString chain explosion across scripts", async ({
+test("local stealth WeakMaps leave no detectable global key and toString chain works", async ({
   extension,
   server,
 }) => {
@@ -8,27 +8,6 @@ test("shared stealth WeakMap prevents toString chain explosion across scripts", 
   await page.goto(server.url("/blank.html"));
 
   const result = await page.evaluate(() => {
-    const toString = Function.prototype.toString;
-    // Verify there's only one layer of patching by checking toString output
-    const seen = new Set();
-    const current = toString;
-    if (current && typeof current === "function" && !seen.has(current)) {
-      seen.add(current);
-      try {
-        const next = current.__ss2605__ ? null : String(current);
-        if (next && next.includes("[native code]")) {
-          // found native
-        }
-        // Heuristic: if toString on current returns native code, it's the real one
-        const source = Function.prototype.toString.call(current);
-        if (source.includes("stealthFns.has(this)")) {
-          // Still our patch — but with shared WeakMap there should only be one layer
-        }
-      } catch {
-        // ignore
-      }
-    }
-
     // All wrapped functions should return [native code] under toString
     const wrapped = [
       window.fetch,
@@ -50,17 +29,20 @@ test("shared stealth WeakMap prevents toString chain explosion across scripts", 
       }
     }
 
-    // The stealth key should exist but be non-enumerable
-    const hasKey = "__ss2605__" in globalThis;
-    const desc = Object.getOwnPropertyDescriptor(globalThis, "__ss2605__");
+    // No obvious stealth key should exist on globalThis
+    const hasLegacyKey = "__ss2605__" in globalThis;
+    const stealthKeys = Reflect.ownKeys(globalThis).filter(
+      (key) =>
+        ((typeof key === "string" && key.includes("ss2605")) ||
+          (typeof key === "string" && key.includes("__static"))) &&
+        key !== "__static_block_utils__"
+    );
 
-    return { hasKey, desc, sources };
+    return { hasLegacyKey, sources, stealthKeys };
   });
 
-  expect(result.hasKey).toBe(true);
-  if (result.desc) {
-    expect(result.desc.enumerable).toBe(false);
-  }
+  expect(result.hasLegacyKey).toBe(false);
+  expect(result.stealthKeys).toEqual([]);
 
   for (const [name, { direct, called }] of Object.entries(result.sources)) {
     expect(direct, `${name} direct toString`).toContain("[native code]");
