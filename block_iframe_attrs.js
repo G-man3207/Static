@@ -1,5 +1,6 @@
 // Static - MAIN-world iframe policy attribute normalizer.
 (() => {
+  const U = globalThis.__static_block_utils__;
   const LEGACY_ALLOW_ATTRS = ["allowfullscreen", "allowpaymentrequest"];
   const IFRAME_POLICY_ATTR_RE =
     /\s(?:sandbox|allow|allowfullscreen|allowpaymentrequest)(?:\s*=|\s|\/?>)/i;
@@ -30,44 +31,7 @@
   let supportedAllowFeatures = null;
   let sandboxTokenList = null;
   let nativeRemoveAttribute = null;
-  let bridgePort = null;
   let disabled = false;
-
-  const stealthFns = new WeakMap();
-  const origFnToString = Function.prototype.toString;
-  const patchedFnToString = {
-    toString() {
-      if (stealthFns.has(this)) return stealthFns.get(this);
-      return origFnToString.call(this);
-    },
-  }.toString;
-  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-  try {
-    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
-  Function.prototype.toString = patchedFnToString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
-    }
-  };
 
   const applyConfigUpdate = (data) => {
     if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
@@ -75,21 +39,7 @@
     }
   };
 
-  const onBridgeInit = (event) => {
-    if (bridgePort) return;
-    const port = event && event.ports && event.ports[0];
-    if (!port || typeof port.postMessage !== "function") return;
-    try {
-      event.stopImmediatePropagation();
-    } catch {}
-    bridgePort = port;
-    try {
-      bridgePort.start();
-    } catch {}
-    bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
-    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
-  };
-  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
+  U.setupBridge(BRIDGE_EVENT, 1000, applyConfigUpdate);
 
   const readPolicyFeatures = (policy) => {
     if (!policy) return [];
@@ -249,8 +199,8 @@
         return origSetAttributeNS.call(this, ns, name, normalized.value);
       },
     };
-    Element.prototype.setAttribute = stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
-    Element.prototype.setAttributeNS = stealth(wrapped.setAttributeNS, "setAttributeNS", {
+    Element.prototype.setAttribute = U.stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
+    Element.prototype.setAttributeNS = U.stealth(wrapped.setAttributeNS, "setAttributeNS", {
       length: 3,
     });
   };
@@ -274,9 +224,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(wrappedSet, `set ${prop}`, {
+      set: U.stealth(wrappedSet, `set ${prop}`, {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, `set ${prop}`),
+        source: U.nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -300,9 +250,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(wrappedSet, `set ${prop}`, {
+      set: U.stealth(wrappedSet, `set ${prop}`, {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, `set ${prop}`),
+        source: U.nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -324,9 +274,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(wrappedSet, `set ${prop}`, {
+      set: U.stealth(wrappedSet, `set ${prop}`, {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, `set ${prop}`),
+        source: U.nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -343,9 +293,9 @@
     }.insertAdjacentHTML;
     Object.defineProperty(Element.prototype, "insertAdjacentHTML", {
       ...desc,
-      value: stealth(wrapped, "insertAdjacentHTML", {
+      value: U.stealth(wrapped, "insertAdjacentHTML", {
         length: orig.length,
-        source: nativeSourceFor(orig, "insertAdjacentHTML"),
+        source: U.nativeSourceFor(orig, "insertAdjacentHTML"),
       }),
     });
   };
@@ -380,9 +330,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(Object.getOwnPropertyDescriptor(setterHolder, "value").set, "set value", {
+      set: U.stealth(Object.getOwnPropertyDescriptor(setterHolder, "value").set, "set value", {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, "set value"),
+        source: U.nativeSourceFor(desc.set, "set value"),
       }),
     });
   };
@@ -402,7 +352,10 @@
     }.add;
     Object.defineProperty(proto, "add", {
       ...desc,
-      value: stealth(wrapped, "add", { length: orig.length, source: nativeSourceFor(orig, "add") }),
+      value: U.stealth(wrapped, "add", {
+        length: orig.length,
+        source: U.nativeSourceFor(orig, "add"),
+      }),
     });
   };
 
@@ -422,9 +375,9 @@
     }.toggle;
     Object.defineProperty(proto, "toggle", {
       ...desc,
-      value: stealth(wrapped, "toggle", {
+      value: U.stealth(wrapped, "toggle", {
         length: orig.length,
-        source: nativeSourceFor(orig, "toggle"),
+        source: U.nativeSourceFor(orig, "toggle"),
       }),
     });
   };
@@ -447,9 +400,9 @@
     }.replace;
     Object.defineProperty(proto, "replace", {
       ...desc,
-      value: stealth(wrapped, "replace", {
+      value: U.stealth(wrapped, "replace", {
         length: orig.length,
-        source: nativeSourceFor(orig, "replace"),
+        source: U.nativeSourceFor(orig, "replace"),
       }),
     });
   };

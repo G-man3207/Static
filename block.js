@@ -1,51 +1,11 @@
-/* eslint-disable max-lines -- MAIN-world fetch/XHR shims are safer kept contiguous */
 // Static - MAIN-world fetch/XHR extension probe blocker and Noise decoy engine.
 (() => {
-  const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
-  const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
+  const U = globalThis.__static_block_utils__;
   const BRIDGE_EVENT = "__static_noise_bridge_init__";
   const MAX_QUEUED_PROBES = 1000;
-  const queuedProbeEvents = [];
-  let bridgePort = null;
   let persona = new Set();
   let noiseEnabled = false;
   let disabled = false;
-
-  const stealthFns = new WeakMap();
-  const origFnToString = Function.prototype.toString;
-  const patchedFnToString = {
-    toString() {
-      if (stealthFns.has(this)) return stealthFns.get(this);
-      return origFnToString.call(this);
-    },
-  }.toString;
-  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-  try {
-    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
-  Function.prototype.toString = patchedFnToString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
-    }
-  };
 
   const applyConfigUpdate = (data) => {
     if (!data || data.type !== "config_update") return;
@@ -60,104 +20,17 @@
     }
   };
 
+  const bridge = U.setupBridge(BRIDGE_EVENT, MAX_QUEUED_PROBES, applyConfigUpdate);
+
   const postProbe = (url, where) => {
     const safeUrl = url == null ? "" : String(url).slice(0, 512);
     const safeWhere = where == null ? "" : String(where).slice(0, 64);
-    if (bridgePort) {
-      try {
-        bridgePort.postMessage({ type: "probe_blocked", where: safeWhere, url: safeUrl });
-        return;
-      } catch {
-        bridgePort = null;
-      }
-    }
-    if (queuedProbeEvents.length < MAX_QUEUED_PROBES) {
-      queuedProbeEvents.push({ url: safeUrl, where: safeWhere });
-    }
-  };
-
-  const flushQueuedProbes = () => {
-    if (!bridgePort) return;
-    const batch = queuedProbeEvents.splice(0, queuedProbeEvents.length);
-    for (const event of batch) {
-      try {
-        bridgePort.postMessage({ type: "probe_blocked", ...event });
-      } catch {
-        bridgePort = null;
-        return;
-      }
-    }
-  };
-
-  const onBridgeInit = (event) => {
-    if (bridgePort) return;
-    const port = event && event.ports && event.ports[0];
-    if (!port || typeof port.postMessage !== "function") return;
-
-    try {
-      event.stopImmediatePropagation();
-    } catch {}
-    bridgePort = port;
-    bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
-    try {
-      bridgePort.start();
-    } catch {}
-    flushQueuedProbes();
-    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
-  };
-  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
-
-  const normalizeUrlString = (value) => String(value).trim();
-
-  const getUrl = (input) => {
-    if (input == null) return "";
-    if (typeof input === "string") return normalizeUrlString(input);
-    if (typeof URL !== "undefined" && input instanceof URL) return input.href;
-    if (typeof Request !== "undefined" && input instanceof Request) return input.url;
-    if (typeof input.url === "string") return normalizeUrlString(input.url);
-    try {
-      return normalizeUrlString(input);
-    } catch {
-      return "";
-    }
-  };
-
-  const isBad = (input) => {
-    try {
-      return BAD_RE.test(getUrl(input));
-    } catch {
-      return false;
-    }
-  };
-
-  const EXT_ID_RE_BY_SCHEME = {
-    "chrome-extension": CHROME_EXT_ID_RE,
-    "edge-extension": CHROME_EXT_ID_RE,
-    "moz-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
-    "safari-web-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
-  };
-
-  const extensionIdentityFor = (url) => {
-    try {
-      const parsed = new URL(String(url || ""));
-      const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
-      const id = parsed.hostname.toLowerCase();
-      const idRe = EXT_ID_RE_BY_SCHEME[scheme];
-      if (idRe && idRe.test(id)) {
-        return { id, scheme };
-      }
-    } catch {}
-    return null;
-  };
-
-  const extractExtId = (url) => {
-    const identity = extensionIdentityFor(url);
-    return identity ? identity.id : null;
+    bridge.post("probe_blocked", { url: safeUrl, where: safeWhere });
   };
 
   const shouldDecoy = (url) => {
     if (!noiseEnabled) return false;
-    const id = extractExtId(url);
+    const id = U.extractExtId(url);
     return id != null && persona.has(id);
   };
 
@@ -188,32 +61,22 @@
   const fakeXhrResponses = new WeakMap();
   const fakeFetchResponses = new WeakMap();
 
-  const descriptorOwnerFor = (proto, prop) => {
-    let cursor = proto;
-    while (cursor) {
-      const desc = Object.getOwnPropertyDescriptor(cursor, prop);
-      if (desc) return { owner: cursor, desc };
-      cursor = Object.getPrototypeOf(cursor);
-    }
-    return null;
-  };
-
   const patchFakeResponseMetadata = () => {
     if (typeof Response === "undefined" || !Response.prototype) return;
     for (const prop of ["type", "url"]) {
-      const found = descriptorOwnerFor(Response.prototype, prop);
+      const found = U.descriptorOwnerFor(Response.prototype, prop);
       if (!found || !found.desc || typeof found.desc.get !== "function") continue;
       const { desc, owner } = found;
       Object.defineProperty(owner, prop, {
         ...desc,
-        get: stealth(
+        get: U.stealth(
           function get() {
             const fake = fakeFetchResponses.get(this);
             if (fake && Object.prototype.hasOwnProperty.call(fake, prop)) return fake[prop];
             return desc.get.call(this);
           },
           `get ${prop}`,
-          { length: 0, source: nativeSourceFor(desc.get, `get ${prop}`) }
+          { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
         ),
       });
     }
@@ -231,9 +94,9 @@
     }.clone;
     Object.defineProperty(Response.prototype, "clone", {
       ...cloneDesc,
-      value: stealth(wrappedClone, "clone", {
+      value: U.stealth(wrappedClone, "clone", {
         length: 0,
-        source: nativeSourceFor(origClone, "clone"),
+        source: U.nativeSourceFor(origClone, "clone"),
       }),
     });
   };
@@ -262,17 +125,17 @@
       "status",
       "statusText",
     ]) {
-      const found = descriptorOwnerFor(XMLHttpRequest.prototype, prop);
+      const found = U.descriptorOwnerFor(XMLHttpRequest.prototype, prop);
       if (!found || !found.desc || typeof found.desc.get !== "function") continue;
       const { desc, owner } = found;
       Object.defineProperty(owner, prop, {
         ...desc,
-        get: stealth(
+        get: U.stealth(
           function get() {
             return fakeXhrValueFor(this, prop, desc);
           },
           `get ${prop}`,
-          { length: 0, source: nativeSourceFor(desc.get, `get ${prop}`) }
+          { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
         ),
       });
     }
@@ -424,8 +287,8 @@
     const wrappedFetch = {
       fetch(input) {
         if (disabled) return origFetch.apply(this, arguments);
-        if (isBad(input)) {
-          const url = getUrl(input);
+        if (U.isBad(input)) {
+          const url = U.getUrl(input);
           const method = fetchMethodFor(input, arguments[1]);
           const decoyBody = buildDecoyBody(url);
           if (shouldDecoy(url) && isDecoyableMethod(method) && decoyBody) {
@@ -438,7 +301,7 @@
         return origFetch.apply(this, arguments);
       },
     }.fetch;
-    window.fetch = stealth(wrappedFetch, "fetch", { length: 1 });
+    window.fetch = U.stealth(wrappedFetch, "fetch", { length: 1 });
   };
 
   const emptyFakeXhr = (readyState) => ({
@@ -554,12 +417,12 @@
     const wrappedOpen = {
       open(method, url, ...rest) {
         if (disabled) return origOpen.call(this, method, url, ...rest);
-        const bad = isBad(url);
+        const bad = U.isBad(url);
         if (bad) {
           blockedXHRs.set(this, {
             async: rest.length === 0 || rest[0] !== false,
             method: String(method || "GET").toUpperCase(),
-            url: getUrl(url),
+            url: U.getUrl(url),
           });
         } else {
           blockedXHRs.delete(this);
@@ -612,14 +475,14 @@
         return rawHeaders;
       },
     }.getAllResponseHeaders;
-    XMLHttpRequest.prototype.open = stealth(wrappedOpen, "open");
-    XMLHttpRequest.prototype.send = stealth(wrappedSend, "send");
-    XMLHttpRequest.prototype.getResponseHeader = stealth(
+    XMLHttpRequest.prototype.open = U.stealth(wrappedOpen, "open");
+    XMLHttpRequest.prototype.send = U.stealth(wrappedSend, "send");
+    XMLHttpRequest.prototype.getResponseHeader = U.stealth(
       wrappedGetResponseHeader,
       "getResponseHeader",
       { length: 1 }
     );
-    XMLHttpRequest.prototype.getAllResponseHeaders = stealth(
+    XMLHttpRequest.prototype.getAllResponseHeaders = U.stealth(
       wrappedGetAllResponseHeaders,
       "getAllResponseHeaders",
       { length: 0 }

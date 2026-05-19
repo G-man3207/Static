@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-statements, complexity -- MAIN-world replay shims are safer kept contiguous */
 // Static - MAIN-world opt-in session-replay poisoning.
 (() => {
+  const U = globalThis.__static_block_utils__;
   const BRIDGE_EVENT = "__static_replay_bridge_init__";
   const OPENREPLAY_SCRIPT_RE =
     /(?:^|[/@.-])openreplay(?:[/_.-]|$)|@openreplay\/tracker|tracker-assist/i;
@@ -16,7 +17,6 @@
       " "
     )
   );
-  const queuedSignals = [];
   const reportedReplaySignals = new Set();
   const eventJitter = new WeakMap();
   const targetProxyCache = new WeakMap();
@@ -30,49 +30,12 @@
   const replayMethodSetters = new WeakSet();
   const replayWrappedMethods = new WeakSet();
   const MAX_QUEUED_SIGNALS = 50;
-  let bridgePort = null;
   let replayMode = "off";
   let replayDetected = false;
   let replayNoiseStarted = false;
   let decoySurface = null;
   let replayScanTicks = 0;
   let disabled = false;
-
-  const stealthFns = new WeakMap();
-  const origFnToString = Function.prototype.toString;
-  const patchedFnToString = {
-    toString() {
-      if (stealthFns.has(this)) return stealthFns.get(this);
-      return origFnToString.call(this);
-    },
-  }.toString;
-  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-  try {
-    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
-  Function.prototype.toString = patchedFnToString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
-    }
-  };
 
   const isObjectLike = (value) =>
     value && (typeof value === "object" || typeof value === "function");
@@ -175,9 +138,9 @@
     if (replayWrappedMethods.has(orig)) return orig;
     const wrapped = wrap(orig);
     if (typeof wrapped !== "function") return;
-    const stealthWrapped = stealth(wrapped, key, {
+    const stealthWrapped = U.stealth(wrapped, key, {
       length: orig.length,
-      source: nativeSourceFor(orig, key),
+      source: U.nativeSourceFor(orig, key),
     });
     replayWrappedMethods.add(stealthWrapped);
     return stealthWrapped;
@@ -219,7 +182,7 @@
 
     let currentValue;
     const enumerable = desc ? desc.enumerable : true;
-    const setter = stealth(
+    const setter = U.stealth(
       function set(value) {
         const nextValue = typeof value === "function" ? wrapReplayMethod(value, key, wrap) : value;
         try {
@@ -241,7 +204,7 @@
       Object.defineProperty(target, key, {
         configurable: true,
         enumerable,
-        get: stealth(
+        get: U.stealth(
           function get() {
             return currentValue;
           },
@@ -389,14 +352,14 @@
       Object.defineProperty(window, "DD_RUM", {
         configurable: true,
         enumerable: true,
-        get: stealth(
+        get: U.stealth(
           function get() {
             return currentValue;
           },
           "get DD_RUM",
           { length: 0 }
         ),
-        set: stealth(
+        set: U.stealth(
           function set(value) {
             currentValue = instrumentDatadogGlobal(value);
           },
@@ -418,14 +381,14 @@
       Object.defineProperty(window, "posthog", {
         configurable: true,
         enumerable: true,
-        get: stealth(
+        get: U.stealth(
           function get() {
             return currentValue;
           },
           "get posthog",
           { length: 0 }
         ),
-        set: stealth(
+        set: U.stealth(
           function set(value) {
             currentValue = instrumentPostHogGlobal(value);
           },
@@ -447,14 +410,14 @@
       Object.defineProperty(window, "OpenReplay", {
         configurable: true,
         enumerable: true,
-        get: stealth(
+        get: U.stealth(
           function get() {
             return currentValue;
           },
           "get OpenReplay",
           { length: 0 }
         ),
-        set: stealth(
+        set: U.stealth(
           function set(value) {
             currentValue = instrumentOpenReplayGlobal(value);
           },
@@ -476,14 +439,14 @@
       Object.defineProperty(window, "Sentry", {
         configurable: true,
         enumerable: true,
-        get: stealth(
+        get: U.stealth(
           function get() {
             return currentValue;
           },
           "get Sentry",
           { length: 0 }
         ),
-        set: stealth(
+        set: U.stealth(
           function set(value) {
             currentValue = instrumentSentryGlobal(value);
           },
@@ -505,52 +468,13 @@
     }
   };
 
+  const bridge = U.setupBridge(BRIDGE_EVENT, MAX_QUEUED_SIGNALS, applyConfigUpdate);
+
   const postReplayDetected = (signal) => {
     if (disabled) return;
     const safeSignal = signal == null ? "unknown" : String(signal).slice(0, 96);
-    if (bridgePort) {
-      try {
-        bridgePort.postMessage({ type: "replay_detected", signal: safeSignal });
-        return;
-      } catch {
-        bridgePort = null;
-      }
-    }
-    if (queuedSignals.length < MAX_QUEUED_SIGNALS) {
-      queuedSignals.push(safeSignal);
-    }
+    bridge.post("replay_detected", { signal: safeSignal });
   };
-
-  const flushQueuedSignals = () => {
-    if (!bridgePort) return;
-    const batch = queuedSignals.splice(0, queuedSignals.length);
-    for (const signal of batch) {
-      try {
-        bridgePort.postMessage({ type: "replay_detected", signal });
-      } catch {
-        bridgePort = null;
-        return;
-      }
-    }
-  };
-
-  const onBridgeInit = (event) => {
-    if (bridgePort) return;
-    const port = event && event.ports && event.ports[0];
-    if (!port || typeof port.postMessage !== "function") return;
-
-    try {
-      event.stopImmediatePropagation();
-    } catch {}
-    bridgePort = port;
-    bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
-    try {
-      bridgePort.start();
-    } catch {}
-    flushQueuedSignals();
-    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
-  };
-  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
 
   const isReplayScriptUrl = (url) => {
     try {
@@ -711,9 +635,9 @@
 
   const listenerSource = (listener) => {
     try {
-      if (typeof listener === "function") return origFnToString.call(listener);
+      if (typeof listener === "function") return U.origFnToString.call(listener);
       if (listener && typeof listener.handleEvent === "function") {
-        return origFnToString.call(listener.handleEvent);
+        return U.origFnToString.call(listener.handleEvent);
       }
     } catch {}
     return "";
@@ -781,10 +705,14 @@
         return origRemoveEventListener.call(this, type, listener, options);
       },
     }.removeEventListener;
-    EventTarget.prototype.addEventListener = stealth(wrappedAddEventListener, "addEventListener", {
-      length: 2,
-    });
-    EventTarget.prototype.removeEventListener = stealth(
+    EventTarget.prototype.addEventListener = U.stealth(
+      wrappedAddEventListener,
+      "addEventListener",
+      {
+        length: 2,
+      }
+    );
+    EventTarget.prototype.removeEventListener = U.stealth(
       wrappedRemoveEventListener,
       "removeEventListener",
       { length: 2 }
@@ -976,9 +904,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(guardedSetter, `set ${prop}`, {
+      set: U.stealth(guardedSetter, `set ${prop}`, {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, `set ${prop}`),
+        source: U.nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -994,7 +922,7 @@
         return origFn.apply(this, args);
       },
     }[name];
-    return stealth(wrapped, name, { length });
+    return U.stealth(wrapped, name, { length });
   };
 
   patchDatadogGlobal();

@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-statements -- MAIN-world fingerprint shims are safer kept contiguous */
 // Static - MAIN-world opt-in device and browser signal poisoning.
 (() => {
+  const U = globalThis.__static_block_utils__;
   const BRIDGE_EVENT = "__static_fingerprint_bridge_init__";
   const MODE_MASK = "mask";
   const DEFAULT_PERSONA = {
@@ -44,82 +45,9 @@
   const explicitTimeZoneDateTimeFormats = new WeakSet();
   const poisonedAudioBuffers = new WeakSet();
   const nativeDateGetTimezoneOffset = Date.prototype.getTimezoneOffset;
-  let bridgePort = null;
   let fingerprintMode = "off";
   let fingerprintPersona = null;
   let disabled = false;
-
-  const stealthFns = new WeakMap();
-  const origFnToString = Function.prototype.toString;
-  const patchedFnToString = {
-    toString() {
-      if (stealthFns.has(this)) return stealthFns.get(this);
-      return origFnToString.call(this);
-    },
-  }.toString;
-  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-  try {
-    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
-  Function.prototype.toString = patchedFnToString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
-    }
-  };
-
-  const alignPrototypeConstructor = (wrapped, original) => {
-    try {
-      const proto = original && original.prototype;
-      if (!proto) return;
-      const desc = Object.getOwnPropertyDescriptor(proto, "constructor") || {
-        writable: true,
-        configurable: true,
-        enumerable: false,
-      };
-      Object.defineProperty(proto, "constructor", {
-        ...desc,
-        value: wrapped,
-      });
-    } catch {}
-  };
-
-  const copyConstructorStatics = (wrapped, original) => {
-    for (const key of Reflect.ownKeys(original)) {
-      if (key === "length" || key === "name" || key === "prototype") continue;
-      try {
-        const desc = Object.getOwnPropertyDescriptor(original, key);
-        if (desc) Object.defineProperty(wrapped, key, desc);
-      } catch {}
-    }
-  };
-
-  const descriptorOwnerFor = (target, prop) => {
-    let cursor = target;
-    while (cursor) {
-      const desc = Object.getOwnPropertyDescriptor(cursor, prop);
-      if (desc) return { desc, owner: cursor };
-      cursor = Object.getPrototypeOf(cursor);
-    }
-    return null;
-  };
 
   const finiteNumber = (value, fallback) =>
     typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -217,21 +145,7 @@
     }
   };
 
-  const onBridgeInit = (event) => {
-    if (bridgePort) return;
-    const port = event && event.ports && event.ports[0];
-    if (!port || typeof port.postMessage !== "function") return;
-    try {
-      event.stopImmediatePropagation();
-    } catch {}
-    bridgePort = port;
-    bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
-    try {
-      bridgePort.start();
-    } catch {}
-    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
-  };
-  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
+  U.setupBridge(BRIDGE_EVENT, 1000, applyConfigUpdate);
 
   const maskedUa = (ua) => {
     const p = persona();
@@ -271,19 +185,19 @@
 
   const patchGetter = (target, prop, nativeName, maskedValue) => {
     if (!target) return;
-    const found = descriptorOwnerFor(target, prop);
+    const found = U.descriptorOwnerFor(target, prop);
     if (!found || !found.desc || typeof found.desc.get !== "function") return;
     const { desc, owner } = found;
     try {
       Object.defineProperty(owner, prop, {
         ...desc,
-        get: stealth(
+        get: U.stealth(
           function get() {
             const original = desc.get.call(this);
             return isMasking() ? maskedValue(original, this) : original;
           },
           nativeName,
-          { length: 0, source: nativeSourceFor(desc.get, nativeName) }
+          { length: 0, source: U.nativeSourceFor(desc.get, nativeName) }
         ),
       });
     } catch {}
@@ -454,12 +368,12 @@
           const orig = nativeValue(prop);
           if (typeof orig !== "function") return orig;
           return cachedMethod("toJSON", () =>
-            stealth(
+            U.stealth(
               function toJSON() {
                 return maskedUaDataJson(t);
               },
               "toJSON",
-              { length: 0, source: nativeSourceFor(orig, "toJSON") }
+              { length: 0, source: U.nativeSourceFor(orig, "toJSON") }
             )
           );
         }
@@ -467,12 +381,12 @@
           const orig = nativeValue(prop);
           if (typeof orig !== "function") return orig;
           return cachedMethod("getHighEntropyValues", () =>
-            stealth(
+            U.stealth(
               function getHighEntropyValues(hints) {
                 return maskedHighEntropyValues(t, hints);
               },
               "getHighEntropyValues",
-              { length: 1, source: nativeSourceFor(orig, "getHighEntropyValues") }
+              { length: 1, source: U.nativeSourceFor(orig, "getHighEntropyValues") }
             )
           );
         }
@@ -564,13 +478,13 @@
       return rememberExplicitTimeZoneFormatter(formatter, state.explicitTimeZone);
     };
     wrappedDateTimeFormat.prototype = OriginalDateTimeFormat.prototype;
-    copyConstructorStatics(wrappedDateTimeFormat, OriginalDateTimeFormat);
-    alignPrototypeConstructor(wrappedDateTimeFormat, OriginalDateTimeFormat);
+    U.copyConstructorStatics(wrappedDateTimeFormat, OriginalDateTimeFormat);
+    U.alignPrototypeConstructor(wrappedDateTimeFormat, OriginalDateTimeFormat);
     Object.defineProperty(Intl, "DateTimeFormat", {
       ...(desc || { configurable: true, writable: true }),
-      value: stealth(wrappedDateTimeFormat, "DateTimeFormat", {
+      value: U.stealth(wrappedDateTimeFormat, "DateTimeFormat", {
         length: OriginalDateTimeFormat.length,
-        source: nativeSourceFor(OriginalDateTimeFormat, "DateTimeFormat"),
+        source: U.nativeSourceFor(OriginalDateTimeFormat, "DateTimeFormat"),
       }),
     });
   };
@@ -587,9 +501,9 @@
       }.getTimezoneOffset;
       Object.defineProperty(Date.prototype, "getTimezoneOffset", {
         ...dateDesc,
-        value: stealth(wrappedOffset, "getTimezoneOffset", {
+        value: U.stealth(wrappedOffset, "getTimezoneOffset", {
           length: origOffset.length,
-          source: nativeSourceFor(origOffset, "getTimezoneOffset"),
+          source: U.nativeSourceFor(origOffset, "getTimezoneOffset"),
         }),
       });
     }
@@ -607,9 +521,9 @@
     }.resolvedOptions;
     Object.defineProperty(intlProto, "resolvedOptions", {
       ...resolvedDesc,
-      value: stealth(wrappedResolved, "resolvedOptions", {
+      value: U.stealth(wrappedResolved, "resolvedOptions", {
         length: origResolved.length,
-        source: nativeSourceFor(origResolved, "resolvedOptions"),
+        source: U.nativeSourceFor(origResolved, "resolvedOptions"),
       }),
     });
 
@@ -628,9 +542,9 @@
       }[method];
       Object.defineProperty(Date.prototype, method, {
         ...desc,
-        value: stealth(wrapped, method, {
+        value: U.stealth(wrapped, method, {
           length: orig.length,
-          source: nativeSourceFor(orig, method),
+          source: U.nativeSourceFor(orig, method),
         }),
       });
     }
@@ -675,7 +589,7 @@
 
   const patchBattery = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = descriptorOwnerFor(Navigator.prototype, "getBattery");
+    const found = U.descriptorOwnerFor(Navigator.prototype, "getBattery");
     const desc = found && found.desc;
     const orig = desc && desc.value;
     if (!found || typeof orig !== "function") return;
@@ -687,9 +601,9 @@
     }.getBattery;
     Object.defineProperty(found.owner, "getBattery", {
       ...desc,
-      value: stealth(wrapped, "getBattery", {
+      value: U.stealth(wrapped, "getBattery", {
         length: orig.length,
-        source: nativeSourceFor(orig, "getBattery"),
+        source: U.nativeSourceFor(orig, "getBattery"),
       }),
     });
   };
@@ -697,13 +611,13 @@
   const patchPerformanceMemory = () => {
     const perf = window.performance;
     if (!perf) return;
-    const found = descriptorOwnerFor(perf, "memory");
+    const found = U.descriptorOwnerFor(perf, "memory");
     if (!found || !found.desc) return;
     const { desc, owner } = found;
     if (desc.get) {
       Object.defineProperty(owner, "memory", {
         ...desc,
-        get: stealth(
+        get: U.stealth(
           function get() {
             const original = desc.get.call(this);
             if (!isMasking()) return original;
@@ -714,13 +628,13 @@
             };
           },
           "get memory",
-          { length: 0, source: nativeSourceFor(desc.get, "get memory") }
+          { length: 0, source: U.nativeSourceFor(desc.get, "get memory") }
         ),
       });
     } else if ("value" in desc) {
       Object.defineProperty(owner, "memory", {
         ...desc,
-        get: stealth(
+        get: U.stealth(
           function get() {
             if (!isMasking()) return desc.value;
             return {
@@ -730,7 +644,7 @@
             };
           },
           "get memory",
-          { length: 0, source: nativeSourceFor(() => {}, "get memory") }
+          { length: 0, source: U.nativeSourceFor(() => {}, "get memory") }
         ),
       });
     }
@@ -741,7 +655,7 @@
     try {
       proto = navigator.storage && Object.getPrototypeOf(navigator.storage);
     } catch {}
-    const found = proto && descriptorOwnerFor(proto, "estimate");
+    const found = proto && U.descriptorOwnerFor(proto, "estimate");
     const desc = found && found.desc;
     const orig = desc && desc.value;
     if (!found || typeof orig !== "function") return;
@@ -757,9 +671,9 @@
     }.estimate;
     Object.defineProperty(found.owner, "estimate", {
       ...desc,
-      value: stealth(wrapped, "estimate", {
+      value: U.stealth(wrapped, "estimate", {
         length: orig.length,
-        source: nativeSourceFor(orig, "estimate"),
+        source: U.nativeSourceFor(orig, "estimate"),
       }),
     });
   };
@@ -785,9 +699,9 @@
     }.getParameter;
     Object.defineProperty(Ctor.prototype, "getParameter", {
       ...desc,
-      value: stealth(wrapped, "getParameter", {
+      value: U.stealth(wrapped, "getParameter", {
         length: orig.length,
-        source: nativeSourceFor(orig, "getParameter"),
+        source: U.nativeSourceFor(orig, "getParameter"),
       }),
     });
   };
@@ -865,9 +779,9 @@
       }.convertToBlob;
       Object.defineProperty(OffscreenCanvas.prototype, "convertToBlob", {
         ...convertDesc,
-        value: stealth(wrapped, "convertToBlob", {
+        value: U.stealth(wrapped, "convertToBlob", {
           length: origConvert.length,
-          source: nativeSourceFor(origConvert, "convertToBlob"),
+          source: U.nativeSourceFor(origConvert, "convertToBlob"),
         }),
       });
     }
@@ -894,9 +808,9 @@
       }.getImageData;
       Object.defineProperty(proto, "getImageData", {
         ...imgDesc,
-        value: stealth(wrappedGetImageData, "getImageData", {
+        value: U.stealth(wrappedGetImageData, "getImageData", {
           length: origGetImageData.length,
-          source: nativeSourceFor(origGetImageData, "getImageData"),
+          source: U.nativeSourceFor(origGetImageData, "getImageData"),
         }),
       });
     } catch {}
@@ -919,9 +833,9 @@
       }.toDataURL;
       Object.defineProperty(HTMLCanvasElement.prototype, "toDataURL", {
         ...toDataUrlDesc,
-        value: stealth(wrappedToDataUrl, "toDataURL", {
+        value: U.stealth(wrappedToDataUrl, "toDataURL", {
           length: origToDataUrl.length,
-          source: nativeSourceFor(origToDataUrl, "toDataURL"),
+          source: U.nativeSourceFor(origToDataUrl, "toDataURL"),
         }),
       });
     }
@@ -941,9 +855,9 @@
       }.toBlob;
       Object.defineProperty(HTMLCanvasElement.prototype, "toBlob", {
         ...toBlobDesc,
-        value: stealth(wrappedToBlob, "toBlob", {
+        value: U.stealth(wrappedToBlob, "toBlob", {
           length: origToBlob.length,
-          source: nativeSourceFor(origToBlob, "toBlob"),
+          source: U.nativeSourceFor(origToBlob, "toBlob"),
         }),
       });
     }
@@ -964,9 +878,9 @@
     }.getImageData;
     Object.defineProperty(CanvasRenderingContext2D.prototype, "getImageData", {
       ...imageDesc,
-      value: stealth(wrappedGetImageData, "getImageData", {
+      value: U.stealth(wrappedGetImageData, "getImageData", {
         length: origGetImageData.length,
-        source: nativeSourceFor(origGetImageData, "getImageData"),
+        source: U.nativeSourceFor(origGetImageData, "getImageData"),
       }),
     });
   };
@@ -1027,22 +941,22 @@
     }.startRendering;
     Object.defineProperty(OfflineAudioContext.prototype, "startRendering", {
       ...desc,
-      value: stealth(wrapped, "startRendering", {
+      value: U.stealth(wrapped, "startRendering", {
         length: orig.length,
-        source: nativeSourceFor(orig, "startRendering"),
+        source: U.nativeSourceFor(orig, "startRendering"),
       }),
     });
   };
 
   const patchKeyboard = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = descriptorOwnerFor(Navigator.prototype, "keyboard");
+    const found = U.descriptorOwnerFor(Navigator.prototype, "keyboard");
     const desc = found && found.desc;
     if (!desc || typeof desc.get !== "function") return;
     const { owner } = found;
     Object.defineProperty(owner, "keyboard", {
       ...desc,
-      get: stealth(
+      get: U.stealth(
         function get() {
           const original = desc.get.call(this);
           if (!isMasking() || !original || typeof original.getLayoutMap !== "function") {
@@ -1052,7 +966,7 @@
             get(target, prop) {
               const value = Reflect.get(target, prop, target);
               if (prop === "getLayoutMap") {
-                return stealth(
+                return U.stealth(
                   function getLayoutMap() {
                     const layout = new Map([
                       ["Backquote", "Backquote"],
@@ -1110,7 +1024,7 @@
                     return Promise.resolve(layout);
                   },
                   "getLayoutMap",
-                  { length: 0, source: nativeSourceFor(value, "getLayoutMap") }
+                  { length: 0, source: U.nativeSourceFor(value, "getLayoutMap") }
                 );
               }
               return typeof value === "function" ? value.bind(target) : value;
@@ -1119,20 +1033,20 @@
           return wrappedKeyboard;
         },
         "get keyboard",
-        { length: 0, source: nativeSourceFor(desc.get, "get keyboard") }
+        { length: 0, source: U.nativeSourceFor(desc.get, "get keyboard") }
       ),
     });
   };
 
   const patchMediaDevices = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = descriptorOwnerFor(Navigator.prototype, "mediaDevices");
+    const found = U.descriptorOwnerFor(Navigator.prototype, "mediaDevices");
     const desc = found && found.desc;
     if (!desc || typeof desc.get !== "function") return;
     const { owner } = found;
     Object.defineProperty(owner, "mediaDevices", {
       ...desc,
-      get: stealth(
+      get: U.stealth(
         function get() {
           const original = desc.get.call(this);
           if (!isMasking() || !original || typeof original.enumerateDevices !== "function") {
@@ -1142,12 +1056,12 @@
             get(target, prop) {
               const value = Reflect.get(target, prop, target);
               if (prop === "enumerateDevices") {
-                return stealth(
+                return U.stealth(
                   function enumerateDevices() {
                     return Promise.resolve([]);
                   },
                   "enumerateDevices",
-                  { length: 0, source: nativeSourceFor(value, "enumerateDevices") }
+                  { length: 0, source: U.nativeSourceFor(value, "enumerateDevices") }
                 );
               }
               return typeof value === "function" ? value.bind(target) : value;
@@ -1156,20 +1070,20 @@
           return wrappedDevices;
         },
         "get mediaDevices",
-        { length: 0, source: nativeSourceFor(desc.get, "get mediaDevices") }
+        { length: 0, source: U.nativeSourceFor(desc.get, "get mediaDevices") }
       ),
     });
   };
 
   const patchPermissions = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = descriptorOwnerFor(Navigator.prototype, "permissions");
+    const found = U.descriptorOwnerFor(Navigator.prototype, "permissions");
     const desc = found && found.desc;
     if (!desc || typeof desc.get !== "function") return;
     const { owner } = found;
     Object.defineProperty(owner, "permissions", {
       ...desc,
-      get: stealth(
+      get: U.stealth(
         function get() {
           const original = desc.get.call(this);
           if (!isMasking() || !original || typeof original.query !== "function") {
@@ -1179,7 +1093,7 @@
             get(target, prop) {
               const value = Reflect.get(target, prop, target);
               if (prop === "query") {
-                return stealth(
+                return U.stealth(
                   function query(permissionDesc) {
                     const name =
                       permissionDesc && typeof permissionDesc === "object"
@@ -1206,7 +1120,7 @@
                     return value.apply(target, arguments);
                   },
                   "query",
-                  { length: 1, source: nativeSourceFor(value, "query") }
+                  { length: 1, source: U.nativeSourceFor(value, "query") }
                 );
               }
               return typeof value === "function" ? value.bind(target) : value;
@@ -1215,7 +1129,7 @@
           return wrappedPermissions;
         },
         "get permissions",
-        { length: 0, source: nativeSourceFor(desc.get, "get permissions") }
+        { length: 0, source: U.nativeSourceFor(desc.get, "get permissions") }
       ),
     });
   };
@@ -1258,15 +1172,15 @@
         });
       },
     }.matchMedia;
-    window.matchMedia = stealth(wrapped, "matchMedia", {
+    window.matchMedia = U.stealth(wrapped, "matchMedia", {
       length: orig.length,
-      source: nativeSourceFor(orig, "matchMedia"),
+      source: U.nativeSourceFor(orig, "matchMedia"),
     });
   };
 
   const patchMediaCapabilities = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = descriptorOwnerFor(Navigator.prototype, "mediaCapabilities");
+    const found = U.descriptorOwnerFor(Navigator.prototype, "mediaCapabilities");
     const desc = found && found.desc;
     if (!desc || typeof desc.get !== "function") return;
     const { owner } = found;
@@ -1278,7 +1192,7 @@
       });
     Object.defineProperty(owner, "mediaCapabilities", {
       ...desc,
-      get: stealth(
+      get: U.stealth(
         function get() {
           const original = desc.get.call(this);
           if (!isMasking() || !original) return original;
@@ -1286,12 +1200,12 @@
             get(target, prop) {
               const value = Reflect.get(target, prop, target);
               if (prop === "decodingInfo" || prop === "encodingInfo") {
-                return stealth(
+                return U.stealth(
                   function mediaInfo() {
                     return plausibleMediaInfo();
                   },
                   prop,
-                  { length: 1, source: nativeSourceFor(value, prop) }
+                  { length: 1, source: U.nativeSourceFor(value, prop) }
                 );
               }
               return typeof value === "function" ? value.bind(target) : value;
@@ -1299,20 +1213,20 @@
           });
         },
         "get mediaCapabilities",
-        { length: 0, source: nativeSourceFor(desc.get, "get mediaCapabilities") }
+        { length: 0, source: U.nativeSourceFor(desc.get, "get mediaCapabilities") }
       ),
     });
   };
 
   const patchGpu = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = descriptorOwnerFor(Navigator.prototype, "gpu");
+    const found = U.descriptorOwnerFor(Navigator.prototype, "gpu");
     const desc = found && found.desc;
     if (!desc || typeof desc.get !== "function") return;
     const { owner } = found;
     Object.defineProperty(owner, "gpu", {
       ...desc,
-      get: stealth(
+      get: U.stealth(
         function get() {
           const original = desc.get.call(this);
           if (!isMasking() || !original) return original;
@@ -1320,12 +1234,12 @@
             get(target, prop) {
               const value = Reflect.get(target, prop, target);
               if (prop === "requestAdapter") {
-                return stealth(
+                return U.stealth(
                   function requestAdapter() {
                     return Promise.resolve(null);
                   },
                   "requestAdapter",
-                  { length: 0, source: nativeSourceFor(value, "requestAdapter") }
+                  { length: 0, source: U.nativeSourceFor(value, "requestAdapter") }
                 );
               }
               return typeof value === "function" ? value.bind(target) : value;
@@ -1333,7 +1247,7 @@
           });
         },
         "get gpu",
-        { length: 0, source: nativeSourceFor(desc.get, "get gpu") }
+        { length: 0, source: U.nativeSourceFor(desc.get, "get gpu") }
       ),
     });
   };
@@ -1341,19 +1255,19 @@
   const patchHardwareAvailability = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
     for (const prop of ["bluetooth", "hid", "presentation", "serial", "usb", "wakeLock", "xr"]) {
-      const found = descriptorOwnerFor(Navigator.prototype, prop);
+      const found = U.descriptorOwnerFor(Navigator.prototype, prop);
       const desc = found && found.desc;
       if (!desc || typeof desc.get !== "function") continue;
       const { owner } = found;
       Object.defineProperty(owner, prop, {
         ...desc,
-        get: stealth(
+        get: U.stealth(
           function get() {
             if (isMasking()) return undefined;
             return desc.get.call(this);
           },
           `get ${prop}`,
-          { length: 0, source: nativeSourceFor(desc.get, `get ${prop}`) }
+          { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
         ),
       });
     }
