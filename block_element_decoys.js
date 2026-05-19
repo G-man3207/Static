@@ -6,20 +6,10 @@
   const PNG_1X1_B64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
   const PNG_1X1_BINARY = atob(PNG_1X1_B64);
-  const IMAGE_DECOY_PATHS = [
-    /(?:^|\/)(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
-    /(?:^|\/)(?:icons?|images?|img)\/(?:[^/]+\/)*(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
-    /(?:^|\/)(?:16|19|24|32|38|48|64|96|128|256|512)\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
-  ];
-  const SCRIPT_DECOY_PATHS = [
-    /(?:^|\/)(?:content(?:[-_. ]script)?|inject(?:ed)?|background(?:[-_. ]page)?|bundle|main|page|popup|options|index)(?:[-_. ]?[a-z0-9]+)?\.(?:m?js)$/i,
-  ];
-  const HTML_DECOY_PATHS = [
-    /(?:^|\/)(?:page|popup|options|background|index)(?:[-_. ]?[a-z0-9]+)?\.(?:html|htm)$/i,
-  ];
-  const STYLE_DECOY_PATHS = [
-    /(?:^|\/)(?:style|styles|content|popup|options|main|index)(?:[-_. ]?[a-z0-9]+)?\.css$/i,
-  ];
+  const IMAGE_DECOY_PATHS = U.IMAGE_DECOY_PATHS;
+  const SCRIPT_DECOY_PATHS = U.SCRIPT_DECOY_PATHS;
+  const HTML_DECOY_PATHS = U.HTML_DECOY_PATHS;
+  const STYLE_DECOY_PATHS = U.STYLE_DECOY_PATHS;
   const animatedHrefProxies = new WeakMap();
   const attrNodeOriginals = new WeakMap();
   const elementOriginals = new WeakMap();
@@ -48,7 +38,7 @@
   const postProbe = (url, where) => {
     const safeUrl = url == null ? "" : String(url).slice(0, 512);
     const safeWhere = where == null ? "" : String(where).slice(0, 64);
-    bridge.post("probe_blocked", { where: safeWhere, url: safeUrl });
+    bridge.post("probe_blocked", { url: safeUrl, where: safeWhere });
   };
 
   const shouldDecoy = (url) => {
@@ -86,13 +76,7 @@
   const attrKeyFor = (name) => `attr:${String(name || "").toLowerCase()}`;
 
   const attrNsKeyFor = (ns, name) =>
-    `attrns:${String(ns || "").toLowerCase()}:${attrLocalName(name)}`;
-
-  const attrLocalName = (name) => {
-    const normalized = String(name || "").toLowerCase();
-    const colon = normalized.lastIndexOf(":");
-    return colon === -1 ? normalized : normalized.slice(colon + 1);
-  };
+    `attrns:${String(ns || "").toLowerCase()}:${U.attrLocalName(null, name)}`;
 
   const rememberAttributeOriginal = (el, name, url) => {
     rememberOriginal(el, attrKeyFor(name), url);
@@ -106,7 +90,7 @@
   const attrNodeFor = (el, name, ns = null) => {
     try {
       if (!el) return null;
-      if (ns) return el.getAttributeNodeNS(ns, attrLocalName(name));
+      if (ns) return el.getAttributeNodeNS(ns, U.attrLocalName(null, name));
       return el.getAttributeNode(name);
     } catch {
       return null;
@@ -139,11 +123,13 @@
   };
 
   const mutationAttrKeyFor = (ns, name) =>
-    `${String(ns || "").toLowerCase()}:${attrLocalName(name)}`;
+    `${String(ns || "").toLowerCase()}:${U.attrLocalName(null, name)}`;
 
   const nativeElementAttrValueFor = (el, name, ns = null) => {
     try {
-      if (ns && nativeGetAttributeNS) return nativeGetAttributeNS.call(el, ns, attrLocalName(name));
+      if (ns && nativeGetAttributeNS) {
+        return nativeGetAttributeNS.call(el, ns, U.attrLocalName(null, name));
+      }
       if (nativeGetAttribute) return nativeGetAttribute.call(el, name);
       return el && typeof el.getAttribute === "function" ? el.getAttribute(name) : null;
     } catch {
@@ -205,16 +191,9 @@
     return filtered || records;
   };
 
-  const pathFor = (url) => {
-    try {
-      return new URL(url).pathname.toLowerCase();
-    } catch {
-      return "";
-    }
-  };
+  const pathFor = U.pathFor;
 
-  const matchesPathPattern = (pathname, patterns) =>
-    patterns.some((pattern) => pattern.test(pathname));
+  const matchesPathPattern = U.matchesPathPattern;
 
   const imageDecoyPath = (pathname) => matchesPathPattern(pathname, IMAGE_DECOY_PATHS);
   const scriptDecoyPath = (pathname) => matchesPathPattern(pathname, SCRIPT_DECOY_PATHS);
@@ -316,17 +295,11 @@
     return false;
   };
 
-  const firstBadUrlInText = (value) => {
-    try {
+  const probeUrlFor = (prop, value) => {
+    if (prop === "srcset") {
       const match = String(value == null ? "" : value).match(U.BAD_URL_RE);
       return match ? match[0] : "";
-    } catch {
-      return "";
     }
-  };
-
-  const probeUrlFor = (prop, value) => {
-    if (prop === "srcset") return firstBadUrlInText(value);
     return U.isBad(value) ? U.getUrl(value) : "";
   };
 
@@ -447,7 +420,7 @@
   };
 
   const attrPropFor = (name) => {
-    const lower = attrLocalName(name);
+    const lower = U.attrLocalName(null, name);
     if (
       lower === "src" ||
       lower === "srcset" ||
@@ -1066,6 +1039,8 @@
               return callback.call(this, mutationRecordsForPage(records), observer);
             }
           : callback;
+      // Chain through any already-patched MutationObserver (e.g. block_adaptive.js
+      // which loads before this script per manifest.json ordering).
       const observer = Reflect.construct(OrigMutationObserver, [callbackForPage], new.target);
       const origTakeRecords = observer.takeRecords;
       if (typeof origTakeRecords === "function") {

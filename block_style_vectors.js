@@ -19,17 +19,7 @@
   const postProbe = (url, where) => {
     const safeUrl = url == null ? "" : String(url).slice(0, 512);
     const safeWhere = where == null ? "" : String(where).slice(0, 64);
-    bridge.post("probe_blocked", { where: safeWhere, url: safeUrl });
-  };
-
-  const firstBadUrlIn = (input) => {
-    try {
-      if (U.isBad(input)) return U.getUrl(input);
-      const match = String(input == null ? "" : input).match(U.BAD_URL_RE);
-      return match ? match[0] : "";
-    } catch {
-      return "";
-    }
+    bridge.post("probe_blocked", { url: safeUrl, where: safeWhere });
   };
 
   const bump = (where, url) => {
@@ -61,7 +51,7 @@
   };
 
   const blockStyleText = (label, value) => {
-    const url = firstBadUrlIn(value);
+    const url = U.firstBadUrlIn(value);
     if (!url) return false;
     bump(label, url);
     return true;
@@ -89,19 +79,13 @@
     return changed;
   };
 
-  const attrLocalName = (name) => {
-    const normalized = String(name || "").toLowerCase();
-    const colon = normalized.lastIndexOf(":");
-    return colon === -1 ? normalized : normalized.slice(colon + 1);
-  };
-
   const removeBadStyleProperties = (style) => {
     if (!style) return false;
     let changed = false;
     for (let index = style.length - 1; index >= 0; index--) {
       const name = style.item(index);
       const value = style.getPropertyValue(name);
-      if (!firstBadUrlIn(value)) continue;
+      if (!U.firstBadUrlIn(value)) continue;
       try {
         style.removeProperty(name);
         changed = true;
@@ -122,7 +106,7 @@
   };
 
   const sanitizeStyleDeclarationValue = (value, label) => {
-    const url = firstBadUrlIn(value);
+    const url = U.firstBadUrlIn(value);
     if (!url) return { changed: false, value };
     bump(label, url);
 
@@ -191,7 +175,7 @@
     const wrapped = {
       setProperty(name, value, priority) {
         if (disabled) return orig.call(this, name, value, priority);
-        const url = firstBadUrlIn(value);
+        const url = U.firstBadUrlIn(value);
         if (url) {
           bump("style.setProperty", url);
           return;
@@ -506,7 +490,7 @@
     for (let index = style.length - 1; index >= 0; index--) {
       const name = style.item(index);
       const value = style.getPropertyValue(name);
-      const url = firstBadUrlIn(value);
+      const url = U.firstBadUrlIn(value);
       if (url) {
         bump(label, url);
         try {
@@ -540,7 +524,7 @@
     const wrapped = {
       setAttribute(name, value) {
         if (disabled) return origSetAttribute.apply(this, arguments);
-        if (attrLocalName(name) === "style") {
+        if (U.attrLocalName(null, name) === "style") {
           const sanitized = sanitizeStyleDeclarationValue(value, "style.setAttribute");
           return origSetAttribute.call(this, name, sanitized.changed ? sanitized.value : value);
         }
@@ -548,7 +532,7 @@
       },
       setAttributeNS(ns, name, value) {
         if (disabled) return origSetAttributeNS.apply(this, arguments);
-        if (attrLocalName(name) === "style") {
+        if (U.attrLocalName(null, name) === "style") {
           const sanitized = sanitizeStyleDeclarationValue(value, "style.setAttributeNS");
           return origSetAttributeNS.call(
             this,

@@ -1036,11 +1036,6 @@
   const patchMutationObserver = () => {
     if (typeof MutationObserver !== "function") return;
     const OrigMutationObserver = MutationObserver;
-    const attrLocalName = (name) => {
-      const normalized = String(name || "").toLowerCase();
-      const colon = normalized.lastIndexOf(":");
-      return colon === -1 ? normalized : normalized.slice(colon + 1);
-    };
     const classStringHasMarker = (value) =>
       String(value || "")
         .split(/\s+/)
@@ -1081,7 +1076,7 @@
           return nodeListHasMarker(record.addedNodes) || nodeListHasMarker(record.removedNodes);
         }
         if (record.type !== "attributes") return false;
-        const name = attrLocalName(record.attributeName);
+        const name = U.attrLocalName(null, record.attributeName);
         if (DOM_MARKER_ATTR_RE.test(name)) return true;
         if (name !== "class") return false;
         return classStringHasMarker(record.oldValue) || elementHasMarkerClass(record.target);

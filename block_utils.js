@@ -123,6 +123,16 @@
 
   U.badUrlFor = (input) => (U.isBad(input) ? U.getUrl(input) : "");
 
+  U.firstBadUrlIn = (input) => {
+    try {
+      if (U.isBad(input)) return U.getUrl(input);
+      const match = String(input == null ? "" : input).match(U.BAD_URL_RE);
+      return match ? match[0] : "";
+    } catch {
+      return "";
+    }
+  };
+
   U.extensionIdentityFor = (url) => {
     try {
       const parsed = new URL(String(url || ""));
@@ -142,6 +152,35 @@
   };
 
   // ======================================================================
+  // Decoy path patterns — shared between block.js and block_element_decoys.js
+  // ======================================================================
+
+  U.IMAGE_DECOY_PATHS = [
+    /(?:^|\/)(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
+    /(?:^|\/)(?:icons?|images?|img)\/(?:[^/]+\/)*(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
+    /(?:^|\/)(?:16|19|24|32|38|48|64|96|128|256|512)\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
+  ];
+  U.SCRIPT_DECOY_PATHS = [
+    /(?:^|\/)(?:content(?:[-_. ]script)?|inject(?:ed)?|background(?:[-_. ]page)?|bundle|main|page|popup|options|index)(?:[-_. ]?[a-z0-9]+)?\.(?:m?js)$/i,
+  ];
+  U.HTML_DECOY_PATHS = [
+    /(?:^|\/)(?:page|popup|options|background|index)(?:[-_. ]?[a-z0-9]+)?\.(?:html|htm)$/i,
+  ];
+  U.STYLE_DECOY_PATHS = [
+    /(?:^|\/)(?:style|styles|content|popup|options|main|index)(?:[-_. ]?[a-z0-9]+)?\.css$/i,
+  ];
+
+  U.pathFor = (url) => {
+    try {
+      return new URL(url).pathname.toLowerCase();
+    } catch {
+      return "";
+    }
+  };
+
+  U.matchesPathPattern = (pathname, patterns) => patterns.some((pattern) => pattern.test(pathname));
+
+  // ======================================================================
   // DOM / attribute utilities
   // ======================================================================
 
@@ -151,7 +190,8 @@
     if (lower === "class") return "class";
     if (lower === "style" || lower.startsWith("data-")) return lower;
     if (el && el.namespaceURI === "http://www.w3.org/1999/xhtml") return lower;
-    return name;
+    const colon = lower.lastIndexOf(":");
+    return colon === -1 ? lower : lower.slice(colon + 1);
   };
 
   // ======================================================================
@@ -199,22 +239,7 @@
 
     return {
       post: (type, payload) => {
-        if (payload == null) {
-          const msg = { type };
-          if (port) {
-            try {
-              port.postMessage(msg);
-              return;
-            } catch {
-              port = null;
-            }
-          }
-          if (queued.length < maxQueue) {
-            queued.push(msg);
-          }
-          return;
-        }
-        const msg = { type, ...payload };
+        const msg = payload == null ? { type } : { type, ...payload };
         if (port) {
           try {
             port.postMessage(msg);

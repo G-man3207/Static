@@ -122,12 +122,6 @@
   const isIframe = (element) =>
     typeof HTMLIFrameElement !== "undefined" && element instanceof HTMLIFrameElement;
 
-  const attrLocalName = (name) => {
-    const normalized = String(name || "").toLowerCase();
-    const colon = normalized.lastIndexOf(":");
-    return colon === -1 ? normalized : normalized.slice(colon + 1);
-  };
-
   const removeLegacyAllowAttrs = (element) => {
     for (const attr of LEGACY_ALLOW_ATTRS) {
       try {
@@ -140,7 +134,7 @@
 
   const normalizeIframeAttr = (element, name, value) => {
     if (!isIframe(element)) return { skip: false, value };
-    const localName = attrLocalName(name);
+    const localName = U.attrLocalName(null, name);
     if (localName === "sandbox") return { skip: false, value: normalizeSandboxValue(value) };
     if (localName === "allow") {
       removeLegacyAllowAttrs(element);
