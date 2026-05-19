@@ -404,6 +404,7 @@
       model: "",
       platform: p.uaDataPlatform,
       platformVersion: p.os === "windows" ? "10.0.0" : "15.0.0",
+      uaFullVersion: "120.0.0.0",
       wow64: false,
     };
     return Object.prototype.hasOwnProperty.call(values, hint) ? values[hint] : original;
@@ -1047,6 +1048,236 @@
     });
   };
 
+  const patchKeyboard = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    const found = descriptorOwnerFor(Navigator.prototype, "keyboard");
+    const desc = found && found.desc;
+    if (!desc || typeof desc.get !== "function") return;
+    const { owner } = found;
+    Object.defineProperty(owner, "keyboard", {
+      ...desc,
+      get: stealth(
+        function get() {
+          const original = desc.get.call(this);
+          if (!isMasking() || !original || typeof original.getLayoutMap !== "function") {
+            return original;
+          }
+          const wrappedKeyboard = new Proxy(original, {
+            get(target, prop) {
+              const value = Reflect.get(target, prop, target);
+              if (prop === "getLayoutMap") {
+                return stealth(
+                  function getLayoutMap() {
+                    const layout = new Map([
+                      ["Backquote", "Backquote"],
+                      ["Backslash", "Backslash"],
+                      ["Backspace", "Backspace"],
+                      ["BracketLeft", "BracketLeft"],
+                      ["BracketRight", "BracketRight"],
+                      ["Comma", "Comma"],
+                      ["Digit0", "Digit0"],
+                      ["Digit1", "Digit1"],
+                      ["Digit2", "Digit2"],
+                      ["Digit3", "Digit3"],
+                      ["Digit4", "Digit4"],
+                      ["Digit5", "Digit5"],
+                      ["Digit6", "Digit6"],
+                      ["Digit7", "Digit7"],
+                      ["Digit8", "Digit8"],
+                      ["Digit9", "Digit9"],
+                      ["Equal", "Equal"],
+                      ["IntlBackslash", "IntlBackslash"],
+                      ["IntlRo", "IntlRo"],
+                      ["IntlYen", "IntlYen"],
+                      ["KeyA", "KeyA"],
+                      ["KeyB", "KeyB"],
+                      ["KeyC", "KeyC"],
+                      ["KeyD", "KeyD"],
+                      ["KeyE", "KeyE"],
+                      ["KeyF", "KeyF"],
+                      ["KeyG", "KeyG"],
+                      ["KeyH", "KeyH"],
+                      ["KeyI", "KeyI"],
+                      ["KeyJ", "KeyJ"],
+                      ["KeyK", "KeyK"],
+                      ["KeyL", "KeyL"],
+                      ["KeyM", "KeyM"],
+                      ["KeyN", "KeyN"],
+                      ["KeyO", "KeyO"],
+                      ["KeyP", "KeyP"],
+                      ["KeyQ", "KeyQ"],
+                      ["KeyR", "KeyR"],
+                      ["KeyS", "KeyS"],
+                      ["KeyT", "KeyT"],
+                      ["KeyU", "KeyU"],
+                      ["KeyV", "KeyV"],
+                      ["KeyW", "KeyW"],
+                      ["KeyX", "KeyX"],
+                      ["KeyY", "KeyY"],
+                      ["KeyZ", "KeyZ"],
+                      ["Minus", "Minus"],
+                      ["Period", "Period"],
+                      ["Quote", "Quote"],
+                      ["Semicolon", "Semicolon"],
+                      ["Slash", "Slash"],
+                    ]);
+                    return Promise.resolve(layout);
+                  },
+                  "getLayoutMap",
+                  { length: 0, source: nativeSourceFor(value, "getLayoutMap") }
+                );
+              }
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          });
+          return wrappedKeyboard;
+        },
+        "get keyboard",
+        { length: 0, source: nativeSourceFor(desc.get, "get keyboard") }
+      ),
+    });
+  };
+
+  const patchMediaDevices = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    const found = descriptorOwnerFor(Navigator.prototype, "mediaDevices");
+    const desc = found && found.desc;
+    if (!desc || typeof desc.get !== "function") return;
+    const { owner } = found;
+    Object.defineProperty(owner, "mediaDevices", {
+      ...desc,
+      get: stealth(
+        function get() {
+          const original = desc.get.call(this);
+          if (!isMasking() || !original || typeof original.enumerateDevices !== "function") {
+            return original;
+          }
+          const wrappedDevices = new Proxy(original, {
+            get(target, prop) {
+              const value = Reflect.get(target, prop, target);
+              if (prop === "enumerateDevices") {
+                return stealth(
+                  function enumerateDevices() {
+                    return Promise.resolve([]);
+                  },
+                  "enumerateDevices",
+                  { length: 0, source: nativeSourceFor(value, "enumerateDevices") }
+                );
+              }
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          });
+          return wrappedDevices;
+        },
+        "get mediaDevices",
+        { length: 0, source: nativeSourceFor(desc.get, "get mediaDevices") }
+      ),
+    });
+  };
+
+  const patchPermissions = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    const found = descriptorOwnerFor(Navigator.prototype, "permissions");
+    const desc = found && found.desc;
+    if (!desc || typeof desc.get !== "function") return;
+    const { owner } = found;
+    Object.defineProperty(owner, "permissions", {
+      ...desc,
+      get: stealth(
+        function get() {
+          const original = desc.get.call(this);
+          if (!isMasking() || !original || typeof original.query !== "function") {
+            return original;
+          }
+          const wrappedPermissions = new Proxy(original, {
+            get(target, prop) {
+              const value = Reflect.get(target, prop, target);
+              if (prop === "query") {
+                return stealth(
+                  function query(permissionDesc) {
+                    const name =
+                      permissionDesc && typeof permissionDesc === "object"
+                        ? permissionDesc.name
+                        : permissionDesc;
+                    if (name === "notifications") {
+                      return Promise.resolve({
+                        name: "notifications",
+                        state: "prompt",
+                      });
+                    }
+                    if (name === "clipboard-read" || name === "clipboard-write") {
+                      return Promise.resolve({
+                        name,
+                        state: "prompt",
+                      });
+                    }
+                    if (name === "midi" || name === "midi-sysex") {
+                      return Promise.resolve({
+                        name,
+                        state: "prompt",
+                      });
+                    }
+                    return value.apply(target, arguments);
+                  },
+                  "query",
+                  { length: 1, source: nativeSourceFor(value, "query") }
+                );
+              }
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          });
+          return wrappedPermissions;
+        },
+        "get permissions",
+        { length: 0, source: nativeSourceFor(desc.get, "get permissions") }
+      ),
+    });
+  };
+
+  const patchMatchMedia = () => {
+    if (typeof window.matchMedia !== "function") return;
+    const orig = window.matchMedia;
+    const personaMatchesFor = (query) => {
+      const normalized = String(query || "")
+        .toLowerCase()
+        .replace(/\s+/g, "");
+      const overrides = {
+        "(prefers-color-scheme:dark)": false,
+        "(prefers-color-scheme:light)": true,
+        "(hover:hover)": true,
+        "(hover:none)": false,
+        "(pointer:fine)": true,
+        "(pointer:coarse)": false,
+        "(any-hover:hover)": true,
+        "(any-hover:none)": false,
+        "(any-pointer:fine)": true,
+        "(any-pointer:coarse)": false,
+      };
+      return Object.prototype.hasOwnProperty.call(overrides, normalized)
+        ? overrides[normalized]
+        : undefined;
+    };
+    const wrapped = {
+      matchMedia(query) {
+        const result = orig.apply(this, arguments);
+        if (!isMasking() || !result) return result;
+        const override = personaMatchesFor(query);
+        if (override === undefined) return result;
+        return new Proxy(result, {
+          get(target, prop) {
+            if (prop === "matches") return override;
+            const value = Reflect.get(target, prop, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+    }.matchMedia;
+    window.matchMedia = stealth(wrapped, "matchMedia", {
+      length: orig.length,
+      source: nativeSourceFor(orig, "matchMedia"),
+    });
+  };
+
   try {
     patchNavigatorGetters();
     patchScreenGetters();
@@ -1061,5 +1292,9 @@
     patchCanvas();
     patchOffscreenCanvas();
     patchAudioRendering();
+    patchKeyboard();
+    patchMediaDevices();
+    patchPermissions();
+    patchMatchMedia();
   } catch {}
 })();
