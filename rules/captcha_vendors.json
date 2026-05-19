@@ -76,7 +76,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||hcaptcha.com^",
+      "urlFilter": "||turnstile.cloudflare.com^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -94,7 +94,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||hcaptcha.net^",
+      "urlFilter": "||hcaptcha.com^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -112,7 +112,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||google.com/recaptcha^",
+      "urlFilter": "||hcaptcha.net^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -130,7 +130,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||recaptcha.net^",
+      "urlFilter": "||google.com/recaptcha^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -148,7 +148,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||gstatic.com/recaptcha^",
+      "urlFilter": "||recaptcha.net^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -166,7 +166,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||friendlycaptcha.com^",
+      "urlFilter": "||gstatic.com/recaptcha^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -184,7 +184,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||frcapi.com^",
+      "urlFilter": "||friendlycaptcha.com^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -202,7 +202,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||altcha.org^",
+      "urlFilter": "||frcapi.com^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -220,7 +220,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||mtcaptcha.com^",
+      "urlFilter": "||altcha.org^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -238,7 +238,7 @@
     "priority": 1,
     "action": { "type": "block" },
     "condition": {
-      "urlFilter": "||prosopo.io^",
+      "urlFilter": "||mtcaptcha.com^",
       "resourceTypes": [
         "sub_frame",
         "xmlhttprequest",
@@ -253,6 +253,24 @@
   },
   {
     "id": 15,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||prosopo.io^",
+      "resourceTypes": [
+        "sub_frame",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 16,
     "priority": 1,
     "action": { "type": "block" },
     "condition": {

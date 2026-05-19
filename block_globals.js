@@ -23,35 +23,24 @@
   const SCRUB_TARGETS = [window, WINDOW_PROTO].filter(Boolean);
   const FAST_SCRUB_MS = 25;
   const FAST_SCRUB_TICKS = 200;
+  const BRIDGE_EVENT = "__static_probe_bridge_init__";
+  let bridgePort = null;
+  let disabled = false;
 
-  const STEALTH_KEY = "__ss2605__";
-  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
-  if (!globalThis[STEALTH_KEY]) {
-    try {
-      Object.defineProperty(globalThis, STEALTH_KEY, {
-        value: stealthFns,
-        enumerable: false,
-        configurable: true,
-        writable: true,
-      });
-    } catch {
-      globalThis[STEALTH_KEY] = stealthFns;
-    }
-    const origFnToString = Function.prototype.toString;
-    const patchedFnToString = {
-      toString() {
-        if (stealthFns.has(this)) return stealthFns.get(this);
-        return origFnToString.call(this);
-      },
-    }.toString;
-    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-    try {
-      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-    } catch {}
-    Function.prototype.toString = patchedFnToString;
-  }
+  const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
+  const patchedFnToString = {
+    toString() {
+      if (stealthFns.has(this)) return stealthFns.get(this);
+      return origFnToString.call(this);
+    },
+  }.toString;
+  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
+  try {
+    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
+    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
+  } catch {}
+  Function.prototype.toString = patchedFnToString;
 
   const stealth = (fn, nativeName, opts = {}) => {
     stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
@@ -74,6 +63,28 @@
     }
   };
 
+  const applyConfigUpdate = (data) => {
+    if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
+      disabled = data.disabled;
+    }
+  };
+
+  const onBridgeInit = (event) => {
+    if (bridgePort) return;
+    const port = event && event.ports && event.ports[0];
+    if (!port || typeof port.postMessage !== "function") return;
+    try {
+      event.stopImmediatePropagation();
+    } catch {}
+    bridgePort = port;
+    try {
+      bridgePort.start();
+    } catch {}
+    bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
+    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
+  };
+  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
+
   const isProtectedKey = (prop) => typeof prop === "string" && STRIP_SET.has(prop);
 
   const isProtectedTarget = (target) => SCRUB_TARGETS.includes(target);
@@ -94,14 +105,14 @@
   };
 
   const scrubGlobals = () => {
-    if (window.__perf) return;
+    if (disabled) return;
     for (const target of SCRUB_TARGETS) {
       for (const key of STRIP_GLOBALS) scrubOwnProp(target, key);
     }
   };
 
   const filterDescriptors = (target, descriptors) => {
-    if (window.__perf) return descriptors;
+    if (disabled) return descriptors;
     if (!isProtectedTarget(target) || !descriptors || typeof descriptors !== "object") {
       return descriptors;
     }
@@ -125,7 +136,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       defineProperty(target, key) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
           scrubOwnProp(target, key);
           return target;
@@ -148,7 +159,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       defineProperties(target, descriptors) {
-        if (window.__perf) return orig.call(this, target, descriptors);
+        if (disabled) return orig.call(this, target, descriptors);
         const filtered = filterDescriptors(target, descriptors);
         return orig.call(this, target, filtered);
       },
@@ -168,7 +179,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       assign(target) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (!isProtectedTarget(target)) return orig.apply(this, arguments);
         const sources = [];
         for (let i = 1; i < arguments.length; i++) {
@@ -206,7 +217,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       defineProperty(target, key, attributes) {
-        if (window.__perf) return orig.call(this, target, key, attributes);
+        if (disabled) return orig.call(this, target, key, attributes);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
           scrubOwnProp(target, key);
           return true;
@@ -230,7 +241,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       set(target, key) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
           scrubOwnProp(target, key);
           return true;
@@ -254,7 +265,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       [name](key) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (isProtectedTarget(this) && isProtectedKey(key)) {
           scrubOwnProp(this, key);
           return undefined;
@@ -282,7 +293,7 @@
 
   let scrubTicks = 0;
   const scrubTimer = setInterval(() => {
-    if (window.__perf) return;
+    if (disabled) return;
     scrubGlobals();
     scrubTicks++;
     if (scrubTicks >= FAST_SCRUB_TICKS) clearInterval(scrubTimer);

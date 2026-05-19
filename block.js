@@ -11,34 +11,20 @@
   let noiseEnabled = false;
   let disabled = false;
 
-  const STEALTH_KEY = "__ss2605__";
-  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
-  if (!globalThis[STEALTH_KEY]) {
-    try {
-      Object.defineProperty(globalThis, STEALTH_KEY, {
-        value: stealthFns,
-        enumerable: false,
-        configurable: true,
-        writable: true,
-      });
-    } catch {
-      globalThis[STEALTH_KEY] = stealthFns;
-    }
-    const origFnToString = Function.prototype.toString;
-    const patchedFnToString = {
-      toString() {
-        if (stealthFns.has(this)) return stealthFns.get(this);
-        return origFnToString.call(this);
-      },
-    }.toString;
-    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-    try {
-      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-    } catch {}
-    Function.prototype.toString = patchedFnToString;
-  }
+  const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
+  const patchedFnToString = {
+    toString() {
+      if (stealthFns.has(this)) return stealthFns.get(this);
+      return origFnToString.call(this);
+    },
+  }.toString;
+  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
+  try {
+    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
+    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
+  } catch {}
+  Function.prototype.toString = patchedFnToString;
 
   const stealth = (fn, nativeName, opts = {}) => {
     stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
@@ -71,16 +57,6 @@
     }
     if (typeof data.disabled === "boolean") {
       disabled = data.disabled;
-      try {
-        Object.defineProperty(window, "__perf", {
-          value: disabled,
-          writable: true,
-          configurable: false,
-          enumerable: false,
-        });
-      } catch {
-        window.__perf = disabled;
-      }
     }
   };
 

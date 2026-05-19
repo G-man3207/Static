@@ -152,7 +152,5 @@ test("does not expose obvious extension presence globals", async ({ extension, s
   }));
 
   expect(result.hasStaticDisabled).toBe(false);
-  if (result.hasPerf) {
-    expect(result.perfEnumerable).toBe(false);
-  }
+  expect(result.hasPerf).toBe(false);
 });

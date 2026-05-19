@@ -505,6 +505,10 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     captchaFilters.has("||challenges.cloudflare.com^"),
     "captcha_vendors missing Cloudflare Turnstile / Challenge Platform"
   ).toBe(true);
+  expect(
+    captchaFilters.has("||turnstile.cloudflare.com^"),
+    "captcha_vendors missing Cloudflare Turnstile direct host"
+  ).toBe(true);
   expect(captchaFilters.has("||hcaptcha.com^"), "captcha_vendors missing hCaptcha").toBe(true);
   expect(captchaFilters.has("||hcaptcha.net^"), "captcha_vendors missing hCaptcha net").toBe(true);
 
