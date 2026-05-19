@@ -20,13 +20,11 @@
   const STYLE_DECOY_PATHS = [
     /(?:^|\/)(?:style|styles|content|popup|options|main|index)(?:[-_. ]?[a-z0-9]+)?\.css$/i,
   ];
-  const queuedProbeEvents = [];
   const animatedHrefProxies = new WeakMap();
   const attrNodeOriginals = new WeakMap();
   const elementOriginals = new WeakMap();
   const mutationOldValueOriginals = new WeakMap();
   const MAX_QUEUED_PROBES = 1000;
-  let bridgePort = null;
   let noiseEnabled = false;
   let persona = new Set();
   let disabled = false;
@@ -45,51 +43,13 @@
     if (typeof data.disabled === "boolean") disabled = data.disabled;
   };
 
+  const bridge = U.setupBridge(BRIDGE_EVENT, MAX_QUEUED_PROBES, applyConfigUpdate);
+
   const postProbe = (url, where) => {
     const safeUrl = url == null ? "" : String(url).slice(0, 512);
     const safeWhere = where == null ? "" : String(where).slice(0, 64);
-    if (bridgePort) {
-      try {
-        bridgePort.postMessage({ type: "probe_blocked", where: safeWhere, url: safeUrl });
-        return;
-      } catch {
-        bridgePort = null;
-      }
-    }
-    if (queuedProbeEvents.length < MAX_QUEUED_PROBES) {
-      queuedProbeEvents.push({ url: safeUrl, where: safeWhere });
-    }
+    bridge.post("probe_blocked", { where: safeWhere, url: safeUrl });
   };
-
-  const flushQueuedProbes = () => {
-    if (!bridgePort) return;
-    const batch = queuedProbeEvents.splice(0, queuedProbeEvents.length);
-    for (const event of batch) {
-      try {
-        bridgePort.postMessage({ type: "probe_blocked", ...event });
-      } catch {
-        bridgePort = null;
-        return;
-      }
-    }
-  };
-
-  const onBridgeInit = (event) => {
-    if (bridgePort) return;
-    const port = event && event.ports && event.ports[0];
-    if (!port || typeof port.postMessage !== "function") return;
-    try {
-      event.stopImmediatePropagation();
-    } catch {}
-    bridgePort = port;
-    bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
-    try {
-      bridgePort.start();
-    } catch {}
-    flushQueuedProbes();
-    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
-  };
-  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
 
   const shouldDecoy = (url) => {
     if (!noiseEnabled) return false;
