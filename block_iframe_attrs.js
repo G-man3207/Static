@@ -1,5 +1,6 @@
 // Static - MAIN-world iframe policy attribute normalizer.
 (() => {
+  const U = globalThis.__static_block_utils__;
   const LEGACY_ALLOW_ATTRS = ["allowfullscreen", "allowpaymentrequest"];
   const IFRAME_POLICY_ATTR_RE =
     /\s(?:sandbox|allow|allowfullscreen|allowpaymentrequest)(?:\s*=|\s|\/?>)/i;
@@ -26,59 +27,19 @@
     "allow-top-navigation-by-user-activation",
     "allow-top-navigation-to-custom-protocols",
   ]);
+  const BRIDGE_EVENT = "__static_probe_bridge_init__";
   let supportedAllowFeatures = null;
   let sandboxTokenList = null;
   let nativeRemoveAttribute = null;
+  let disabled = false;
 
-  const STEALTH_KEY = "__ss2605__";
-  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
-  if (!globalThis[STEALTH_KEY]) {
-    try {
-      Object.defineProperty(globalThis, STEALTH_KEY, {
-        value: stealthFns,
-        enumerable: false,
-        configurable: true,
-        writable: true,
-      });
-    } catch {
-      globalThis[STEALTH_KEY] = stealthFns;
-    }
-    const origFnToString = Function.prototype.toString;
-    const patchedFnToString = {
-      toString() {
-        if (stealthFns.has(this)) return stealthFns.get(this);
-        return origFnToString.call(this);
-      },
-    }.toString;
-    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-    try {
-      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-    } catch {}
-    Function.prototype.toString = patchedFnToString;
-  }
-  const origFnToString = Function.prototype.toString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
+  const applyConfigUpdate = (data) => {
+    if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
+      disabled = data.disabled;
     }
   };
+
+  U.setupBridge(BRIDGE_EVENT, 1000, applyConfigUpdate);
 
   const readPolicyFeatures = (policy) => {
     if (!policy) return [];
@@ -226,20 +187,20 @@
     nativeRemoveAttribute = Element.prototype.removeAttribute;
     const wrapped = {
       setAttribute(name, value) {
-        if (window.__perf) return origSetAttribute.call(this, name, value);
+        if (disabled) return origSetAttribute.call(this, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttribute.call(this, name, normalized.value);
       },
       setAttributeNS(ns, name, value) {
-        if (window.__perf) return origSetAttributeNS.call(this, ns, name, value);
+        if (disabled) return origSetAttributeNS.call(this, ns, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttributeNS.call(this, ns, name, normalized.value);
       },
     };
-    Element.prototype.setAttribute = stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
-    Element.prototype.setAttributeNS = stealth(wrapped.setAttributeNS, "setAttributeNS", {
+    Element.prototype.setAttribute = U.stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
+    Element.prototype.setAttributeNS = U.stealth(wrapped.setAttributeNS, "setAttributeNS", {
       length: 3,
     });
   };
@@ -250,7 +211,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (window.__perf) {
+        if (disabled) {
           desc.set.call(this, value);
           return;
         }
@@ -263,9 +224,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(wrappedSet, `set ${prop}`, {
+      set: U.stealth(wrappedSet, `set ${prop}`, {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, `set ${prop}`),
+        source: U.nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -276,7 +237,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (window.__perf) {
+        if (disabled) {
           desc.set.call(this, value);
           return;
         }
@@ -289,9 +250,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(wrappedSet, `set ${prop}`, {
+      set: U.stealth(wrappedSet, `set ${prop}`, {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, `set ${prop}`),
+        source: U.nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -301,7 +262,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (window.__perf) {
+        if (disabled) {
           desc.set.call(this, value);
           return;
         }
@@ -313,9 +274,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(wrappedSet, `set ${prop}`, {
+      set: U.stealth(wrappedSet, `set ${prop}`, {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, `set ${prop}`),
+        source: U.nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -326,15 +287,15 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       insertAdjacentHTML(position, html) {
-        if (window.__perf) return orig.call(this, position, html);
+        if (disabled) return orig.call(this, position, html);
         return orig.call(this, position, sanitizeIframeMarkup(html));
       },
     }.insertAdjacentHTML;
     Object.defineProperty(Element.prototype, "insertAdjacentHTML", {
       ...desc,
-      value: stealth(wrapped, "insertAdjacentHTML", {
+      value: U.stealth(wrapped, "insertAdjacentHTML", {
         length: orig.length,
-        source: nativeSourceFor(orig, "insertAdjacentHTML"),
+        source: U.nativeSourceFor(orig, "insertAdjacentHTML"),
       }),
     });
   };
@@ -357,7 +318,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set value(nextValue) {
-        if (window.__perf) {
+        if (disabled) {
           desc.set.call(this, nextValue);
           return;
         }
@@ -369,9 +330,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(Object.getOwnPropertyDescriptor(setterHolder, "value").set, "set value", {
+      set: U.stealth(Object.getOwnPropertyDescriptor(setterHolder, "value").set, "set value", {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, "set value"),
+        source: U.nativeSourceFor(desc.set, "set value"),
       }),
     });
   };
@@ -382,7 +343,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       add(...tokens) {
-        if (window.__perf) return orig.apply(this, tokens);
+        if (disabled) return orig.apply(this, tokens);
         if (!isSandboxTokenList(this)) return orig.apply(this, tokens);
         const normalized = normalizeSandboxTokens(tokens);
         if (!normalized.length) return;
@@ -391,7 +352,10 @@
     }.add;
     Object.defineProperty(proto, "add", {
       ...desc,
-      value: stealth(wrapped, "add", { length: orig.length, source: nativeSourceFor(orig, "add") }),
+      value: U.stealth(wrapped, "add", {
+        length: orig.length,
+        source: U.nativeSourceFor(orig, "add"),
+      }),
     });
   };
 
@@ -401,7 +365,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       toggle(token, force) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
         const [normalized] = normalizeSandboxTokens([token]);
         if (!normalized) return false;
@@ -411,9 +375,9 @@
     }.toggle;
     Object.defineProperty(proto, "toggle", {
       ...desc,
-      value: stealth(wrapped, "toggle", {
+      value: U.stealth(wrapped, "toggle", {
         length: orig.length,
-        source: nativeSourceFor(orig, "toggle"),
+        source: U.nativeSourceFor(orig, "toggle"),
       }),
     });
   };
@@ -424,7 +388,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       replace(token, newToken) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
         const oldToken = String(token || "")
           .trim()
@@ -436,9 +400,9 @@
     }.replace;
     Object.defineProperty(proto, "replace", {
       ...desc,
-      value: stealth(wrapped, "replace", {
+      value: U.stealth(wrapped, "replace", {
         length: orig.length,
-        source: nativeSourceFor(orig, "replace"),
+        source: U.nativeSourceFor(orig, "replace"),
       }),
     });
   };

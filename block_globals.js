@@ -1,5 +1,6 @@
 // Static - MAIN-world lockout for extension bridge globals.
 (() => {
+  const U = globalThis.__static_block_utils__;
   const STRIP_GLOBALS = [
     "__REACT_DEVTOOLS_GLOBAL_HOOK__",
     "__REDUX_DEVTOOLS_EXTENSION__",
@@ -23,56 +24,16 @@
   const SCRUB_TARGETS = [window, WINDOW_PROTO].filter(Boolean);
   const FAST_SCRUB_MS = 25;
   const FAST_SCRUB_TICKS = 200;
+  const BRIDGE_EVENT = "__static_probe_bridge_init__";
+  let disabled = false;
 
-  const STEALTH_KEY = "__ss2605__";
-  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
-  if (!globalThis[STEALTH_KEY]) {
-    try {
-      Object.defineProperty(globalThis, STEALTH_KEY, {
-        value: stealthFns,
-        enumerable: false,
-        configurable: true,
-        writable: true,
-      });
-    } catch {
-      globalThis[STEALTH_KEY] = stealthFns;
-    }
-    const origFnToString = Function.prototype.toString;
-    const patchedFnToString = {
-      toString() {
-        if (stealthFns.has(this)) return stealthFns.get(this);
-        return origFnToString.call(this);
-      },
-    }.toString;
-    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-    try {
-      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-    } catch {}
-    Function.prototype.toString = patchedFnToString;
-  }
-  const origFnToString = Function.prototype.toString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
+  const applyConfigUpdate = (data) => {
+    if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
+      disabled = data.disabled;
     }
   };
+
+  U.setupBridge(BRIDGE_EVENT, 1000, applyConfigUpdate);
 
   const isProtectedKey = (prop) => typeof prop === "string" && STRIP_SET.has(prop);
 
@@ -94,14 +55,14 @@
   };
 
   const scrubGlobals = () => {
-    if (window.__perf) return;
+    if (disabled) return;
     for (const target of SCRUB_TARGETS) {
       for (const key of STRIP_GLOBALS) scrubOwnProp(target, key);
     }
   };
 
   const filterDescriptors = (target, descriptors) => {
-    if (window.__perf) return descriptors;
+    if (disabled) return descriptors;
     if (!isProtectedTarget(target) || !descriptors || typeof descriptors !== "object") {
       return descriptors;
     }
@@ -125,7 +86,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       defineProperty(target, key) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
           scrubOwnProp(target, key);
           return target;
@@ -135,9 +96,9 @@
     }.defineProperty;
     Object.defineProperty(Object, "defineProperty", {
       ...desc,
-      value: stealth(wrapped, "defineProperty", {
+      value: U.stealth(wrapped, "defineProperty", {
         length: orig.length,
-        source: nativeSourceFor(orig, "defineProperty"),
+        source: U.nativeSourceFor(orig, "defineProperty"),
       }),
     });
   };
@@ -148,16 +109,16 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       defineProperties(target, descriptors) {
-        if (window.__perf) return orig.call(this, target, descriptors);
+        if (disabled) return orig.call(this, target, descriptors);
         const filtered = filterDescriptors(target, descriptors);
         return orig.call(this, target, filtered);
       },
     }.defineProperties;
     Object.defineProperty(Object, "defineProperties", {
       ...desc,
-      value: stealth(wrapped, "defineProperties", {
+      value: U.stealth(wrapped, "defineProperties", {
         length: orig.length,
-        source: nativeSourceFor(orig, "defineProperties"),
+        source: U.nativeSourceFor(orig, "defineProperties"),
       }),
     });
   };
@@ -168,7 +129,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       assign(target) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (!isProtectedTarget(target)) return orig.apply(this, arguments);
         const sources = [];
         for (let i = 1; i < arguments.length; i++) {
@@ -192,9 +153,9 @@
     }.assign;
     Object.defineProperty(Object, "assign", {
       ...desc,
-      value: stealth(wrapped, "assign", {
+      value: U.stealth(wrapped, "assign", {
         length: orig.length,
-        source: nativeSourceFor(orig, "assign"),
+        source: U.nativeSourceFor(orig, "assign"),
       }),
     });
   };
@@ -206,7 +167,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       defineProperty(target, key, attributes) {
-        if (window.__perf) return orig.call(this, target, key, attributes);
+        if (disabled) return orig.call(this, target, key, attributes);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
           scrubOwnProp(target, key);
           return true;
@@ -216,9 +177,9 @@
     }.defineProperty;
     Object.defineProperty(Reflect, "defineProperty", {
       ...desc,
-      value: stealth(wrapped, "defineProperty", {
+      value: U.stealth(wrapped, "defineProperty", {
         length: orig.length,
-        source: nativeSourceFor(orig, "defineProperty"),
+        source: U.nativeSourceFor(orig, "defineProperty"),
       }),
     });
   };
@@ -230,7 +191,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       set(target, key) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
           scrubOwnProp(target, key);
           return true;
@@ -240,9 +201,9 @@
     }.set;
     Object.defineProperty(Reflect, "set", {
       ...desc,
-      value: stealth(wrapped, "set", {
+      value: U.stealth(wrapped, "set", {
         length: orig.length,
-        source: nativeSourceFor(orig, "set"),
+        source: U.nativeSourceFor(orig, "set"),
       }),
     });
   };
@@ -254,7 +215,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       [name](key) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (isProtectedTarget(this) && isProtectedKey(key)) {
           scrubOwnProp(this, key);
           return undefined;
@@ -264,9 +225,9 @@
     }[name];
     Object.defineProperty(proto, name, {
       ...desc,
-      value: stealth(wrapped, name, {
+      value: U.stealth(wrapped, name, {
         length: orig.length,
-        source: nativeSourceFor(orig, name),
+        source: U.nativeSourceFor(orig, name),
       }),
     });
   };
@@ -282,7 +243,7 @@
 
   let scrubTicks = 0;
   const scrubTimer = setInterval(() => {
-    if (window.__perf) return;
+    if (disabled) return;
     scrubGlobals();
     scrubTicks++;
     if (scrubTicks >= FAST_SCRUB_TICKS) clearInterval(scrubTimer);

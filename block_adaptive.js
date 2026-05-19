@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-statements, complexity -- adaptive and vendor-runtime shims are safer kept contiguous */
 // Static - MAIN-world observe-only adaptive behavior logger.
 (() => {
+  const U = globalThis.__static_block_utils__;
   const BRIDGE_EVENT = "__static_adaptive_bridge_init__";
   const ADAPTIVE_WINDOW_MS = 4000;
   const ADAPTIVE_COOLDOWN_MS = 7000;
@@ -78,82 +79,6 @@
   let activeAdaptiveSource = "";
   const asyncSourceWrappers = new WeakMap();
   const eventListenerWrappers = new WeakMap();
-
-  const STEALTH_KEY = "__ss2605__";
-  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
-  if (!globalThis[STEALTH_KEY]) {
-    try {
-      Object.defineProperty(globalThis, STEALTH_KEY, {
-        value: stealthFns,
-        enumerable: false,
-        configurable: true,
-        writable: true,
-      });
-    } catch {
-      globalThis[STEALTH_KEY] = stealthFns;
-    }
-    const origFnToString = Function.prototype.toString;
-    const patchedFnToString = {
-      toString() {
-        if (stealthFns.has(this)) return stealthFns.get(this);
-        return origFnToString.call(this);
-      },
-    }.toString;
-    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-    try {
-      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-    } catch {}
-    Function.prototype.toString = patchedFnToString;
-  }
-  const origFnToString = Function.prototype.toString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const alignPrototypeConstructor = (wrapped, original) => {
-    try {
-      const proto = original && original.prototype;
-      if (!proto) return;
-      const desc = Object.getOwnPropertyDescriptor(proto, "constructor") || {
-        writable: true,
-        configurable: true,
-        enumerable: false,
-      };
-      Object.defineProperty(proto, "constructor", {
-        ...desc,
-        value: wrapped,
-      });
-    } catch {}
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
-    }
-  };
-
-  const descriptorOwnerFor = (proto, prop) => {
-    let cursor = proto;
-    while (cursor) {
-      const desc = Object.getOwnPropertyDescriptor(cursor, prop);
-      if (desc) return { desc, owner: cursor };
-      cursor = Object.getPrototypeOf(cursor);
-    }
-    return null;
-  };
 
   const sanitizeSignal = (signal) => ({
     category: String((signal && signal.category) || "unknown").slice(0, 48),
@@ -364,9 +289,9 @@
     const wrapped = function (...args) {
       return runWithAdaptiveSource(safeSource, callback, this, args);
     };
-    const stealthed = stealth(wrapped, callbackName, {
+    const stealthed = U.stealth(wrapped, callbackName, {
       length: callback.length,
-      source: nativeSourceFor(callback, callbackName),
+      source: U.nativeSourceFor(callback, callbackName),
     });
     bySource.set(safeSource, stealthed);
     return stealthed;
@@ -411,14 +336,14 @@
           const wrappedListener = function (...args) {
             return runWithAdaptiveSource(safeSource, listener, this, args);
           };
-          return stealth(wrappedListener, listenerName, {
+          return U.stealth(wrappedListener, listenerName, {
             length: listener.length,
-            source: nativeSourceFor(listener, listenerName),
+            source: U.nativeSourceFor(listener, listenerName),
           });
         })()
       : (() => {
           const initialHandleEvent = listener.handleEvent;
-          const wrappedHandleEvent = stealth(
+          const wrappedHandleEvent = U.stealth(
             function handleEvent(...args) {
               const currentHandleEvent = listener && listener.handleEvent;
               if (typeof currentHandleEvent !== "function") return;
@@ -427,7 +352,7 @@
             "handleEvent",
             {
               length: typeof initialHandleEvent === "function" ? initialHandleEvent.length : 1,
-              source: nativeSourceFor(initialHandleEvent, "handleEvent"),
+              source: U.nativeSourceFor(initialHandleEvent, "handleEvent"),
             }
           );
           const wrappedListener = {};
@@ -695,16 +620,16 @@
         configurable: true,
         enumerable: Object.prototype.propertyIsEnumerable.call(target, key),
         writable: true,
-        value: stealth(wrapped, key, {
+        value: U.stealth(wrapped, key, {
           length: orig.length,
-          source: nativeSourceFor(orig, key),
+          source: U.nativeSourceFor(orig, key),
         }),
       });
     } catch {
       try {
-        target[key] = stealth(wrapped, key, {
+        target[key] = U.stealth(wrapped, key, {
           length: orig.length,
-          source: nativeSourceFor(orig, key),
+          source: U.nativeSourceFor(orig, key),
         });
       } catch {}
     }
@@ -807,14 +732,14 @@
       Object.defineProperty(window, name, {
         configurable: true,
         enumerable,
-        get: stealth(
+        get: U.stealth(
           function get() {
             return currentValue;
           },
           `get ${name}`,
           { length: 0 }
         ),
-        set: stealth(
+        set: U.stealth(
           function set(value) {
             currentValue = transform(value, currentAdaptiveSource());
           },
@@ -1012,18 +937,18 @@
         return orig.apply(this, args);
       },
     }[name];
-    owner[name] = stealth(wrapped, label || name, { length: length ?? orig.length });
+    owner[name] = U.stealth(wrapped, label || name, { length: length ?? orig.length });
   };
 
   const patchGetter = (proto, prop, detail, kind) => {
     try {
-      const found = descriptorOwnerFor(proto, prop);
+      const found = U.descriptorOwnerFor(proto, prop);
       const desc = found && found.desc;
       if (!desc || typeof desc.get !== "function") return;
       Object.defineProperty(found.owner, prop, {
         configurable: true,
         enumerable: desc.enumerable,
-        get: stealth(
+        get: U.stealth(
           function get() {
             try {
               recordAdaptiveSignal(kind, { detail });
@@ -1031,7 +956,7 @@
             return desc.get.call(this);
           },
           `get ${prop}`,
-          { length: 0, source: nativeSourceFor(desc.get, `get ${prop}`) }
+          { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
         ),
       });
     } catch {}
@@ -1236,7 +1161,7 @@
         new.target
       );
       const origObserve = observer.observe;
-      observer.observe = stealth(
+      observer.observe = U.stealth(
         function observe(target, options) {
           try {
             const globalTarget =
@@ -1255,8 +1180,10 @@
       return observer;
     };
     WrappedMutationObserver.prototype = OrigMutationObserver.prototype;
-    alignPrototypeConstructor(WrappedMutationObserver, OrigMutationObserver);
-    window.MutationObserver = stealth(WrappedMutationObserver, "MutationObserver", { length: 1 });
+    U.alignPrototypeConstructor(WrappedMutationObserver, OrigMutationObserver);
+    window.MutationObserver = U.stealth(WrappedMutationObserver, "MutationObserver", {
+      length: 1,
+    });
   };
 
   const patchAsyncSourceContext = () => {
@@ -1356,14 +1283,14 @@
       if (!desc || typeof desc.set !== "function") return;
       Object.defineProperty(owner, prop, {
         ...desc,
-        set: stealth(
+        set: U.stealth(
           function set(value) {
             return desc.set.call(this, wrapAsyncCallback(value, currentAdaptiveSource(), label));
           },
           `set ${prop}`,
           {
             length: desc.set.length,
-            source: nativeSourceFor(desc.set, `set ${prop}`),
+            source: U.nativeSourceFor(desc.set, `set ${prop}`),
           }
         ),
       });
@@ -1442,7 +1369,7 @@
       }.sendBeacon;
       Object.defineProperty(navProto, "sendBeacon", {
         ...beaconDesc,
-        value: stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
+        value: U.stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
       });
     } catch {}
   };
@@ -1460,15 +1387,6 @@
     }
   };
 
-  const copyConstructorStatics = (wrapped, original) => {
-    for (const key of Object.getOwnPropertyNames(original)) {
-      if (key === "length" || key === "name" || key === "prototype") continue;
-      try {
-        Object.defineProperty(wrapped, key, Object.getOwnPropertyDescriptor(original, key));
-      } catch {}
-    }
-  };
-
   const patchNetworkConstructor = (name, urlFor = firstStringEntry) => {
     const OrigCtor = window[name];
     if (typeof OrigCtor !== "function") return;
@@ -1478,11 +1396,11 @@
       return Reflect.construct(OrigCtor, args, new.target);
     };
     WrappedCtor.prototype = OrigCtor.prototype;
-    copyConstructorStatics(WrappedCtor, OrigCtor);
-    alignPrototypeConstructor(WrappedCtor, OrigCtor);
-    window[name] = stealth(WrappedCtor, name, {
+    U.copyConstructorStatics(WrappedCtor, OrigCtor);
+    U.alignPrototypeConstructor(WrappedCtor, OrigCtor);
+    window[name] = U.stealth(WrappedCtor, name, {
       length: OrigCtor.length,
-      source: nativeSourceFor(OrigCtor, name),
+      source: U.nativeSourceFor(OrigCtor, name),
     });
   };
 
@@ -1520,10 +1438,14 @@
         return origRemoveEventListener.apply(this, args);
       },
     }.removeEventListener;
-    EventTarget.prototype.addEventListener = stealth(wrappedAddEventListener, "addEventListener", {
-      length: 2,
-    });
-    EventTarget.prototype.removeEventListener = stealth(
+    EventTarget.prototype.addEventListener = U.stealth(
+      wrappedAddEventListener,
+      "addEventListener",
+      {
+        length: 2,
+      }
+    );
+    EventTarget.prototype.removeEventListener = U.stealth(
       wrappedRemoveEventListener,
       "removeEventListener",
       { length: 2 }

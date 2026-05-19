@@ -1,9 +1,7 @@
 /* eslint-disable max-lines, max-statements -- MAIN-world element decoy shims are safer kept contiguous */
 // Static - MAIN-world passive element decoys for Noise-mode personas.
 (() => {
-  const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
-  const BAD_URL_RE = /\b(?:chrome|moz|ms-browser|safari-web|edge)-extension:[^\s"'()<>]+/i;
-  const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
+  const U = globalThis.__static_block_utils__;
   const BRIDGE_EVENT = "__static_element_decoy_bridge_init__";
   const PNG_1X1_B64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -37,82 +35,6 @@
   let nativeGetAttribute = null;
   let nativeGetAttributeNS = null;
   let trustedScriptUrlPolicy = undefined;
-
-  const STEALTH_KEY = "__ss2605__";
-  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
-  if (!globalThis[STEALTH_KEY]) {
-    try {
-      Object.defineProperty(globalThis, STEALTH_KEY, {
-        value: stealthFns,
-        enumerable: false,
-        configurable: true,
-        writable: true,
-      });
-    } catch {
-      globalThis[STEALTH_KEY] = stealthFns;
-    }
-    const origFnToString = Function.prototype.toString;
-    const patchedFnToString = {
-      toString() {
-        if (stealthFns.has(this)) return stealthFns.get(this);
-        return origFnToString.call(this);
-      },
-    }.toString;
-    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-    try {
-      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-    } catch {}
-    Function.prototype.toString = patchedFnToString;
-  }
-  const origFnToString = Function.prototype.toString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
-    }
-  };
-
-  const descriptorOwnerFor = (proto, prop) => {
-    let cursor = proto;
-    while (cursor) {
-      const desc = Object.getOwnPropertyDescriptor(cursor, prop);
-      if (desc) return { desc, owner: cursor };
-      cursor = Object.getPrototypeOf(cursor);
-    }
-    return null;
-  };
-
-  const alignPrototypeConstructor = (wrapped, original) => {
-    try {
-      const proto = original && original.prototype;
-      if (!proto) return;
-      const desc = Object.getOwnPropertyDescriptor(proto, "constructor") || {
-        configurable: true,
-        enumerable: false,
-        writable: true,
-      };
-      Object.defineProperty(proto, "constructor", {
-        ...desc,
-        value: wrapped,
-      });
-    } catch {}
-  };
 
   const applyConfigUpdate = (data) => {
     if (!data || data.type !== "config_update") return;
@@ -169,51 +91,9 @@
   };
   document.addEventListener(BRIDGE_EVENT, onBridgeInit);
 
-  const normalizeUrlString = (value) => String(value).trim();
-
-  const getUrl = (input) => {
-    if (input == null) return "";
-    if (typeof input === "string") return normalizeUrlString(input);
-    if (typeof URL !== "undefined" && input instanceof URL) return input.href;
-    if (typeof input.url === "string") return normalizeUrlString(input.url);
-    try {
-      return normalizeUrlString(input);
-    } catch {
-      return "";
-    }
-  };
-
-  const isBad = (input) => {
-    try {
-      return BAD_RE.test(getUrl(input));
-    } catch {
-      return false;
-    }
-  };
-
-  const EXT_ID_RE_BY_SCHEME = {
-    "chrome-extension": CHROME_EXT_ID_RE,
-    "edge-extension": CHROME_EXT_ID_RE,
-    "moz-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
-    "safari-web-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
-  };
-
-  const extractExtId = (url) => {
-    try {
-      const parsed = new URL(String(url || ""));
-      const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
-      const id = parsed.hostname.toLowerCase();
-      const idRe = EXT_ID_RE_BY_SCHEME[scheme];
-      if (idRe && idRe.test(id)) {
-        return id;
-      }
-    } catch {}
-    return null;
-  };
-
   const shouldDecoy = (url) => {
     if (!noiseEnabled) return false;
-    const id = extractExtId(url);
+    const id = U.extractExtId(url);
     return id != null && persona.has(id);
   };
 
@@ -478,7 +358,7 @@
 
   const firstBadUrlInText = (value) => {
     try {
-      const match = String(value == null ? "" : value).match(BAD_URL_RE);
+      const match = String(value == null ? "" : value).match(U.BAD_URL_RE);
       return match ? match[0] : "";
     } catch {
       return "";
@@ -487,7 +367,7 @@
 
   const probeUrlFor = (prop, value) => {
     if (prop === "srcset") return firstBadUrlInText(value);
-    return isBad(value) ? getUrl(value) : "";
+    return U.isBad(value) ? U.getUrl(value) : "";
   };
 
   const elementProbe = (el, prop, value) => {
@@ -587,21 +467,21 @@
       },
     };
     const get = desc.get
-      ? stealth(
+      ? U.stealth(
           function get() {
             return rememberedOriginal(this, prop) || desc.get.call(this);
           },
           `get ${prop}`,
-          { length: desc.get.length, source: nativeSourceFor(desc.get, `get ${prop}`) }
+          { length: desc.get.length, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
         )
       : desc.get;
     Object.defineProperty(proto, prop, {
       configurable: true,
       enumerable: desc.enumerable,
       get,
-      set: stealth(Object.getOwnPropertyDescriptor(setterHolder, prop).set, `set ${prop}`, {
+      set: U.stealth(Object.getOwnPropertyDescriptor(setterHolder, prop).set, `set ${prop}`, {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, `set ${prop}`),
+        source: U.nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -720,7 +600,7 @@
   };
 
   const patchAttrValueProperty = (proto, prop) => {
-    const found = descriptorOwnerFor(proto, prop);
+    const found = U.descriptorOwnerFor(proto, prop);
     const desc = found && found.desc;
     if (!desc || !desc.get) return;
     if (prop === "value") {
@@ -746,14 +626,14 @@
     Object.defineProperty(proto, prop, {
       configurable: true,
       enumerable: desc.enumerable,
-      get: stealth(wrappedGet, `get ${prop}`, {
+      get: U.stealth(wrappedGet, `get ${prop}`, {
         length: 0,
-        source: nativeSourceFor(desc.get, `get ${prop}`),
+        source: U.nativeSourceFor(desc.get, `get ${prop}`),
       }),
       set: desc.set
-        ? stealth(wrappedSet, `set ${prop}`, {
+        ? U.stealth(wrappedSet, `set ${prop}`, {
             length: 1,
-            source: nativeSourceFor(desc.set, `set ${prop}`),
+            source: U.nativeSourceFor(desc.set, `set ${prop}`),
           })
         : desc.set,
     });
@@ -796,9 +676,9 @@
     }.cloneNode;
     Object.defineProperty(Node.prototype, "cloneNode", {
       ...desc,
-      value: stealth(wrapped, "cloneNode", {
+      value: U.stealth(wrapped, "cloneNode", {
         length: orig.length,
-        source: nativeSourceFor(orig, "cloneNode"),
+        source: U.nativeSourceFor(orig, "cloneNode"),
       }),
     });
   };
@@ -894,12 +774,12 @@
       Object.defineProperty(Element.prototype, "innerHTML", {
         configurable: true,
         enumerable: innerDesc.enumerable,
-        get: stealth(
+        get: U.stealth(
           Object.getOwnPropertyDescriptor(innerGetterHolder, "innerHTML").get,
           "get innerHTML",
           {
             length: 0,
-            source: nativeSourceFor(innerDesc.get, "get innerHTML"),
+            source: U.nativeSourceFor(innerDesc.get, "get innerHTML"),
           }
         ),
         set: innerDesc.set,
@@ -914,12 +794,12 @@
       Object.defineProperty(Element.prototype, "outerHTML", {
         configurable: true,
         enumerable: outerDesc.enumerable,
-        get: stealth(
+        get: U.stealth(
           Object.getOwnPropertyDescriptor(outerGetterHolder, "outerHTML").get,
           "get outerHTML",
           {
             length: 0,
-            source: nativeSourceFor(outerDesc.get, "get outerHTML"),
+            source: U.nativeSourceFor(outerDesc.get, "get outerHTML"),
           }
         ),
         set: outerDesc.set,
@@ -939,9 +819,9 @@
     }.serializeToString;
     Object.defineProperty(XMLSerializer.prototype, "serializeToString", {
       ...desc,
-      value: stealth(wrapped, "serializeToString", {
+      value: U.stealth(wrapped, "serializeToString", {
         length: orig.length,
-        source: nativeSourceFor(orig, "serializeToString"),
+        source: U.nativeSourceFor(orig, "serializeToString"),
       }),
     });
   };
@@ -1064,20 +944,24 @@
         return origRemoveAttributeNS.apply(this, arguments);
       },
     };
-    Element.prototype.setAttribute = stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
-    Element.prototype.setAttributeNS = stealth(wrapped.setAttributeNS, "setAttributeNS", {
+    Element.prototype.setAttribute = U.stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
+    Element.prototype.setAttributeNS = U.stealth(wrapped.setAttributeNS, "setAttributeNS", {
       length: 3,
     });
-    Element.prototype.getAttribute = stealth(wrapped.getAttribute, "getAttribute", { length: 1 });
-    Element.prototype.getAttributeNS = stealth(wrapped.getAttributeNS, "getAttributeNS", {
+    Element.prototype.getAttribute = U.stealth(wrapped.getAttribute, "getAttribute", { length: 1 });
+    Element.prototype.getAttributeNS = U.stealth(wrapped.getAttributeNS, "getAttributeNS", {
       length: 2,
     });
-    Element.prototype.removeAttribute = stealth(wrapped.removeAttribute, "removeAttribute", {
+    Element.prototype.removeAttribute = U.stealth(wrapped.removeAttribute, "removeAttribute", {
       length: 1,
     });
-    Element.prototype.removeAttributeNS = stealth(wrapped.removeAttributeNS, "removeAttributeNS", {
-      length: 2,
-    });
+    Element.prototype.removeAttributeNS = U.stealth(
+      wrapped.removeAttributeNS,
+      "removeAttributeNS",
+      {
+        length: 2,
+      }
+    );
   };
 
   const patchAttributeNodes = () => {
@@ -1157,12 +1041,12 @@
       },
     };
     if (typeof origSetAttributeNode === "function") {
-      Element.prototype.setAttributeNode = stealth(wrapped.setAttributeNode, "setAttributeNode", {
+      Element.prototype.setAttributeNode = U.stealth(wrapped.setAttributeNode, "setAttributeNode", {
         length: 1,
       });
     }
     if (typeof origSetAttributeNodeNS === "function") {
-      Element.prototype.setAttributeNodeNS = stealth(
+      Element.prototype.setAttributeNodeNS = U.stealth(
         wrapped.setAttributeNodeNS,
         "setAttributeNodeNS",
         { length: 1 }
@@ -1176,7 +1060,7 @@
     Object.defineProperty(HTMLImageElement.prototype, "currentSrc", {
       configurable: true,
       enumerable: desc.enumerable,
-      get: stealth(
+      get: U.stealth(
         function get() {
           return (
             rememberedOriginal(this, "currentSrc") ||
@@ -1185,7 +1069,7 @@
           );
         },
         "get currentSrc",
-        { length: 0, source: nativeSourceFor(desc.get, "get currentSrc") }
+        { length: 0, source: U.nativeSourceFor(desc.get, "get currentSrc") }
       ),
     });
   };
@@ -1197,7 +1081,7 @@
     Object.defineProperty(StyleSheet.prototype, "href", {
       configurable: true,
       enumerable: desc.enumerable,
-      get: stealth(
+      get: U.stealth(
         function get() {
           try {
             return rememberedOriginal(this.ownerNode, "href") || desc.get.call(this);
@@ -1206,7 +1090,7 @@
           }
         },
         "get href",
-        { length: 0, source: nativeSourceFor(desc.get, "get href") }
+        { length: 0, source: U.nativeSourceFor(desc.get, "get href") }
       ),
     });
   };
@@ -1225,30 +1109,30 @@
       const observer = Reflect.construct(OrigMutationObserver, [callbackForPage], new.target);
       const origTakeRecords = observer.takeRecords;
       if (typeof origTakeRecords === "function") {
-        observer.takeRecords = stealth(
+        observer.takeRecords = U.stealth(
           function takeRecords() {
             return mutationRecordsForPage(origTakeRecords.apply(this, arguments));
           },
           "takeRecords",
           {
             length: 0,
-            source: nativeSourceFor(origTakeRecords, "takeRecords"),
+            source: U.nativeSourceFor(origTakeRecords, "takeRecords"),
           }
         );
       }
       return observer;
     };
     WrappedMutationObserver.prototype = OrigMutationObserver.prototype;
-    alignPrototypeConstructor(WrappedMutationObserver, OrigMutationObserver);
-    window.MutationObserver = stealth(WrappedMutationObserver, "MutationObserver", {
+    U.alignPrototypeConstructor(WrappedMutationObserver, OrigMutationObserver);
+    window.MutationObserver = U.stealth(WrappedMutationObserver, "MutationObserver", {
       length: 1,
-      source: nativeSourceFor(OrigMutationObserver, "MutationObserver"),
+      source: U.nativeSourceFor(OrigMutationObserver, "MutationObserver"),
     });
   };
 
   const svgHrefProbe = (el, value) => {
     if (disabled) return null;
-    const url = isBad(value) ? getUrl(value) : "";
+    const url = U.isBad(value) ? U.getUrl(value) : "";
     if (!url) return null;
     const kind = passiveDecoyKindFor(url, "href", el);
     return { kind, mode: shouldDecoy(url) && kind ? "decoy" : "block", url };
@@ -1295,7 +1179,7 @@
     Object.defineProperty(proto, "href", {
       configurable: true,
       enumerable: desc.enumerable,
-      get: stealth(
+      get: U.stealth(
         function get() {
           const animated = desc.get.call(this);
           return animated && typeof animated === "object"
@@ -1303,7 +1187,7 @@
             : animated;
         },
         "get href",
-        { length: 0, source: nativeSourceFor(desc.get, "get href") }
+        { length: 0, source: U.nativeSourceFor(desc.get, "get href") }
       ),
     });
   };

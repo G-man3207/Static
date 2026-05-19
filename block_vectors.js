@@ -1,166 +1,36 @@
 /* eslint-disable max-lines -- MAIN-world vector shims are safer kept contiguous */
 // Static - MAIN-world blocking for extension probe vectors beyond fetch/XHR.
 (() => {
-  const BAD_RE = /^(chrome|moz|ms-browser|safari-web|edge)-extension:/i;
-  const BAD_URL_RE = /\b(?:chrome|moz|ms-browser|safari-web|edge)-extension:[^\s"'()<>]+/i;
+  const U = globalThis.__static_block_utils__;
   const BRIDGE_EVENT = "__static_probe_bridge_init__";
   const MAX_QUEUED_PROBES = 1000;
-  const queuedProbeEvents = [];
-  let bridgePort = null;
   let disabled = false;
 
-  const STEALTH_KEY = "__ss2605__";
-  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
-  if (!globalThis[STEALTH_KEY]) {
-    try {
-      Object.defineProperty(globalThis, STEALTH_KEY, {
-        value: stealthFns,
-        enumerable: false,
-        configurable: true,
-        writable: true,
-      });
-    } catch {
-      globalThis[STEALTH_KEY] = stealthFns;
-    }
-    const origFnToString = Function.prototype.toString;
-    const patchedFnToString = {
-      toString() {
-        if (stealthFns.has(this)) return stealthFns.get(this);
-        return origFnToString.call(this);
-      },
-    }.toString;
-    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-    try {
-      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-    } catch {}
-    Function.prototype.toString = patchedFnToString;
-  }
-  const origFnToString = Function.prototype.toString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
+  const applyConfigUpdate = (data) => {
+    if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
+      disabled = data.disabled;
     }
   };
 
-  const alignPrototypeConstructor = (wrapped, original) => {
-    try {
-      const proto = original && original.prototype;
-      if (!proto) return;
-      const desc = Object.getOwnPropertyDescriptor(proto, "constructor") || {
-        writable: true,
-        configurable: true,
-        enumerable: false,
-      };
-      Object.defineProperty(proto, "constructor", {
-        ...desc,
-        value: wrapped,
-      });
-    } catch {}
-  };
+  const bridge = U.setupBridge(BRIDGE_EVENT, MAX_QUEUED_PROBES, applyConfigUpdate);
 
   const postProbe = (url, where) => {
     const safeUrl = url == null ? "" : String(url).slice(0, 512);
     const safeWhere = where == null ? "" : String(where).slice(0, 64);
-    if (bridgePort) {
-      try {
-        bridgePort.postMessage({ type: "probe_blocked", where: safeWhere, url: safeUrl });
-        return;
-      } catch {
-        bridgePort = null;
-      }
-    }
-    if (queuedProbeEvents.length < MAX_QUEUED_PROBES) {
-      queuedProbeEvents.push({ url: safeUrl, where: safeWhere });
-    }
-  };
-
-  const flushQueuedProbes = () => {
-    if (!bridgePort) return;
-    const batch = queuedProbeEvents.splice(0, queuedProbeEvents.length);
-    for (const event of batch) {
-      try {
-        bridgePort.postMessage({ type: "probe_blocked", ...event });
-      } catch {
-        bridgePort = null;
-        return;
-      }
-    }
-  };
-
-  const onBridgeInit = (event) => {
-    if (bridgePort) return;
-    const port = event && event.ports && event.ports[0];
-    if (!port || typeof port.postMessage !== "function") return;
-
-    try {
-      event.stopImmediatePropagation();
-    } catch {}
-    bridgePort = port;
-    try {
-      bridgePort.start();
-    } catch {}
-    bridgePort.onmessage = (portEvent) => {
-      const data = portEvent && portEvent.data;
-      if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
-        disabled = data.disabled;
-      }
-    };
-    flushQueuedProbes();
-    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
-  };
-  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
-
-  const normalizeUrlString = (value) => String(value).trim();
-
-  const getUrl = (input) => {
-    if (input == null) return "";
-    if (typeof input === "string") return normalizeUrlString(input);
-    if (typeof URL !== "undefined" && input instanceof URL) return input.href;
-    if (typeof Request !== "undefined" && input instanceof Request) return input.url;
-    if (typeof input.url === "string") return normalizeUrlString(input.url);
-    try {
-      return normalizeUrlString(input);
-    } catch {
-      return "";
-    }
-  };
-
-  const isBad = (input) => {
-    try {
-      return BAD_RE.test(getUrl(input));
-    } catch {
-      return false;
-    }
+    bridge.post("probe_blocked", { url: safeUrl, where: safeWhere });
   };
 
   const firstBadUrlIn = (input) => {
     try {
-      if (isBad(input)) return getUrl(input);
-      const match = String(input == null ? "" : input).match(BAD_URL_RE);
+      if (U.isBad(input)) return U.getUrl(input);
+      const match = String(input == null ? "" : input).match(U.BAD_URL_RE);
       return match ? match[0] : "";
     } catch {
       return "";
     }
   };
 
-  const badUrlFor = (input) => (isBad(input) ? getUrl(input) : "");
+  const badUrlFor = (input) => (U.isBad(input) ? U.getUrl(input) : "");
 
   const bump = (where, url) => {
     try {
@@ -191,9 +61,9 @@
       configurable: true,
       enumerable: desc.enumerable,
       get: desc.get,
-      set: stealth(guardedSetter, `set ${prop}`, {
+      set: U.stealth(guardedSetter, `set ${prop}`, {
         length: desc.set.length,
-        source: nativeSourceFor(desc.set, `set ${prop}`),
+        source: U.nativeSourceFor(desc.set, `set ${prop}`),
       }),
     });
   };
@@ -341,7 +211,7 @@
         return origFn.apply(this, nextArgs);
       },
     }[name];
-    return stealth(wrapped, name, { length, source: nativeSourceFor(origFn, name) });
+    return U.stealth(wrapped, name, { length, source: U.nativeSourceFor(origFn, name) });
   };
 
   const patchAttributes = () => {
@@ -368,7 +238,7 @@
       const wrappedBeacon = {
         sendBeacon(url) {
           if (disabled) return origBeacon.apply(this, arguments);
-          if (isBad(url)) {
+          if (U.isBad(url)) {
             bump("sendBeacon", url);
             throw new TypeError("Failed to execute 'sendBeacon' on 'Navigator': Invalid URL");
           }
@@ -377,7 +247,7 @@
       }.sendBeacon;
       Object.defineProperty(navProto, "sendBeacon", {
         ...beaconDesc,
-        value: stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
+        value: U.stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
       });
     } catch {
       patchBeaconFallback();
@@ -391,7 +261,7 @@
       sendBeacon(url) {
         if (disabled) return origBeacon.apply(this, arguments);
         const data = arguments[1];
-        if (isBad(url)) {
+        if (U.isBad(url)) {
           bump("sendBeacon", url);
           throw new TypeError("Failed to execute 'sendBeacon' on 'Navigator': Invalid URL");
         }
@@ -400,7 +270,7 @@
     }.sendBeacon;
     try {
       Object.defineProperty(navigator, "sendBeacon", {
-        value: stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
+        value: U.stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
         writable: true,
         configurable: true,
         enumerable: false,
@@ -413,7 +283,7 @@
     const wrapped = function (url) {
       if (!new.target) return Reflect.apply(Ctor, this, arguments);
       if (disabled) return Reflect.construct(Ctor, arguments, new.target);
-      if (isBad(url)) {
+      if (U.isBad(url)) {
         bump(label, url);
         const origin = location && location.origin ? location.origin : "null";
         throw new DOMException(
@@ -426,8 +296,8 @@
       return Reflect.construct(Ctor, arguments, new.target);
     };
     wrapped.prototype = Ctor.prototype;
-    alignPrototypeConstructor(wrapped, Ctor);
-    return stealth(wrapped, label, { length: 1 });
+    U.alignPrototypeConstructor(wrapped, Ctor);
+    return U.stealth(wrapped, label, { length: 1 });
   };
 
   const patchWorkers = () => {
@@ -445,17 +315,17 @@
     const wrappedAudio = function Audio(src) {
       if (!new.target) return Reflect.apply(OrigAudio, this, arguments);
       if (disabled) return Reflect.construct(OrigAudio, arguments, new.target);
-      if (arguments.length > 0 && isBad(src)) {
+      if (arguments.length > 0 && U.isBad(src)) {
         bump("Audio", src);
         return Reflect.construct(OrigAudio, [], new.target);
       }
       return Reflect.construct(OrigAudio, arguments, new.target);
     };
     wrappedAudio.prototype = OrigAudio.prototype;
-    alignPrototypeConstructor(wrappedAudio, OrigAudio);
-    window.Audio = stealth(wrappedAudio, "Audio", {
+    U.alignPrototypeConstructor(wrappedAudio, OrigAudio);
+    window.Audio = U.stealth(wrappedAudio, "Audio", {
       length: OrigAudio.length,
-      source: nativeSourceFor(OrigAudio, "Audio"),
+      source: U.nativeSourceFor(OrigAudio, "Audio"),
     });
   };
 
@@ -465,7 +335,7 @@
     let onerror = null;
     let onerrorHandler = null;
     const listenerWrappers = [];
-    const close = stealth(
+    const close = U.stealth(
       function close() {
         readyState = origES.CLOSED;
       },
@@ -483,7 +353,7 @@
       });
     const captureFor = (options) =>
       typeof options === "boolean" ? options : !!(options && options.capture);
-    const addEventListener = stealth(
+    const addEventListener = U.stealth(
       function addEventListener(type, listener, options) {
         if (listener == null) return;
         const wrapped = (event) => {
@@ -499,7 +369,7 @@
       "addEventListener",
       { length: 2 }
     );
-    const removeEventListener = stealth(
+    const removeEventListener = U.stealth(
       function removeEventListener(type, listener, options) {
         const capture = captureFor(options);
         const index = listenerWrappers.findIndex(
@@ -558,16 +428,16 @@
     const wrappedES = function EventSource(url, opts) {
       if (!new.target) return Reflect.apply(origES, this, arguments);
       if (disabled) return Reflect.construct(origES, arguments, new.target);
-      if (!isBad(url)) return Reflect.construct(origES, arguments, new.target);
+      if (!U.isBad(url)) return Reflect.construct(origES, arguments, new.target);
       bump("EventSource", url);
       return makeBlockedEventSource(url, opts, origES);
     };
     wrappedES.prototype = origES.prototype;
-    alignPrototypeConstructor(wrappedES, origES);
+    U.alignPrototypeConstructor(wrappedES, origES);
     wrappedES.CONNECTING = 0;
     wrappedES.OPEN = 1;
     wrappedES.CLOSED = 2;
-    window.EventSource = stealth(wrappedES, "EventSource", { length: 1 });
+    window.EventSource = U.stealth(wrappedES, "EventSource", { length: 1 });
   };
 
   const patchServiceWorkerRegister = () => {
@@ -583,7 +453,7 @@
       const wrappedRegister = {
         register(url) {
           if (disabled) return origRegister.apply(this, arguments);
-          if (isBad(url)) {
+          if (U.isBad(url)) {
             bump("serviceWorker.register", url);
             return Promise.reject(new TypeError("Failed to register a ServiceWorker"));
           }
@@ -592,7 +462,7 @@
       }.register;
       Object.defineProperty(swProto, "register", {
         ...registerDesc,
-        value: stealth(wrappedRegister, "register", { length: 1 }),
+        value: U.stealth(wrappedRegister, "register", { length: 1 }),
       });
     } catch {}
   };
@@ -605,8 +475,8 @@
     const wrappedAddModule = {
       addModule(moduleURL) {
         if (disabled) return orig.apply(this, arguments);
-        if (isBad(moduleURL)) {
-          const url = getUrl(moduleURL);
+        if (U.isBad(moduleURL)) {
+          const url = U.getUrl(moduleURL);
           bump("Worklet.addModule", url);
           return Promise.reject(
             new DOMException("Unable to load a worklet's module.", "AbortError")
@@ -617,9 +487,9 @@
     }.addModule;
     Object.defineProperty(Worklet.prototype, "addModule", {
       ...desc,
-      value: stealth(wrappedAddModule, "addModule", {
+      value: U.stealth(wrappedAddModule, "addModule", {
         length: orig.length,
-        source: nativeSourceFor(orig, "addModule"),
+        source: U.nativeSourceFor(orig, "addModule"),
       }),
     });
   };
@@ -643,9 +513,9 @@
     }[name];
     Object.defineProperty(proto, name, {
       ...desc,
-      value: stealth(wrapped, name, {
+      value: U.stealth(wrapped, name, {
         length: orig.length,
-        source: nativeSourceFor(orig, name),
+        source: U.nativeSourceFor(orig, name),
       }),
     });
   };
