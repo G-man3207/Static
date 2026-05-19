@@ -1278,6 +1278,101 @@
     });
   };
 
+  const patchMediaCapabilities = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    const found = descriptorOwnerFor(Navigator.prototype, "mediaCapabilities");
+    const desc = found && found.desc;
+    if (!desc || typeof desc.get !== "function") return;
+    const { owner } = found;
+    const plausibleMediaInfo = () =>
+      Promise.resolve({
+        supported: true,
+        smooth: true,
+        powerEfficient: true,
+      });
+    Object.defineProperty(owner, "mediaCapabilities", {
+      ...desc,
+      get: stealth(
+        function get() {
+          const original = desc.get.call(this);
+          if (!isMasking() || !original) return original;
+          return new Proxy(original, {
+            get(target, prop) {
+              const value = Reflect.get(target, prop, target);
+              if (prop === "decodingInfo" || prop === "encodingInfo") {
+                return stealth(
+                  function mediaInfo() {
+                    return plausibleMediaInfo();
+                  },
+                  prop,
+                  { length: 1, source: nativeSourceFor(value, prop) }
+                );
+              }
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          });
+        },
+        "get mediaCapabilities",
+        { length: 0, source: nativeSourceFor(desc.get, "get mediaCapabilities") }
+      ),
+    });
+  };
+
+  const patchGpu = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    const found = descriptorOwnerFor(Navigator.prototype, "gpu");
+    const desc = found && found.desc;
+    if (!desc || typeof desc.get !== "function") return;
+    const { owner } = found;
+    Object.defineProperty(owner, "gpu", {
+      ...desc,
+      get: stealth(
+        function get() {
+          const original = desc.get.call(this);
+          if (!isMasking() || !original) return original;
+          return new Proxy(original, {
+            get(target, prop) {
+              const value = Reflect.get(target, prop, target);
+              if (prop === "requestAdapter") {
+                return stealth(
+                  function requestAdapter() {
+                    return Promise.resolve(null);
+                  },
+                  "requestAdapter",
+                  { length: 0, source: nativeSourceFor(value, "requestAdapter") }
+                );
+              }
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          });
+        },
+        "get gpu",
+        { length: 0, source: nativeSourceFor(desc.get, "get gpu") }
+      ),
+    });
+  };
+
+  const patchHardwareAvailability = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    for (const prop of ["bluetooth", "hid", "presentation", "serial", "usb", "wakeLock", "xr"]) {
+      const found = descriptorOwnerFor(Navigator.prototype, prop);
+      const desc = found && found.desc;
+      if (!desc || typeof desc.get !== "function") continue;
+      const { owner } = found;
+      Object.defineProperty(owner, prop, {
+        ...desc,
+        get: stealth(
+          function get() {
+            if (isMasking()) return undefined;
+            return desc.get.call(this);
+          },
+          `get ${prop}`,
+          { length: 0, source: nativeSourceFor(desc.get, `get ${prop}`) }
+        ),
+      });
+    }
+  };
+
   try {
     patchNavigatorGetters();
     patchScreenGetters();
@@ -1296,5 +1391,8 @@
     patchMediaDevices();
     patchPermissions();
     patchMatchMedia();
+    patchMediaCapabilities();
+    patchGpu();
+    patchHardwareAvailability();
   } catch {}
 })();

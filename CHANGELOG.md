@@ -8,12 +8,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Added
 
+- DNR fingerprint vendor rules for `fingerprint.com` (Fingerprint commercial platform), `js.datadome.co` and `api.datadome.co` (DataDome integration/API hosts), `events.api.sift.com` (Sift events API), and `perimeterx.com` (legacy PerimeterX domain).
+- Device signal poisoning now masks `navigator.mediaCapabilities.decodingInfo()` and `encodingInfo()`, returning plausible `{ supported: true, smooth: true, powerEfficient: true }` results to prevent hardware decoding capability fingerprinting.
+- Device signal poisoning now masks `navigator.gpu.requestAdapter()`, returning `Promise.resolve(null)` to prevent WebGPU hardware fingerprinting.
+- Device signal poisoning now masks hardware availability APIs (`navigator.bluetooth`, `navigator.hid`, `navigator.presentation`, `navigator.serial`, `navigator.usb`, `navigator.wakeLock`, `navigator.xr`), returning `undefined` to reduce hardware-based fingerprinting surface.
 - Device signal poisoning now masks `navigator.keyboard.getLayoutMap()`, returning a standard US QWERTY layout to prevent keyboard layout fingerprinting.
 - Device signal poisoning now masks `navigator.mediaDevices.enumerateDevices()`, returning an empty array to prevent persistent device label fingerprinting.
 - Device signal poisoning now masks `navigator.permissions.query()` for common permissions (notifications, clipboard-read, clipboard-write, midi, midi-sysex), returning a standardized `"prompt"` state.
 - Device signal poisoning now aligns `window.matchMedia()` results with the desktop persona: `(hover: hover)`, `(pointer: fine)`, `(prefers-color-scheme: light)` match while their opposites do not.
 - Device signal poisoning now masks `uaFullVersion` in `navigator.userAgentData.getHighEntropyValues()`, returning `"120.0.0.0"` for consistency with the masked user agent string.
-- Playwright test coverage for keyboard layout masking, media device enumeration masking, permissions query standardization, matchMedia persona alignment, and `uaFullVersion` high-entropy masking.
+- Playwright test coverage for new fingerprint vendor DNR rules, mediaCapabilities masking, WebGPU adapter masking, hardware availability API masking, keyboard layout masking, media device enumeration masking, permissions query standardization, matchMedia persona alignment, and `uaFullVersion` high-entropy masking.
 
 ### Added
 
