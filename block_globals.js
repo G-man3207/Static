@@ -1,5 +1,6 @@
 // Static - MAIN-world lockout for extension bridge globals.
 (() => {
+  const U = globalThis.__static_block_utils__;
   const STRIP_GLOBALS = [
     "__REACT_DEVTOOLS_GLOBAL_HOOK__",
     "__REDUX_DEVTOOLS_EXTENSION__",
@@ -24,44 +25,7 @@
   const FAST_SCRUB_MS = 25;
   const FAST_SCRUB_TICKS = 200;
   const BRIDGE_EVENT = "__static_probe_bridge_init__";
-  let bridgePort = null;
   let disabled = false;
-
-  const stealthFns = new WeakMap();
-  const origFnToString = Function.prototype.toString;
-  const patchedFnToString = {
-    toString() {
-      if (stealthFns.has(this)) return stealthFns.get(this);
-      return origFnToString.call(this);
-    },
-  }.toString;
-  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-  try {
-    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
-  Function.prototype.toString = patchedFnToString;
-
-  const stealth = (fn, nativeName, opts = {}) => {
-    stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
-    try {
-      Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
-    if (typeof opts.length === "number") {
-      try {
-        Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
-    }
-    return fn;
-  };
-
-  const nativeSourceFor = (fn, fallbackName) => {
-    try {
-      return origFnToString.call(fn);
-    } catch {
-      return `function ${fallbackName}() { [native code] }`;
-    }
-  };
 
   const applyConfigUpdate = (data) => {
     if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
@@ -69,21 +33,7 @@
     }
   };
 
-  const onBridgeInit = (event) => {
-    if (bridgePort) return;
-    const port = event && event.ports && event.ports[0];
-    if (!port || typeof port.postMessage !== "function") return;
-    try {
-      event.stopImmediatePropagation();
-    } catch {}
-    bridgePort = port;
-    try {
-      bridgePort.start();
-    } catch {}
-    bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
-    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
-  };
-  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
+  U.setupBridge(BRIDGE_EVENT, 1000, applyConfigUpdate);
 
   const isProtectedKey = (prop) => typeof prop === "string" && STRIP_SET.has(prop);
 
@@ -146,9 +96,9 @@
     }.defineProperty;
     Object.defineProperty(Object, "defineProperty", {
       ...desc,
-      value: stealth(wrapped, "defineProperty", {
+      value: U.stealth(wrapped, "defineProperty", {
         length: orig.length,
-        source: nativeSourceFor(orig, "defineProperty"),
+        source: U.nativeSourceFor(orig, "defineProperty"),
       }),
     });
   };
@@ -166,9 +116,9 @@
     }.defineProperties;
     Object.defineProperty(Object, "defineProperties", {
       ...desc,
-      value: stealth(wrapped, "defineProperties", {
+      value: U.stealth(wrapped, "defineProperties", {
         length: orig.length,
-        source: nativeSourceFor(orig, "defineProperties"),
+        source: U.nativeSourceFor(orig, "defineProperties"),
       }),
     });
   };
@@ -203,9 +153,9 @@
     }.assign;
     Object.defineProperty(Object, "assign", {
       ...desc,
-      value: stealth(wrapped, "assign", {
+      value: U.stealth(wrapped, "assign", {
         length: orig.length,
-        source: nativeSourceFor(orig, "assign"),
+        source: U.nativeSourceFor(orig, "assign"),
       }),
     });
   };
@@ -227,9 +177,9 @@
     }.defineProperty;
     Object.defineProperty(Reflect, "defineProperty", {
       ...desc,
-      value: stealth(wrapped, "defineProperty", {
+      value: U.stealth(wrapped, "defineProperty", {
         length: orig.length,
-        source: nativeSourceFor(orig, "defineProperty"),
+        source: U.nativeSourceFor(orig, "defineProperty"),
       }),
     });
   };
@@ -251,9 +201,9 @@
     }.set;
     Object.defineProperty(Reflect, "set", {
       ...desc,
-      value: stealth(wrapped, "set", {
+      value: U.stealth(wrapped, "set", {
         length: orig.length,
-        source: nativeSourceFor(orig, "set"),
+        source: U.nativeSourceFor(orig, "set"),
       }),
     });
   };
@@ -275,9 +225,9 @@
     }[name];
     Object.defineProperty(proto, name, {
       ...desc,
-      value: stealth(wrapped, name, {
+      value: U.stealth(wrapped, name, {
         length: orig.length,
-        source: nativeSourceFor(orig, name),
+        source: U.nativeSourceFor(orig, name),
       }),
     });
   };

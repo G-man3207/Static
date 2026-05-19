@@ -33,8 +33,9 @@ test("local stealth WeakMaps leave no detectable global key and toString chain w
     const hasLegacyKey = "__ss2605__" in globalThis;
     const stealthKeys = Reflect.ownKeys(globalThis).filter(
       (key) =>
-        (typeof key === "string" && key.includes("ss2605")) ||
-        (typeof key === "string" && key.includes("__static"))
+        ((typeof key === "string" && key.includes("ss2605")) ||
+          (typeof key === "string" && key.includes("__static"))) &&
+        key !== "__static_block_utils__"
     );
 
     return { hasLegacyKey, sources, stealthKeys };

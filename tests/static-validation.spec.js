@@ -139,6 +139,7 @@ const countMap = (count, prefix = "k") =>
   );
 
 const expectedMainWorldScripts = [
+  "block_utils.js",
   "block_adaptive.js",
   "block.js",
   "block_vectors.js",
@@ -273,7 +274,7 @@ test("extension runtime code stays local-only", () => {
     expect(source, `${filePath}: must not use synced storage`).not.toMatch(/chrome\.storage\.sync/);
     if (filePath.endsWith(".js")) {
       expect(source, `${filePath}: must not contain remote endpoints`).not.toMatch(
-        /https?:\/\/(?!www\.w3\.org\/2000\/svg)/
+        /https?:\/\/(?!www\.w3\.org\/(2000\/svg|1999\/xhtml))/
       );
     } else {
       expect(source, `${filePath}: must not load remote active content`).not.toMatch(
