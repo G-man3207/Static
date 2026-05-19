@@ -26,38 +26,27 @@
     "allow-top-navigation-by-user-activation",
     "allow-top-navigation-to-custom-protocols",
   ]);
+  const BRIDGE_EVENT = "__static_probe_bridge_init__";
   let supportedAllowFeatures = null;
   let sandboxTokenList = null;
   let nativeRemoveAttribute = null;
+  let bridgePort = null;
+  let disabled = false;
 
-  const STEALTH_KEY = "__ss2605__";
-  const stealthFns = globalThis[STEALTH_KEY] || new WeakMap();
-  if (!globalThis[STEALTH_KEY]) {
-    try {
-      Object.defineProperty(globalThis, STEALTH_KEY, {
-        value: stealthFns,
-        enumerable: false,
-        configurable: true,
-        writable: true,
-      });
-    } catch {
-      globalThis[STEALTH_KEY] = stealthFns;
-    }
-    const origFnToString = Function.prototype.toString;
-    const patchedFnToString = {
-      toString() {
-        if (stealthFns.has(this)) return stealthFns.get(this);
-        return origFnToString.call(this);
-      },
-    }.toString;
-    stealthFns.set(patchedFnToString, "function toString() { [native code] }");
-    try {
-      Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
-      Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-    } catch {}
-    Function.prototype.toString = patchedFnToString;
-  }
+  const stealthFns = new WeakMap();
   const origFnToString = Function.prototype.toString;
+  const patchedFnToString = {
+    toString() {
+      if (stealthFns.has(this)) return stealthFns.get(this);
+      return origFnToString.call(this);
+    },
+  }.toString;
+  stealthFns.set(patchedFnToString, "function toString() { [native code] }");
+  try {
+    Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
+    Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
+  } catch {}
+  Function.prototype.toString = patchedFnToString;
 
   const stealth = (fn, nativeName, opts = {}) => {
     stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
@@ -79,6 +68,28 @@
       return `function ${fallbackName}() { [native code] }`;
     }
   };
+
+  const applyConfigUpdate = (data) => {
+    if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
+      disabled = data.disabled;
+    }
+  };
+
+  const onBridgeInit = (event) => {
+    if (bridgePort) return;
+    const port = event && event.ports && event.ports[0];
+    if (!port || typeof port.postMessage !== "function") return;
+    try {
+      event.stopImmediatePropagation();
+    } catch {}
+    bridgePort = port;
+    try {
+      bridgePort.start();
+    } catch {}
+    bridgePort.onmessage = (portEvent) => applyConfigUpdate(portEvent.data);
+    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
+  };
+  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
 
   const readPolicyFeatures = (policy) => {
     if (!policy) return [];
@@ -226,13 +237,13 @@
     nativeRemoveAttribute = Element.prototype.removeAttribute;
     const wrapped = {
       setAttribute(name, value) {
-        if (window.__perf) return origSetAttribute.call(this, name, value);
+        if (disabled) return origSetAttribute.call(this, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttribute.call(this, name, normalized.value);
       },
       setAttributeNS(ns, name, value) {
-        if (window.__perf) return origSetAttributeNS.call(this, ns, name, value);
+        if (disabled) return origSetAttributeNS.call(this, ns, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttributeNS.call(this, ns, name, normalized.value);
@@ -250,7 +261,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (window.__perf) {
+        if (disabled) {
           desc.set.call(this, value);
           return;
         }
@@ -276,7 +287,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (window.__perf) {
+        if (disabled) {
           desc.set.call(this, value);
           return;
         }
@@ -301,7 +312,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set [prop](value) {
-        if (window.__perf) {
+        if (disabled) {
           desc.set.call(this, value);
           return;
         }
@@ -326,7 +337,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       insertAdjacentHTML(position, html) {
-        if (window.__perf) return orig.call(this, position, html);
+        if (disabled) return orig.call(this, position, html);
         return orig.call(this, position, sanitizeIframeMarkup(html));
       },
     }.insertAdjacentHTML;
@@ -357,7 +368,7 @@
     if (!desc || !desc.set) return;
     const setterHolder = {
       set value(nextValue) {
-        if (window.__perf) {
+        if (disabled) {
           desc.set.call(this, nextValue);
           return;
         }
@@ -382,7 +393,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       add(...tokens) {
-        if (window.__perf) return orig.apply(this, tokens);
+        if (disabled) return orig.apply(this, tokens);
         if (!isSandboxTokenList(this)) return orig.apply(this, tokens);
         const normalized = normalizeSandboxTokens(tokens);
         if (!normalized.length) return;
@@ -401,7 +412,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       toggle(token, force) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
         const [normalized] = normalizeSandboxTokens([token]);
         if (!normalized) return false;
@@ -424,7 +435,7 @@
     if (typeof orig !== "function") return;
     const wrapped = {
       replace(token, newToken) {
-        if (window.__perf) return orig.apply(this, arguments);
+        if (disabled) return orig.apply(this, arguments);
         if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
         const oldToken = String(token || "")
           .trim()
