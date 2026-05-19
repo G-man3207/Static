@@ -190,3 +190,125 @@ test("Fingerprint masking masks uaFullVersion in high entropy values", async ({
   if (result.skipped) return;
   expect(result.uaFullVersion).toBe("120.0.0.0");
 });
+
+test("Fingerprint masking returns plausible mediaCapabilities info", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const result = await page.evaluate(async () => {
+    if (!navigator.mediaCapabilities) return { skipped: true };
+    const decoding = await navigator.mediaCapabilities.decodingInfo({
+      type: "file",
+      video: {
+        contentType: 'video/webm; codecs="vp09.00.10.08"',
+        width: 1920,
+        height: 1080,
+        bitrate: 5000000,
+        framerate: 30,
+      },
+    });
+    const encoding = await navigator.mediaCapabilities.encodingInfo({
+      type: "record",
+      video: {
+        contentType: 'video/webm; codecs="vp09.00.10.08"',
+        width: 1920,
+        height: 1080,
+        bitrate: 5000000,
+        framerate: 30,
+      },
+    });
+    return {
+      skipped: false,
+      decodingSupported: decoding.supported,
+      decodingSmooth: decoding.smooth,
+      decodingPowerEfficient: decoding.powerEfficient,
+      encodingSupported: encoding.supported,
+      encodingSmooth: encoding.smooth,
+      encodingPowerEfficient: encoding.powerEfficient,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.decodingSupported).toBe(true);
+  expect(result.decodingSmooth).toBe(true);
+  expect(result.decodingPowerEfficient).toBe(true);
+  expect(result.encodingSupported).toBe(true);
+  expect(result.encodingSmooth).toBe(true);
+  expect(result.encodingPowerEfficient).toBe(true);
+});
+
+test("Fingerprint masking hides WebGPU adapter behind null", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const result = await page.evaluate(async () => {
+    if (!navigator.gpu) return { skipped: true };
+    const adapter = await navigator.gpu.requestAdapter();
+    return { skipped: false, adapter };
+  });
+
+  if (result.skipped) return;
+  expect(result.adapter).toBeNull();
+});
+
+test("Fingerprint masking hides hardware availability APIs", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const result = await page.evaluate(() => ({
+    bluetooth: navigator.bluetooth,
+    hid: navigator.hid,
+    presentation: navigator.presentation,
+    serial: navigator.serial,
+    usb: navigator.usb,
+    wakeLock: navigator.wakeLock,
+    xr: navigator.xr,
+  }));
+
+  expect(result.bluetooth).toBeUndefined();
+  expect(result.hid).toBeUndefined();
+  expect(result.presentation).toBeUndefined();
+  expect(result.serial).toBeUndefined();
+  expect(result.usb).toBeUndefined();
+  expect(result.wakeLock).toBeUndefined();
+  expect(result.xr).toBeUndefined();
+});

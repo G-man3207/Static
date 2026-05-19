@@ -509,6 +509,7 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
   expect(captchaFilters.has("||hcaptcha.net^"), "captcha_vendors missing hCaptcha net").toBe(true);
 
   for (const filter of [
+    "||api.datadome.co^",
     "||api.fpjs.io^",
     "||api.fpjs.pro^",
     "||biocatch.com^",
@@ -520,7 +521,9 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||clear.sale^",
     "||datadome.co^",
     "||datadome.io^",
+    "||events.api.sift.com^",
     "||feedzai.com^",
+    "||fingerprint.com^",
     "||fingerprintjs.com^",
     "||forter.com^",
     "||fpcdn.io^",
@@ -535,12 +538,14 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||humansecurity.com^",
     "||imperva.com^",
     "||incapsula.com^",
+    "||js.datadome.co^",
     "||kasada.io^",
     "||kasada.net^",
     "||kount.com^",
     "||kount.net^",
     "||nudatasecurity.com^",
     "||openfpcdn.io^",
+    "||perimeterx.com^",
     "||perimeterx.net^",
     "||px-cdn.net^",
     "||px-cloud.net^",
