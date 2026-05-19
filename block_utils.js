@@ -200,12 +200,17 @@
     return {
       post: (type, payload) => {
         if (payload == null) {
+          const msg = { type };
           if (port) {
             try {
-              port.postMessage({ type });
+              port.postMessage(msg);
+              return;
             } catch {
               port = null;
             }
+          }
+          if (queued.length < maxQueue) {
+            queued.push(msg);
           }
           return;
         }

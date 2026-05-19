@@ -54,7 +54,6 @@
   const DOM_MARKER_CLASS_RE =
     /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-))/i;
   const adaptiveWindows = new Map();
-  const queuedSignals = [];
   const reportedVendorSignals = new Set();
   const instrumentedFingerprintGlobals = new WeakSet();
   const instrumentedSiftQueues = new WeakSet();
@@ -75,7 +74,6 @@
     sift: { account: false, scriptUrl: "", source: "", trackPageview: false },
   };
   let disabled = false;
-  let bridgePort = null;
   let activeAdaptiveSource = "";
   const asyncSourceWrappers = new WeakMap();
   const eventListenerWrappers = new WeakMap();
@@ -90,57 +88,16 @@
       : [],
   });
 
+  const bridge = U.setupBridge(BRIDGE_EVENT, MAX_QUEUED_SIGNALS, (data) => {
+    if (data && data.type === "config_update" && data.disabled != null) {
+      disabled = !!data.disabled;
+    }
+  });
+
   const postAdaptiveSignal = (signal) => {
     if (disabled) return;
-    const safeSignal = sanitizeSignal(signal);
-    if (bridgePort) {
-      try {
-        bridgePort.postMessage({ type: "adaptive_signal", signal: safeSignal });
-        return;
-      } catch {
-        bridgePort = null;
-      }
-    }
-    if (queuedSignals.length < MAX_QUEUED_SIGNALS) {
-      queuedSignals.push(safeSignal);
-    }
+    bridge.post("adaptive_signal", { signal: sanitizeSignal(signal) });
   };
-
-  const flushQueuedSignals = () => {
-    if (!bridgePort) return;
-    const batch = queuedSignals.splice(0, queuedSignals.length);
-    for (const signal of batch) {
-      try {
-        bridgePort.postMessage({ type: "adaptive_signal", signal });
-      } catch {
-        bridgePort = null;
-        return;
-      }
-    }
-  };
-
-  const onBridgeInit = (event) => {
-    if (bridgePort) return;
-    const port = event && event.ports && event.ports[0];
-    if (!port || typeof port.postMessage !== "function") return;
-
-    try {
-      event.stopImmediatePropagation();
-    } catch {}
-    bridgePort = port;
-    try {
-      bridgePort.start();
-    } catch {}
-    bridgePort.onmessage = (event) => {
-      const msg = event && event.data;
-      if (msg && msg.type === "config_update" && msg.disabled != null) {
-        disabled = !!msg.disabled;
-      }
-    };
-    flushQueuedSignals();
-    document.removeEventListener(BRIDGE_EVENT, onBridgeInit);
-  };
-  document.addEventListener(BRIDGE_EVENT, onBridgeInit);
 
   const redactPathSegment = (segment) => {
     if (!segment) return segment;
