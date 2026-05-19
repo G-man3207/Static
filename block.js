@@ -44,20 +44,10 @@
     description: "",
     icons: { 16: "icon.png", 48: "icon.png", 128: "icon.png" },
   };
-  const IMAGE_DECOY_PATHS = [
-    /(?:^|\/)(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
-    /(?:^|\/)(?:icons?|images?|img)\/(?:[^/]+\/)*(?:icon|logo|badge|action|browser_action|page_action)(?:[-_. ]?(?:\d{1,4}|small|medium|large|default))?\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
-    /(?:^|\/)(?:16|19|24|32|38|48|64|96|128|256|512)\.(?:png|jpe?g|gif|webp|ico|bmp|svg)$/i,
-  ];
-  const SCRIPT_DECOY_PATHS = [
-    /(?:^|\/)(?:content(?:[-_. ]script)?|inject(?:ed)?|background(?:[-_. ]page)?|bundle|main|page|popup|options|index)(?:[-_. ]?[a-z0-9]+)?\.(?:m?js)$/i,
-  ];
-  const HTML_DECOY_PATHS = [
-    /(?:^|\/)(?:page|popup|options|background|index)(?:[-_. ]?[a-z0-9]+)?\.(?:html|htm)$/i,
-  ];
-  const STYLE_DECOY_PATHS = [
-    /(?:^|\/)(?:style|styles|content|popup|options|main|index)(?:[-_. ]?[a-z0-9]+)?\.css$/i,
-  ];
+  const IMAGE_DECOY_PATHS = U.IMAGE_DECOY_PATHS;
+  const SCRIPT_DECOY_PATHS = U.SCRIPT_DECOY_PATHS;
+  const HTML_DECOY_PATHS = U.HTML_DECOY_PATHS;
+  const STYLE_DECOY_PATHS = U.STYLE_DECOY_PATHS;
   const fakeXhrResponses = new WeakMap();
   const fakeFetchResponses = new WeakMap();
 
@@ -141,16 +131,9 @@
     }
   };
 
-  const pathForDecoy = (url) => {
-    try {
-      return new URL(url).pathname.toLowerCase();
-    } catch {
-      return "";
-    }
-  };
+  const pathForDecoy = U.pathFor;
 
-  const matchesPathPattern = (pathname, patterns) =>
-    patterns.some((pattern) => pattern.test(pathname));
+  const matchesPathPattern = U.matchesPathPattern;
 
   const decoyKindForPath = (url) => {
     const pathname = pathForDecoy(url);

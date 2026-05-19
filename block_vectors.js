@@ -20,25 +20,13 @@
     bridge.post("probe_blocked", { url: safeUrl, where: safeWhere });
   };
 
-  const firstBadUrlIn = (input) => {
-    try {
-      if (U.isBad(input)) return U.getUrl(input);
-      const match = String(input == null ? "" : input).match(U.BAD_URL_RE);
-      return match ? match[0] : "";
-    } catch {
-      return "";
-    }
-  };
-
-  const badUrlFor = (input) => (U.isBad(input) ? U.getUrl(input) : "");
-
   const bump = (where, url) => {
     try {
       postProbe(url, where);
     } catch {}
   };
 
-  const guardProp = (proto, prop, label, urlFinder = badUrlFor) => {
+  const guardProp = (proto, prop, label, urlFinder = U.badUrlFor) => {
     if (!proto) return;
     const desc = Object.getOwnPropertyDescriptor(proto, prop);
     if (!desc || !desc.set) return;
@@ -72,11 +60,11 @@
     guardProp(HTMLLinkElement.prototype, "href", "link.href");
     guardProp(HTMLScriptElement.prototype, "src", "script.src");
     guardProp(HTMLImageElement.prototype, "src", "img.src");
-    guardProp(HTMLImageElement.prototype, "srcset", "img.srcset", firstBadUrlIn);
+    guardProp(HTMLImageElement.prototype, "srcset", "img.srcset", U.firstBadUrlIn);
     guardProp(HTMLIFrameElement.prototype, "src", "iframe.src");
     if (typeof HTMLAnchorElement !== "undefined") {
       guardProp(HTMLAnchorElement.prototype, "href", "anchor.href");
-      guardProp(HTMLAnchorElement.prototype, "ping", "anchor.ping", firstBadUrlIn);
+      guardProp(HTMLAnchorElement.prototype, "ping", "anchor.ping", U.firstBadUrlIn);
     }
     if (typeof HTMLAreaElement !== "undefined") {
       guardProp(HTMLAreaElement.prototype, "href", "area.href");
@@ -105,7 +93,7 @@
     }
     if (typeof HTMLSourceElement !== "undefined") {
       guardProp(HTMLSourceElement.prototype, "src", "source.src");
-      guardProp(HTMLSourceElement.prototype, "srcset", "source.srcset", firstBadUrlIn);
+      guardProp(HTMLSourceElement.prototype, "srcset", "source.srcset", U.firstBadUrlIn);
     }
     if (typeof HTMLEmbedElement !== "undefined") {
       guardProp(HTMLEmbedElement.prototype, "src", "embed.src");
@@ -168,14 +156,9 @@
   };
 
   const attrGuard = (origFn, label, name, length) => {
-    const attrLocalName = (attrName) => {
-      const normalized = String(attrName || "").toLowerCase();
-      const colon = normalized.lastIndexOf(":");
-      return colon === -1 ? normalized : normalized.slice(colon + 1);
-    };
     const blockedAttrUrl = (attrName, value) => {
-      const localName = attrLocalName(attrName);
-      if (localName === "ping") return firstBadUrlIn(value);
+      const localName = U.attrLocalName(null, attrName);
+      if (localName === "ping") return U.firstBadUrlIn(value);
       if (
         localName === "src" ||
         localName === "href" ||
@@ -184,10 +167,10 @@
         localName === "action" ||
         localName === "formaction"
       ) {
-        return badUrlFor(value);
+        return U.badUrlFor(value);
       }
       if (localName === "srcset") {
-        return firstBadUrlIn(value);
+        return U.firstBadUrlIn(value);
       }
       return "";
     };
@@ -503,7 +486,7 @@
       [name](...args) {
         if (disabled) return orig.apply(this, args);
         const target = name === "addRule" ? `${args[0] || ""} ${args[1] || ""}` : args[0];
-        const url = firstBadUrlIn(target);
+        const url = U.firstBadUrlIn(target);
         if (url) {
           bump(label, url);
           return onBlocked.call(this, args);

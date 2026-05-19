@@ -119,6 +119,37 @@ const loadBridgeHarness = () => {
   };
 };
 
+const loadBlockUtils = () => {
+  const documentListeners = {};
+  const addListener = (type, fn) => {
+    (documentListeners[type] ||= []).push(fn);
+  };
+  const dispatchDocument = (type, event = { type, ports: [] }) => {
+    for (const fn of documentListeners[type] || []) fn(event);
+  };
+  const context = vm.createContext({
+    URL,
+    globalThis: {},
+    document: {
+      addEventListener: addListener,
+      removeEventListener(type, fn) {
+        documentListeners[type] = (documentListeners[type] || []).filter(
+          (listener) => listener !== fn
+        );
+      },
+    },
+    Object,
+    Function,
+    TextEncoder,
+    TextDecoder,
+    WeakMap,
+    Set,
+    Reflect,
+  });
+  vm.runInContext(readText("block_utils.js"), context);
+  return { U: context.globalThis.__static_block_utils__, dispatchDocument };
+};
+
 const extensionIdFor = (index) => {
   const alphabet = "abcdefghijklmnop";
   let n = index;
@@ -666,4 +697,111 @@ test("conflictSlots include Honey in the shopping slot", () => {
   vm.runInContext(readText("lists.js"), context);
   const slots = context.__static_config__.conflictSlots;
   expect(slots.shopping).toContain("bmnlcjabgnpnenekpadlanbbkooimhnj");
+});
+
+// =========================================================================
+// Shared block_utils.js utility tests
+// =========================================================================
+
+test("block_utils exposes shared decoy path constants as arrays of RegExp", () => {
+  const { U } = loadBlockUtils();
+  const isRegExp = (v) => Object.prototype.toString.call(v) === "[object RegExp]";
+  expect(Array.isArray(U.IMAGE_DECOY_PATHS)).toBe(true);
+  expect(U.IMAGE_DECOY_PATHS.length).toBeGreaterThan(0);
+  for (const re of U.IMAGE_DECOY_PATHS) expect(isRegExp(re)).toBe(true);
+
+  expect(Array.isArray(U.SCRIPT_DECOY_PATHS)).toBe(true);
+  expect(U.SCRIPT_DECOY_PATHS.length).toBeGreaterThan(0);
+  for (const re of U.SCRIPT_DECOY_PATHS) expect(isRegExp(re)).toBe(true);
+
+  expect(Array.isArray(U.HTML_DECOY_PATHS)).toBe(true);
+  expect(U.HTML_DECOY_PATHS.length).toBeGreaterThan(0);
+  for (const re of U.HTML_DECOY_PATHS) expect(isRegExp(re)).toBe(true);
+
+  expect(Array.isArray(U.STYLE_DECOY_PATHS)).toBe(true);
+  expect(U.STYLE_DECOY_PATHS.length).toBeGreaterThan(0);
+  for (const re of U.STYLE_DECOY_PATHS) expect(isRegExp(re)).toBe(true);
+});
+
+test("U.firstBadUrlIn extracts extension URL from plain URL strings", () => {
+  const { U } = loadBlockUtils();
+  expect(U.firstBadUrlIn("chrome-extension://abcabcabcabcabcabcabcabcabcabcab/popup.js")).toBe(
+    "chrome-extension://abcabcabcabcabcabcabcabcabcabcab/popup.js"
+  );
+  expect(U.firstBadUrlIn("https://example.com")).toBe("");
+  expect(U.firstBadUrlIn("")).toBe("");
+  expect(U.firstBadUrlIn(null)).toBe("");
+});
+
+test("U.firstBadUrlIn extracts extension URL embedded in larger strings", () => {
+  const { U } = loadBlockUtils();
+  const url = "chrome-extension://abcabcabcabcabcabcabcabcabcabcab/script.js";
+  expect(U.firstBadUrlIn(`before ${url} after`)).toBe(url);
+  expect(U.firstBadUrlIn(`url(${url})`)).toBe(url);
+});
+
+test("U.attrLocalName strips namespace prefix via colon-split", () => {
+  const { U } = loadBlockUtils();
+  expect(U.attrLocalName(null, "xlink:href")).toBe("href");
+  expect(U.attrLocalName(null, "svg:src")).toBe("src");
+  expect(U.attrLocalName(null, "href")).toBe("href");
+  expect(U.attrLocalName(null, "SRC")).toBe("src");
+  expect(U.attrLocalName(null, "")).toBe("");
+  expect(U.attrLocalName(null)).toBe("");
+  expect(U.attrLocalName(null, 123)).toBe("");
+});
+
+test("U.attrLocalName preserves data-* and style attribute names", () => {
+  const { U } = loadBlockUtils();
+  expect(U.attrLocalName(null, "data-foo")).toBe("data-foo");
+  expect(U.attrLocalName(null, "DATA-bar")).toBe("data-bar");
+  expect(U.attrLocalName(null, "style")).toBe("style");
+  expect(U.attrLocalName(null, "class")).toBe("class");
+});
+
+test("U.pathFor extracts lowercased pathname from URL", () => {
+  const { U } = loadBlockUtils();
+  expect(U.pathFor("https://example.com/Path/Icon-48.png")).toBe("/path/icon-48.png");
+  expect(U.pathFor("chrome-extension://abc/Manifest.json")).toBe("/manifest.json");
+  expect(U.pathFor("")).toBe("");
+  expect(U.pathFor("not-a-url")).toBe("");
+});
+
+test("U.matchesPathPattern checks pathname against regex array", () => {
+  const { U } = loadBlockUtils();
+  expect(U.matchesPathPattern("/icon-48.png", U.IMAGE_DECOY_PATHS)).toBe(true);
+  expect(U.matchesPathPattern("/icons/logo.svg", U.IMAGE_DECOY_PATHS)).toBe(true);
+  expect(U.matchesPathPattern("/main.js", U.IMAGE_DECOY_PATHS)).toBe(false);
+  expect(U.matchesPathPattern("/content.js", U.SCRIPT_DECOY_PATHS)).toBe(true);
+  expect(U.matchesPathPattern("/popup.html", U.HTML_DECOY_PATHS)).toBe(true);
+  expect(U.matchesPathPattern("/styles/main.css", U.STYLE_DECOY_PATHS)).toBe(true);
+});
+
+test("setupBridge.post handles both payload and null-payload consistently", () => {
+  const { U, dispatchDocument } = loadBlockUtils();
+  let received = null;
+  const bus = {
+    postMessage(msg) {
+      received = msg;
+    },
+    start() {},
+  };
+  // Create bridge first, then simulate connection
+  const bridge = U.setupBridge("__test_post__", 100, () => {});
+  dispatchDocument("__test_post__", { ports: [bus], type: "__test_post__" });
+  bridge.post("test_type", null);
+  expect(received).toEqual({ type: "test_type" });
+  received = null;
+  bridge.post("test_type", { key: "value" });
+  expect(received).toEqual({ type: "test_type", key: "value" });
+});
+
+test("block_utils must load first — referenced from all block scripts via __static_block_utils__", () => {
+  const manifest = readJson("manifest.json");
+  const mainScripts = manifest.content_scripts[0].js;
+  expect(mainScripts[0]).toBe("block_utils.js");
+  for (let i = 1; i < mainScripts.length; i++) {
+    const content = readText(mainScripts[i]);
+    expect(content).toContain("__static_block_utils__");
+  }
 });
