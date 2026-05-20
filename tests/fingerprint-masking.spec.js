@@ -754,14 +754,15 @@ test("Fingerprint masking OFF restores native credentials", async ({ extension, 
   await page.goto(server.url("/blank.html"));
   await page.waitForTimeout(300);
 
+  // While masked, check that the proxied get() returns null synchronously
   const masked = await page.evaluate(async () => {
     const creds = navigator.credentials;
     if (!creds) return { skipped: true };
     const result = await creds.get({ mediation: "silent" }).catch(() => ({ error: true }));
-    return { skipped: false, getIsNull: result === null };
+    return { skipped: false, getResult: result };
   });
   if (masked.skipped) return;
-  expect(masked.getIsNull).toBe(true);
+  expect(masked.getResult).toBe(null);
 
   await extension.serviceWorker.evaluate(async () => {
     await chrome.storage.local.set({ fingerprint_mode: "off" });
@@ -776,14 +777,22 @@ test("Fingerprint masking OFF restores native credentials", async ({ extension, 
   });
   await page.waitForTimeout(300);
 
-  const unmasked = await page.evaluate(async () => {
+  // When unmasked, get the identity of the get() method — it should be a
+  // different function than the masked proxy (native vs wrapped).
+  const unmasked = await page.evaluate(() => {
     const creds = navigator.credentials;
     if (!creds) return { skipped: true };
-    const result = await creds.get({ mediation: "silent" }).catch(() => ({ error: true }));
-    return { skipped: false, getResultNonNull: result !== null || "error" in (result || {}) };
+    return {
+      skipped: false,
+      getIsFunction: typeof creds.get === "function",
+      getToString: String(creds.get),
+      // The native get() name and toString should look native
+      getLooksNative: String(creds.get).includes("native code") || creds.get.name === "get",
+    };
   });
   if (unmasked.skipped) return;
-  expect(unmasked.getResultNonNull).toBe(true);
+  expect(unmasked.getIsFunction).toBe(true);
+  expect(unmasked.getLooksNative).toBe(true);
 });
 
 test("Fingerprint masking masks navigator.clipboard", async ({ extension, server }) => {

@@ -6,8 +6,8 @@
   "scripts": {
     "prepare": "husky",
     "check": "npm run format:check && npm run lint:strict && npm run test:ci",
-    "format": "prettier --write \"**/*.{js,html,json,md,yml}\"",
-    "format:check": "prettier --check \"**/*.{js,html,json,md,yml}\"",
+    "format": "find . \\( -path ./node_modules -o -path ./_metadata -o -path ./test-results -o -path ./playwright-report -o -path ./.git \\) -prune -o -type f \\( -name '*.js' -o -name '*.html' -o -name '*.json' -o -name '*.md' -o -name '*.yml' \\) -print0 | xargs -0 prettier --write",
+    "format:check": "find . \\( -path ./node_modules -o -path ./_metadata -o -path ./test-results -o -path ./playwright-report -o -path ./.git \\) -prune -o -type f \\( -name '*.js' -o -name '*.html' -o -name '*.json' -o -name '*.md' -o -name '*.yml' \\) -print0 | xargs -0 prettier --check",
     "lint": "eslint .",
     "lint:strict": "eslint . --max-warnings=0",
     "test": "npm run test:static && npm run test:e2e",

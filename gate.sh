@@ -98,7 +98,7 @@ node -e "
 # ---------------------------------------------------------------------------
 if $RUN_LINT || $RUN_FAST; then
   header "Prettier format check"
-  npx prettier --check '**/*.{js,html,json,md,yml}' 2>&1 && pass "Formatting" || fail "Formatting"
+  find . \( -path ./node_modules -o -path ./_metadata -o -path ./test-results -o -path ./playwright-report -o -path ./.git \) -prune -o -type f \( -name '*.js' -o -name '*.html' -o -name '*.json' -o -name '*.md' -o -name '*.yml' \) -print0 | xargs -0 npx prettier --check 2>&1 && pass "Formatting" || fail "Formatting"
 fi
 
 # ---------------------------------------------------------------------------
