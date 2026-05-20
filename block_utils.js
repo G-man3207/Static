@@ -184,6 +184,17 @@
   // DOM / attribute utilities
   // ======================================================================
 
+  U.readPolicyFeatures = (policy) => {
+    if (!policy) return [];
+    try {
+      if (typeof policy.features === "function") return policy.features();
+    } catch {}
+    try {
+      if (typeof policy.allowedFeatures === "function") return policy.allowedFeatures();
+    } catch {}
+    return [];
+  };
+
   U.attrLocalName = (el, name) => {
     if (typeof name !== "string") return "";
     const lower = name.toLowerCase();

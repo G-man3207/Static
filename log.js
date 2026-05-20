@@ -2,6 +2,7 @@
 // Probe-log viewer. Loads the full log from the service worker and renders a
 // searchable table of origins; each row expands to show per-ID probe counts
 // for that origin. Also handles Export / Clear.
+const SW = globalThis.__static_sw_utils__ || {};
 const fmt = (n) => n.toLocaleString();
 const fmtDate = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
 const LOG_DIAGNOSTICS = globalThis.__static_log_diagnostics__ || {};
@@ -159,179 +160,6 @@ const totalProbesFor = (entry) => {
 
 const sortedCountEntries = (counts) =>
   Object.entries(counts || {}).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-
-const sumCounts = (counts) => {
-  let total = 0;
-  for (const value of Object.values(counts || {})) {
-    if (typeof value === "number" && value > 0) total += value;
-  }
-  return total;
-};
-
-const mergeCounts = (target, source) => {
-  for (const [key, value] of Object.entries(source || {})) {
-    if (typeof value === "number" && value > 0) target[key] = (target[key] || 0) + value;
-  }
-};
-
-const latestPlaybookComparison = (entry) => {
-  const weeks = entry && entry.playbook && entry.playbook.weeks;
-  if (!weeks) return null;
-  const keys = Object.keys(weeks).sort();
-  if (keys.length === 0) return null;
-  const latestKey = keys[keys.length - 1];
-  const current = weeks[latestKey];
-  const baseline = { total: 0, vectorCounts: {}, pathKindCounts: {}, idCounts: {} };
-  for (const key of keys.slice(0, -1)) {
-    const week = weeks[key] || {};
-    baseline.total += week.total || 0;
-    mergeCounts(baseline.vectorCounts, week.vectorCounts);
-    mergeCounts(baseline.pathKindCounts, week.pathKindCounts);
-    mergeCounts(baseline.idCounts, week.idCounts);
-  }
-  return { latestKey, current, baseline };
-};
-
-const distributionShift = (a, b) => {
-  const totalA = sumCounts(a);
-  const totalB = sumCounts(b);
-  if (totalA === 0 || totalB === 0) return 0;
-  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
-  let sum = 0;
-  for (const key of keys) {
-    sum += Math.abs(((a && a[key]) || 0) / totalA - ((b && b[key]) || 0) / totalB);
-  }
-  return sum / 2;
-};
-
-const repeatedIdSet = (counts) =>
-  new Set(
-    Object.entries(counts || {})
-      .filter(([, count]) => count >= 2)
-      .map(([id]) => id)
-  );
-
-const jaccardDistance = (a, b) => {
-  if (a.size === 0 && b.size === 0) return 0;
-  let intersection = 0;
-  for (const value of a) {
-    if (b.has(value)) intersection++;
-  }
-  return 1 - intersection / new Set([...a, ...b]).size;
-};
-
-const percent = (n) => Math.round(n * 100);
-
-const newKeys = (current, baseline, minCount) =>
-  Object.entries(current || {})
-    .filter(([key, count]) => count >= minCount && !baseline[key])
-    .map(([key]) => key);
-
-const addShiftScore = (shift) => {
-  const { state } = shift;
-  if (shift.value >= shift.high) {
-    state.score += shift.highScore;
-    state.reasons.push(shift.reason);
-  } else if (shift.value >= shift.medium) {
-    state.score += shift.mediumScore;
-    state.reasons.push(shift.reason);
-  }
-};
-
-const addPlaybookDriftSignals = (state, current, baseline) => {
-  const vectorShift = distributionShift(current.vectorCounts, baseline.vectorCounts);
-  addShiftScore({
-    state,
-    value: vectorShift,
-    high: 0.35,
-    medium: 0.2,
-    highScore: 3,
-    mediumScore: 2,
-    reason: `Probe vector mix changed by ${percent(vectorShift)}%.`,
-  });
-  const addedVectors = newKeys(current.vectorCounts, baseline.vectorCounts, 3);
-  if (addedVectors.length > 0) {
-    state.score += 2;
-    state.reasons.push(`New probe vectors appeared: ${addedVectors.slice(0, 4).join(", ")}.`);
-  }
-
-  const pathShift = distributionShift(current.pathKindCounts, baseline.pathKindCounts);
-  addShiftScore({
-    state,
-    value: pathShift,
-    high: 0.35,
-    medium: 0.2,
-    highScore: 2,
-    mediumScore: 1,
-    reason: `Extension-resource path strategy changed by ${percent(pathShift)}%.`,
-  });
-  const addedPathKinds = newKeys(current.pathKindCounts, baseline.pathKindCounts, 3);
-  if (addedPathKinds.length > 0) {
-    state.score += 1;
-    state.reasons.push(`New path kinds appeared: ${addedPathKinds.slice(0, 4).join(", ")}.`);
-  }
-};
-
-const addIdDriftSignals = (state, current, baseline) => {
-  const currentIds = repeatedIdSet(current.idCounts);
-  const baselineIds = repeatedIdSet(baseline.idCounts);
-  const idShift = jaccardDistance(currentIds, baselineIds);
-  if (currentIds.size >= 5) {
-    addShiftScore({
-      state,
-      value: idShift,
-      high: 0.6,
-      medium: 0.35,
-      highScore: 2,
-      mediumScore: 1,
-      reason: `Repeated extension-ID dictionary changed by ${percent(idShift)}%.`,
-    });
-  }
-
-  const uniqueIds = Object.keys(current.idCounts || {}).length;
-  const singletonIds = Object.values(current.idCounts || {}).filter((count) => count === 1).length;
-  const canaryPressure = uniqueIds ? singletonIds / uniqueIds : 0;
-  if (uniqueIds >= 10 && canaryPressure >= 0.35) {
-    state.score += 2;
-    state.reasons.push(
-      `One-shot ID pressure is high: ${percent(canaryPressure)}% of IDs were single-hit.`
-    );
-  }
-};
-
-const driftResultFor = (score, latestKey, reasons) => {
-  if (score >= 5) return { level: "high", label: "High drift", week: latestKey, reasons };
-  if (score >= 3) return { level: "changed", label: "Changed", week: latestKey, reasons };
-  return {
-    level: "stable",
-    label: "Stable",
-    week: latestKey,
-    reasons: ["No meaningful change from this origin's previous probe behavior."],
-  };
-};
-
-const playbookDriftForEntry = (entry) => {
-  const comparison = latestPlaybookComparison(entry);
-  if (!comparison) {
-    return { level: "learning", label: "Learning", reasons: ["No playbook summary yet."] };
-  }
-  const { latestKey, current, baseline } = comparison;
-  const currentTotal = current.total || 0;
-  const baselineTotal = baseline.total || 0;
-  if (currentTotal < 20 || baselineTotal < 20) {
-    return {
-      level: "learning",
-      label: "Learning",
-      week: latestKey,
-      reasons: ["Needs at least 20 probes in the latest week and baseline before scoring drift."],
-    };
-  }
-
-  const state = { score: 0, reasons: [] };
-  addPlaybookDriftSignals(state, current, baseline);
-  addIdDriftSignals(state, current, baseline);
-  return driftResultFor(state.score, latestKey, state.reasons);
-};
 
 const buildDriftPill = (drift) => {
   const span = document.createElement("span");
@@ -700,7 +528,7 @@ const buildOriginDetail = (entry, drift, severity, rank) => {
   box.appendChild(buildSeverityDetail(severity, rank));
   box.appendChild(buildDriftDetail(drift));
   const playbook = LOG_DIAGNOSTICS.buildPlaybookDetail
-    ? LOG_DIAGNOSTICS.buildPlaybookDetail(entry, latestPlaybookComparison(entry))
+    ? LOG_DIAGNOSTICS.buildPlaybookDetail(entry, SW.latestPlaybookComparison(entry))
     : null;
   if (playbook) box.appendChild(playbook);
   if (LOG_DIAGNOSTICS.buildNoiseReadinessDetail) {
@@ -751,7 +579,7 @@ const originMatches = (origin, entry, filter) => {
 let fullData = null;
 
 const rankedEntryFor = (origin, entry) => {
-  const drift = playbookDriftForEntry(entry);
+  const drift = SW.playbookDriftForEntry(entry);
   const severity = severityForEntry(entry, drift);
   return { drift, entry, origin, severity };
 };
