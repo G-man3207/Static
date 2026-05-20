@@ -700,6 +700,7 @@
       getParameter(parameter) {
         if (isMasking()) {
           const numeric = Number(parameter);
+          if (Number.isNaN(numeric)) return null;
           if (numeric === WEBGL_VENDOR || numeric === UNMASKED_VENDOR_WEBGL) {
             return persona().webglVendor;
           }
@@ -770,7 +771,7 @@
     const width = Math.max(1, Math.min(canvas.width || 1, 8192));
     const height = Math.max(1, Math.min(canvas.height || 1, 8192));
     const clone = new OffscreenCanvas(width, height);
-    const ctx = clone.getContext("2d");
+    const ctx = clone.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
     ctx.drawImage(canvas, 0, 0, width, height);
     const getImgData = nativeOffscreenGetImageData

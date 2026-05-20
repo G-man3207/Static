@@ -626,3 +626,34 @@ test("Fingerprint masking strips navigator.oscpu and navigator.buildID", async (
   if (result.oscpu !== undefined) expect(result.oscpu).toBe("");
   if (result.buildID !== undefined) expect(result.buildID).toBe("");
 });
+
+test("Fingerprint masking silently returns null for non-numeric WebGL getParameter", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl");
+    if (!gl) return { skipped: true };
+
+    const invalidString = gl.getParameter("not_a_number");
+    const invalidUndefined = gl.getParameter(undefined);
+    const validVendor = gl.getParameter(gl.VENDOR);
+
+    return {
+      skipped: false,
+      invalidString,
+      invalidUndefined,
+      validVendor: typeof validVendor === "string",
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.invalidString).toBeNull();
+  expect(result.invalidUndefined).toBeNull();
+  expect(result.validVendor).toBe(true);
+});
