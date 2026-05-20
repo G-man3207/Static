@@ -600,6 +600,11 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||threatmetrix.net^",
     "||typingdna.com^",
     "||we-stats.com^",
+    "||iesnare.com^",
+    "||iesnare.co.uk^",
+    "||iovation.co.uk^",
+    "||sift.co^",
+    "||distilnetworks.com^",
   ]) {
     expect(fingerprintFilters.has(filter), `fingerprint_vendors missing ${filter}`).toBe(true);
   }

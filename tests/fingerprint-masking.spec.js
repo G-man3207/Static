@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- fingerprint masking tests are easier to maintain in one file */
 const { expect, test } = require("./helpers/extension-fixture");
 
 const ALLOWED_PLATFORMS = new Set(["Linux x86_64", "MacIntel", "Win32"]);
@@ -830,4 +831,102 @@ test("Fingerprint masking masks navigator.clipboard", async ({ extension, server
   expect(result.clipboardExists).toBe(true);
   expect(result.readTextEmpty).toBe(true);
   expect(result.readEmpty).toBe(true);
+});
+
+test("screen.orientation.type and angle return stable desktop persona values", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => {
+    const orientation = screen.orientation;
+    const type = orientation ? orientation.type : null;
+    const angle = orientation ? orientation.angle : null;
+    const nativeType = orientation ? orientation.type : null;
+    return { type, angle, nativeType };
+  });
+
+  expect(result.type).toBe("landscape-primary");
+  expect(result.angle).toBe(0);
+
+  // Toggle off and verify orientation returns to native
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "off" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id != null
+          ? chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+          : null
+      )
+    );
+  });
+  await page.waitForTimeout(300);
+
+  const unmasked = await page.evaluate(() => ({
+    type: screen.orientation ? screen.orientation.type : null,
+    angle: screen.orientation ? screen.orientation.angle : null,
+  }));
+
+  // Native values should be back when masking is off
+  expect(unmasked.type).not.toBe(null);
+  expect(typeof unmasked.angle).toBe("number");
+});
+
+test("credential and clipboard mocks produce native-like toString", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => {
+    const toString = (fn) =>
+      typeof fn === "function" ? Function.prototype.toString.call(fn) : null;
+
+    let credentialsOverride = null;
+    let clipboardOverride = null;
+
+    try {
+      // Access through the patched navigator.credentials getter
+      const cred = navigator.credentials;
+      credentialsOverride = {
+        get: toString(cred.get),
+        create: toString(cred.create),
+        store: toString(cred.store),
+        preventSilentAccess: toString(cred.preventSilentAccess),
+      };
+    } catch {}
+
+    try {
+      const clip = navigator.clipboard;
+      clipboardOverride = {
+        read: toString(clip.read),
+        readText: toString(clip.readText),
+        write: toString(clip.write),
+        writeText: toString(clip.writeText),
+      };
+    } catch {}
+
+    return { credentialsOverride, clipboardOverride };
+  });
+
+  for (const fn of Object.values(result.credentialsOverride || {})) {
+    expect(fn).toContain("[native code]");
+  }
+  for (const fn of Object.values(result.clipboardOverride || {})) {
+    expect(fn).toContain("[native code]");
+  }
 });

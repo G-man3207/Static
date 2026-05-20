@@ -289,6 +289,19 @@
     patchGetter(window, "devicePixelRatio", "get devicePixelRatio", (original) =>
       screenValueFor("devicePixelRatio", original)
     );
+    if (typeof ScreenOrientation !== "undefined" && ScreenOrientation.prototype) {
+      for (const prop of ["type", "angle"]) {
+        const orientationValues = {
+          type: "landscape-primary",
+          angle: 0,
+        };
+        patchGetter(ScreenOrientation.prototype, prop, `get ${prop}`, (original) =>
+          Object.prototype.hasOwnProperty.call(orientationValues, prop)
+            ? orientationValues[prop]
+            : original
+        );
+      }
+    }
   };
 
   const maskedBrands = (brands) => {
@@ -644,7 +657,7 @@
             };
           },
           "get memory",
-          { length: 0, source: U.nativeSourceFor(() => {}, "get memory") }
+          { length: 0, source: "function get memory() { [native code] }" }
         ),
       });
     }
@@ -729,6 +742,8 @@
     }
   };
 
+  let nativeCanvasGetImageData = null;
+
   const cloneCanvasWithNoise = (canvas) => {
     const width = Math.max(1, Math.min(canvas.width || 1, 8192));
     const height = Math.max(1, Math.min(canvas.height || 1, 8192));
@@ -738,13 +753,18 @@
     const ctx = clone.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
     ctx.drawImage(canvas, 0, 0, width, height);
+    const getImgData = nativeCanvasGetImageData
+      ? nativeCanvasGetImageData.bind(ctx)
+      : ctx.getImageData.bind(ctx);
     const x = persona().canvasSeed % width;
     const y = Math.floor(persona().canvasSeed / Math.max(1, width)) % height;
-    const imageData = ctx.getImageData(x, y, 1, 1);
+    const imageData = getImgData(x, y, 1, 1);
     tweakPixels(imageData.data, persona().canvasSeed);
     ctx.putImageData(imageData, x, y);
     return clone;
   };
+
+  let nativeOffscreenGetImageData = null;
 
   const cloneOffscreenCanvasWithNoise = (canvas) => {
     const width = Math.max(1, Math.min(canvas.width || 1, 8192));
@@ -753,9 +773,12 @@
     const ctx = clone.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(canvas, 0, 0, width, height);
+    const getImgData = nativeOffscreenGetImageData
+      ? nativeOffscreenGetImageData.bind(ctx)
+      : ctx.getImageData.bind(ctx);
     const x = persona().canvasSeed % width;
     const y = Math.floor(persona().canvasSeed / Math.max(1, width)) % height;
-    const imageData = ctx.getImageData(x, y, 1, 1);
+    const imageData = getImgData(x, y, 1, 1);
     tweakPixels(imageData.data, persona().canvasSeed);
     ctx.putImageData(imageData, x, y);
     return clone;
@@ -795,10 +818,17 @@
       const imgDesc = Object.getOwnPropertyDescriptor(proto, "getImageData");
       const origGetImageData = imgDesc && imgDesc.value;
       if (typeof origGetImageData !== "function") return;
+      nativeOffscreenGetImageData = origGetImageData;
       const alreadyPatched =
         typeof CanvasRenderingContext2D !== "undefined" &&
         CanvasRenderingContext2D.prototype.getImageData === origGetImageData;
-      if (alreadyPatched) return;
+      if (alreadyPatched) {
+        nativeOffscreenGetImageData =
+          nativeCanvasGetImageData && typeof nativeCanvasGetImageData === "function"
+            ? nativeCanvasGetImageData
+            : null;
+        return;
+      }
       const wrappedGetImageData = {
         getImageData() {
           const imageData = origGetImageData.apply(this, arguments);
@@ -869,6 +899,7 @@
     );
     const origGetImageData = imageDesc && imageDesc.value;
     if (typeof origGetImageData !== "function") return;
+    nativeCanvasGetImageData = origGetImageData;
     const wrappedGetImageData = {
       getImageData() {
         const imageData = origGetImageData.apply(this, arguments);
@@ -1293,7 +1324,7 @@
                     return Promise.resolve(null);
                   },
                   prop,
-                  { length: 0, source: U.nativeSourceFor(() => {}, prop) }
+                  { length: 0, source: `function ${prop}() { [native code] }` }
                 );
               }
               if (prop === "store") {
@@ -1302,7 +1333,7 @@
                     return Promise.resolve(null);
                   },
                   "store",
-                  { length: 1, source: U.nativeSourceFor(() => {}, "store") }
+                  { length: 1, source: "function store() { [native code] }" }
                 );
               }
               if (prop === "preventSilentAccess") {
@@ -1311,7 +1342,7 @@
                     return Promise.resolve(undefined);
                   },
                   "preventSilentAccess",
-                  { length: 0, source: U.nativeSourceFor(() => {}, "preventSilentAccess") }
+                  { length: 0, source: "function preventSilentAccess() { [native code] }" }
                 );
               }
               const value = Reflect.get(target, prop, target);
@@ -1345,7 +1376,7 @@
                     return Promise.resolve(prop === "read" ? [] : "");
                   },
                   prop,
-                  { length: 0, source: U.nativeSourceFor(() => {}, prop) }
+                  { length: 0, source: `function ${prop}() { [native code] }` }
                 );
               }
               if (prop === "write" || prop === "writeText") {
@@ -1354,7 +1385,7 @@
                     return Promise.resolve();
                   },
                   prop,
-                  { length: 1, source: U.nativeSourceFor(() => {}, prop) }
+                  { length: 1, source: `function ${prop}() { [native code] }` }
                 );
               }
               const value = Reflect.get(target, prop, target);
