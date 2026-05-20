@@ -21,6 +21,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Device signal poisoning now masks `navigator.credentials`, returning a proxied CredentialsContainer that suppresses password manager and federated-credential detection (get, create, store, preventSilentAccess all return null/empty).
 - Device signal poisoning now masks `navigator.clipboard`, returning a proxied Clipboard that silently suppresses clipboard reads (read, readText, write, writeText) to prevent clipboard-API fingerprinting.
 - Playwright test coverage for new fingerprint vendor DNR rules, mediaCapabilities masking, WebGPU adapter masking, hardware availability API masking, keyboard layout masking, media device enumeration masking, permissions query standardization, matchMedia persona alignment, `uaFullVersion` high-entropy masking, credentials masking, and clipboard masking.
+- DNR fingerprint vendor rules for Iovation (iesnare.com, iesnare.co.uk, iovation.co.uk), Sift data collection API (sift.co), and Imperva/Distil Networks (distilnetworks.com), closing 5 gap domains at rule IDs 62–66.
+- Device signal poisoning now masks `screen.orientation.type` and `screen.orientation.angle`, returning stable desktop persona values (`"landscape-primary"`, `0`) to prevent screen orientation fingerprinting.
+- Playwright test coverage for `screen.orientation` masking, progressive shadow DOM rescans at runtime, and stealth `toString()` verification on credential and clipboard mock methods.
+
+### Fixed
+
+- Credential and clipboard mock methods (`credentials.get`, `credentials.create`, `credentials.store`, `credentials.preventSilentAccess`, `clipboard.read`, `clipboard.readText`, `clipboard.write`, `clipboard.writeText`) and the `performance.memory` fallback getter now return properly formatted native `[native code]` strings under `Function.prototype.toString`, closing a stealth gap where detectors could identify these mocks via non-native source-code output.
+- Canvas and OffscreenCanvas serialization paths (`toDataURL`, `toBlob`, `convertToBlob`) no longer apply double pixel perturbation, removing an inconsistency where `getImageData` and serialized output diverged in noise amplitude.
 
 ### Added
 

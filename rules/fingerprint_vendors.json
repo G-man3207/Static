@@ -1157,5 +1157,100 @@
         "other"
       ]
     }
+  },
+  {
+    "id": 62,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||iesnare.com^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 63,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||iesnare.co.uk^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 64,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||iovation.co.uk^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 65,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||sift.co^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
+  },
+  {
+    "id": 66,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||distilnetworks.com^",
+      "resourceTypes": [
+        "sub_frame",
+        "stylesheet",
+        "xmlhttprequest",
+        "ping",
+        "websocket",
+        "webtransport",
+        "image",
+        "script",
+        "other"
+      ]
+    }
   }
 ]

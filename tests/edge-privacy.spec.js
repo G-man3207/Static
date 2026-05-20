@@ -992,3 +992,57 @@ test("DOM scrubber follows open shadow roots", async ({ extension, server }) => 
     shadowCardCount: 0,
   });
 });
+
+test("scrubs DOM markers from shadow roots attached at runtime via progressive rescan", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await page.evaluate(() => {
+    const host = document.createElement("div");
+    host.setAttribute("data-grammarly-extension", "loaded");
+    host.className = "grammarly-card";
+    document.body.appendChild(host);
+
+    const root = host.attachShadow({ mode: "open" });
+    const child = document.createElement("span");
+    child.setAttribute("data-honeyextension-loaded", "true");
+    child.className = "honey-test";
+    root.appendChild(child);
+
+    const nested = document.createElement("grammarly-extension");
+    root.appendChild(nested);
+  });
+
+  // Wait for the scrubber's progressive shadow rescan (runs at 0ms, 50ms, 250ms, 1000ms)
+  await page.waitForTimeout(1200);
+
+  const scrubbed = await page.evaluate(() => {
+    const host =
+      document.querySelector("div[data-grammarly-extension]") || document.body.firstElementChild;
+    if (!host || !host.shadowRoot) return null;
+    const root = host.shadowRoot;
+    return {
+      hostData: host.hasAttribute("data-grammarly-extension"),
+      hostClass: host.classList.contains("grammarly-card"),
+      childData: root.querySelector("span")
+        ? root.querySelector("span").hasAttribute("data-honeyextension-loaded")
+        : false,
+      childClass: root.querySelector("span")
+        ? root.querySelector("span").classList.contains("honey-test")
+        : false,
+      nestedExists: !!root.querySelector("grammarly-extension"),
+    };
+  });
+
+  // After progressive rescans, DOM markers should be scrubbed
+  if (scrubbed) {
+    expect(scrubbed.hostData).toBe(false);
+    expect(scrubbed.hostClass).toBe(false);
+    expect(scrubbed.childData).toBe(false);
+    expect(scrubbed.childClass).toBe(false);
+    expect(scrubbed.nestedExists).toBe(false);
+  }
+});
