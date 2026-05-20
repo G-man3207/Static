@@ -17,7 +17,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Device signal poisoning now masks `navigator.permissions.query()` for common permissions (notifications, clipboard-read, clipboard-write, midi, midi-sysex), returning a standardized `"prompt"` state.
 - Device signal poisoning now aligns `window.matchMedia()` results with the desktop persona: `(hover: hover)`, `(pointer: fine)`, `(prefers-color-scheme: light)` match while their opposites do not.
 - Device signal poisoning now masks `uaFullVersion` in `navigator.userAgentData.getHighEntropyValues()`, returning `"120.0.0.0"` for consistency with the masked user agent string.
-- Playwright test coverage for new fingerprint vendor DNR rules, mediaCapabilities masking, WebGPU adapter masking, hardware availability API masking, keyboard layout masking, media device enumeration masking, permissions query standardization, matchMedia persona alignment, and `uaFullVersion` high-entropy masking.
+- DNR fingerprint vendor rule for `ipqualityscore.com` (IPQualityScore device fingerprinting), closing a gap at rule ID 55.
+- Device signal poisoning now masks `navigator.credentials`, returning a proxied CredentialsContainer that suppresses password manager and federated-credential detection (get, create, store, preventSilentAccess all return null/empty).
+- Device signal poisoning now masks `navigator.clipboard`, returning a proxied Clipboard that silently suppresses clipboard reads (read, readText, write, writeText) to prevent clipboard-API fingerprinting.
+- Playwright test coverage for new fingerprint vendor DNR rules, mediaCapabilities masking, WebGPU adapter masking, hardware availability API masking, keyboard layout masking, media device enumeration masking, permissions query standardization, matchMedia persona alignment, `uaFullVersion` high-entropy masking, credentials masking, and clipboard masking.
 
 ### Added
 

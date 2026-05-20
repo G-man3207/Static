@@ -697,3 +697,128 @@ test("Fingerprint masking masks performance.memory", async ({ extension, server 
   expect(result.totalJSHeapSize).toBe(12345678);
   expect(result.usedJSHeapSize).toBe(9876543);
 });
+
+test("Fingerprint masking masks navigator.credentials", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const result = await page.evaluate(async () => {
+    const creds = navigator.credentials;
+    if (!creds) return { skipped: true };
+    const getResult = await creds.get({ mediation: "silent" }).catch(() => ({ error: true }));
+    const preventResult = await creds.preventSilentAccess().catch(() => ({ error: true }));
+    const createResult = await creds.create({ publicKey: {} }).catch(() => ({ error: true }));
+    const storeResult = await creds.store({ id: "test" }).catch(() => ({ error: true }));
+    return {
+      skipped: false,
+      getIsNull: getResult === null,
+      preventIsUndefined: preventResult === undefined,
+      createIsNull: createResult === null,
+      storeIsNull: storeResult === null,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.getIsNull).toBe(true);
+  expect(result.preventIsUndefined).toBe(true);
+  expect(result.createIsNull).toBe(true);
+  expect(result.storeIsNull).toBe(true);
+});
+
+test("Fingerprint masking OFF restores native credentials", async ({ extension, server }) => {
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const masked = await page.evaluate(async () => {
+    const creds = navigator.credentials;
+    if (!creds) return { skipped: true };
+    const result = await creds.get({ mediation: "silent" }).catch(() => ({ error: true }));
+    return { skipped: false, getIsNull: result === null };
+  });
+  if (masked.skipped) return;
+  expect(masked.getIsNull).toBe(true);
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "off" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+  await page.waitForTimeout(300);
+
+  const unmasked = await page.evaluate(async () => {
+    const creds = navigator.credentials;
+    if (!creds) return { skipped: true };
+    const result = await creds.get({ mediation: "silent" }).catch(() => ({ error: true }));
+    return { skipped: false, getResultNonNull: result !== null || "error" in (result || {}) };
+  });
+  if (unmasked.skipped) return;
+  expect(unmasked.getResultNonNull).toBe(true);
+});
+
+test("Fingerprint masking masks navigator.clipboard", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const result = await page.evaluate(async () => {
+    const clipboard = navigator.clipboard;
+    if (!clipboard) return { skipped: true };
+    const readTextResult = await clipboard.readText().catch(() => null);
+    const readResult = await clipboard.read().catch(() => null);
+    await clipboard.writeText("").catch(() => {});
+    await clipboard.write([]).catch(() => {});
+    return {
+      skipped: false,
+      clipboardExists: true,
+      readTextEmpty: readTextResult === "",
+      readEmpty: Array.isArray(readResult) && readResult.length === 0,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.clipboardExists).toBe(true);
+  expect(result.readTextEmpty).toBe(true);
+  expect(result.readEmpty).toBe(true);
+});
