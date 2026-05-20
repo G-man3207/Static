@@ -41,26 +41,15 @@
 
   U.setupBridge(BRIDGE_EVENT, 1000, applyConfigUpdate);
 
-  const readPolicyFeatures = (policy) => {
-    if (!policy) return [];
-    try {
-      if (typeof policy.features === "function") return policy.features();
-    } catch {}
-    try {
-      if (typeof policy.allowedFeatures === "function") return policy.allowedFeatures();
-    } catch {}
-    return [];
-  };
-
   const getSupportedAllowFeatures = () => {
     if (supportedAllowFeatures) return supportedAllowFeatures;
     const supported = [];
     try {
-      supported.push(...readPolicyFeatures(document.featurePolicy || document.permissionsPolicy));
+      supported.push(...U.readPolicyFeatures(document.featurePolicy || document.permissionsPolicy));
     } catch {}
     if (!supported.length && typeof document.createElement === "function") {
       try {
-        supported.push(...readPolicyFeatures(document.createElement("iframe").featurePolicy));
+        supported.push(...U.readPolicyFeatures(document.createElement("iframe").featurePolicy));
       } catch {}
     }
     supportedAllowFeatures = new Set(supported.map((feature) => String(feature).toLowerCase()));

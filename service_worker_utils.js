@@ -347,6 +347,7 @@ globalThis.__static_sw_utils__ = (() => {
   return {
     enforceCaps,
     ensurePlaybookWeek,
+    latestPlaybookComparison,
     latestPlaybookSnapshot,
     mergeCounts,
     personaDiagnosticsFor,

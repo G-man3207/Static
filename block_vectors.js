@@ -1,4 +1,3 @@
-/* eslint-disable max-lines -- MAIN-world vector shims are safer kept contiguous */
 // Static - MAIN-world blocking for extension probe vectors beyond fetch/XHR.
 (() => {
   const U = globalThis.__static_block_utils__;
@@ -103,28 +102,19 @@
     }
   };
 
-  const readPolicyFeatures = (policy) => {
-    if (!policy) return [];
-    try {
-      if (typeof policy.features === "function") return policy.features();
-    } catch {}
-    try {
-      if (typeof policy.allowedFeatures === "function") return policy.allowedFeatures();
-    } catch {}
-    return [];
-  };
-
   const getSupportedIframeAllowFeatures = (() => {
     let cached = null;
     return () => {
       if (cached) return cached;
       const supported = [];
       try {
-        supported.push(...readPolicyFeatures(document.featurePolicy || document.permissionsPolicy));
+        supported.push(
+          ...U.readPolicyFeatures(document.featurePolicy || document.permissionsPolicy)
+        );
       } catch {}
       if (!supported.length) {
         try {
-          supported.push(...readPolicyFeatures(document.createElement("iframe").featurePolicy));
+          supported.push(...U.readPolicyFeatures(document.createElement("iframe").featurePolicy));
         } catch {}
       }
       cached = new Set(supported.map((feature) => String(feature).toLowerCase()));
