@@ -30,10 +30,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 - Deduplicated the common font list used by `FontFaceSet.check()` and `FontFaceSet` iteration/mutation methods in `block_fingerprint.js`, consolidating to a single shared set to reduce maintenance burden.
 - Fixed `fontIsPlausible` in `block_fingerprint.js` to reject empty font family strings instead of treating them as plausible, closing a minor fingerprinting leak.
+- OffscreenCanvas clone rendering context now sets `willReadFrequently: true`, matching the existing HTMLCanvasElement clone path and reducing console noise from repeated readback operations during fingerprint masking.
 
 ### Fixed
 
 - `navigator.javaEnabled()` now returns properly formatted `[native code]` under `Function.prototype.toString`, closing a stealth gap where detectors could identify the mock via non-native source-code output.
+- Device signal poisoning now silently returns `null` for non-numeric `getParameter` calls during masking, preventing `WebGL: INVALID_ENUM` console noise from invalid parameter probes while keeping legitimate WebGL rendering intact.
 - Bridge now handles `static_disabled_update` messages directly, immediately propagating per-site disable state to MAIN world scripts without requiring a service-worker round-trip. Previously, the message was sent by the service worker but no content script listened for it, relying instead on the slower `static_persona_update` refresh path.
 - Global scrub timer now properly restarts when a previously-disabled site is re-enabled, preventing a gap where protected globals could be set without scrubbing.
 - Initial global scrubbing is no longer duplicated at script load time, removing two synchronous scrub passes that ran before the bridge could deliver the per-site disabled config.
