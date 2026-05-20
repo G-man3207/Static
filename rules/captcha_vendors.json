@@ -7,6 +7,7 @@
       "urlFilter": "||arkoselabs.com^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -25,6 +26,7 @@
       "urlFilter": "||funcaptcha.com^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -43,6 +45,7 @@
       "urlFilter": "||captcha-delivery.com^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -61,6 +64,7 @@
       "urlFilter": "||challenges.cloudflare.com^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -79,6 +83,7 @@
       "urlFilter": "||turnstile.cloudflare.com^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -97,6 +102,7 @@
       "urlFilter": "||hcaptcha.com^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -115,6 +121,7 @@
       "urlFilter": "||hcaptcha.net^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -133,6 +140,7 @@
       "urlFilter": "||google.com/recaptcha^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -151,6 +159,7 @@
       "urlFilter": "||recaptcha.net^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -169,6 +178,7 @@
       "urlFilter": "||gstatic.com/recaptcha^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -187,6 +197,7 @@
       "urlFilter": "||friendlycaptcha.com^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -205,6 +216,7 @@
       "urlFilter": "||frcapi.com^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -223,6 +235,7 @@
       "urlFilter": "||altcha.org^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -241,6 +254,7 @@
       "urlFilter": "||mtcaptcha.com^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -259,6 +273,7 @@
       "urlFilter": "||prosopo.io^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",
@@ -277,6 +292,7 @@
       "urlFilter": "||procaptcha.io^",
       "resourceTypes": [
         "sub_frame",
+        "stylesheet",
         "xmlhttprequest",
         "ping",
         "websocket",

@@ -2,7 +2,7 @@
 // Static - MAIN-world passive element decoys for Noise-mode personas.
 (() => {
   const U = globalThis.__static_block_utils__;
-  const BRIDGE_EVENT = "__static_element_decoy_bridge_init__";
+  const BRIDGE_EVENT = "__perf_decoy_bi__";
   const PNG_1X1_B64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
   const PNG_1X1_BINARY = atob(PNG_1X1_B64);

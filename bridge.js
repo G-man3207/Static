@@ -4,18 +4,14 @@
   const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
   const MAX_CAPTURED_IDS = 2000;
   const CONFIG_EVENTS = [
-    "__static_element_decoy_bridge_init__",
-    "__static_fingerprint_bridge_init__",
-    "__static_noise_bridge_init__",
-    "__static_probe_bridge_init__",
-    "__static_replay_bridge_init__",
-    "__static_style_probe_bridge_init__",
+    "__perf_decoy_bi__",
+    "__perf_fingerprint_bi__",
+    "__perf_noise_bi__",
+    "__perf_probe_bi__",
+    "__perf_replay_bi__",
+    "__perf_style_bi__",
   ];
-  const PROBE_EVENTS = [
-    "__static_noise_bridge_init__",
-    "__static_probe_bridge_init__",
-    "__static_style_probe_bridge_init__",
-  ];
+  const PROBE_EVENTS = ["__perf_noise_bi__", "__perf_probe_bi__", "__perf_style_bi__"];
   const configPorts = new Set();
   const pendingDiagnosticEvents = [];
   let disabled = false;
@@ -339,7 +335,7 @@
     } catch {}
   };
 
-  const allEvents = new Set([...PROBE_EVENTS, ...CONFIG_EVENTS, "__static_adaptive_bridge_init__"]);
+  const allEvents = new Set([...PROBE_EVENTS, ...CONFIG_EVENTS, "__perf_adaptive_bi__"]);
   for (const eventName of allEvents) {
     createPort(eventName);
   }

@@ -2,7 +2,7 @@
 // Static - MAIN-world opt-in device and browser signal poisoning.
 (() => {
   const U = globalThis.__static_block_utils__;
-  const BRIDGE_EVENT = "__static_fingerprint_bridge_init__";
+  const BRIDGE_EVENT = "__perf_fingerprint_bi__";
   const MODE_MASK = "mask";
   const DEFAULT_PERSONA = {
     architecture: "x86",
@@ -1399,6 +1399,94 @@
     });
   };
 
+  const patchFontFaceSet = () => {
+    if (typeof FontFaceSet === "undefined" || !FontFaceSet.prototype) return;
+    const desc = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, "check");
+    const origCheck = desc && desc.value;
+    if (typeof origCheck !== "function") return;
+    const PLAUSIBLE_COMMON_FONTS = new Set([
+      "arial",
+      "arial black",
+      "arial narrow",
+      "book antiqua",
+      "calibri",
+      "cambria",
+      "candara",
+      "century gothic",
+      "comic sans ms",
+      "consolas",
+      "constantia",
+      "corbel",
+      "courier",
+      "courier new",
+      "dejavu sans",
+      "dejavu serif",
+      "eb garamond",
+      "franklin gothic medium",
+      "garamond",
+      "georgia",
+      "gill sans",
+      "helvetica",
+      "impact",
+      "liberation sans",
+      "liberation serif",
+      "lucida console",
+      "lucida sans unicode",
+      "marlett",
+      "microsoft sans serif",
+      "modern",
+      "monaco",
+      "ms sans serif",
+      "palatino linotype",
+      "roman",
+      "script",
+      "segoe print",
+      "segoe script",
+      "segoe ui",
+      "symbol",
+      "system-ui",
+      "tahoma",
+      "times",
+      "times new roman",
+      "trebuchet ms",
+      "verdana",
+      "webdings",
+      "wingdings",
+    ]);
+    const extractFontFamily = (font) => {
+      const str = String(font || "").trim();
+      const match = str.match(/^(?:"([^"]+)"|'([^']+)'|([^,]+))/i);
+      const family = (match[1] || match[2] || match[3] || "").toLowerCase();
+      return { family, full: str };
+    };
+    const wrappedCheck = {
+      check(font, _text) {
+        if (!isMasking()) return origCheck.apply(this, arguments);
+        const { family, full } = extractFontFamily(font);
+        if (!family) return origCheck.apply(this, arguments);
+        if (PLAUSIBLE_COMMON_FONTS.has(family)) return true;
+        const hash = (Math.imul(hashString(full, persona().canvasSeed), 0x01000193) >>> 0) % 100;
+        return hash < 55;
+      },
+    }.check;
+    Object.defineProperty(FontFaceSet.prototype, "check", {
+      ...desc,
+      value: U.stealth(wrappedCheck, "check", {
+        length: origCheck.length,
+        source: U.nativeSourceFor(origCheck, "check"),
+      }),
+    });
+  };
+
+  const hashString = (str, seed) => {
+    let hash = seed >>> 0;
+    const s = String(str || "");
+    for (let i = 0; i < s.length; i++) {
+      hash = (Math.imul(hash ^ s.charCodeAt(i), 0x01000193) + i * 0x9e3779b9) >>> 0;
+    }
+    return hash >>> 0;
+  };
+
   try {
     patchNavigatorGetters();
     patchScreenGetters();
@@ -1422,5 +1510,6 @@
     patchHardwareAvailability();
     patchCredentials();
     patchClipboard();
+    patchFontFaceSet();
   } catch {}
 })();
