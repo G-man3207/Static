@@ -575,6 +575,7 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||humansecurity.com^",
     "||imperva.com^",
     "||incapsula.com^",
+    "||ipqualityscore.com^",
     "||js.datadome.co^",
     "||kasada.io^",
     "||kasada.net^",

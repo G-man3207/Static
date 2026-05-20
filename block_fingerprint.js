@@ -1273,6 +1273,101 @@
     }
   };
 
+  const patchCredentials = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    const found = U.descriptorOwnerFor(Navigator.prototype, "credentials");
+    const desc = found && found.desc;
+    if (!desc || typeof desc.get !== "function") return;
+    const { owner } = found;
+    Object.defineProperty(owner, "credentials", {
+      ...desc,
+      get: U.stealth(
+        function get() {
+          const original = desc.get.call(this);
+          if (!isMasking() || !original) return original;
+          return new Proxy(original, {
+            get(target, prop) {
+              if (prop === "get" || prop === "create") {
+                return U.stealth(
+                  function credentialOp() {
+                    return Promise.resolve(null);
+                  },
+                  prop,
+                  { length: 0, source: U.nativeSourceFor(() => {}, prop) }
+                );
+              }
+              if (prop === "store") {
+                return U.stealth(
+                  function store() {
+                    return Promise.resolve(null);
+                  },
+                  "store",
+                  { length: 1, source: U.nativeSourceFor(() => {}, "store") }
+                );
+              }
+              if (prop === "preventSilentAccess") {
+                return U.stealth(
+                  function preventSilentAccess() {
+                    return Promise.resolve(undefined);
+                  },
+                  "preventSilentAccess",
+                  { length: 0, source: U.nativeSourceFor(() => {}, "preventSilentAccess") }
+                );
+              }
+              const value = Reflect.get(target, prop, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          });
+        },
+        "get credentials",
+        { length: 0, source: U.nativeSourceFor(desc.get, "get credentials") }
+      ),
+    });
+  };
+
+  const patchClipboard = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    const found = U.descriptorOwnerFor(Navigator.prototype, "clipboard");
+    const desc = found && found.desc;
+    if (!desc || typeof desc.get !== "function") return;
+    const { owner } = found;
+    Object.defineProperty(owner, "clipboard", {
+      ...desc,
+      get: U.stealth(
+        function get() {
+          const original = desc.get.call(this);
+          if (!isMasking() || !original) return original;
+          return new Proxy(original, {
+            get(target, prop) {
+              if (prop === "read" || prop === "readText") {
+                return U.stealth(
+                  function read() {
+                    return Promise.resolve(prop === "read" ? [] : "");
+                  },
+                  prop,
+                  { length: 0, source: U.nativeSourceFor(() => {}, prop) }
+                );
+              }
+              if (prop === "write" || prop === "writeText") {
+                return U.stealth(
+                  function write() {
+                    return Promise.resolve();
+                  },
+                  prop,
+                  { length: 1, source: U.nativeSourceFor(() => {}, prop) }
+                );
+              }
+              const value = Reflect.get(target, prop, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          });
+        },
+        "get clipboard",
+        { length: 0, source: U.nativeSourceFor(desc.get, "get clipboard") }
+      ),
+    });
+  };
+
   try {
     patchNavigatorGetters();
     patchScreenGetters();
@@ -1294,5 +1389,7 @@
     patchMediaCapabilities();
     patchGpu();
     patchHardwareAvailability();
+    patchCredentials();
+    patchClipboard();
   } catch {}
 })();
