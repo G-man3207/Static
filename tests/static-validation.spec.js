@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- static validation is easier to maintain in one file */
 const { expect, test } = require("@playwright/test");
 const fs = require("fs");
 const path = require("path");
@@ -803,5 +804,97 @@ test("block_utils must load first — referenced from all block scripts via __st
   for (let i = 1; i < mainScripts.length; i++) {
     const content = readText(mainScripts[i]);
     expect(content).toContain("__static_block_utils__");
+  }
+});
+
+// =========================================================================
+// lists.js / block_adaptive.js DOM-marker pattern sync
+// =========================================================================
+
+test("block_adaptive.js DOM_MARKER_ATTR_RE covers all domStripAttrs from lists.js", () => {
+  const listsContext = vm.createContext({});
+  vm.runInContext(readText("lists.js"), listsContext);
+  const domStripAttrs = listsContext.__static_config__.domStripAttrs;
+
+  const adaptiveSrc = readText("block_adaptive.js");
+  const attrMatch = adaptiveSrc.match(/DOM_MARKER_ATTR_RE\s*=\s*(\/[^/]+\/[a-z]*)/);
+  expect(attrMatch, "DOM_MARKER_ATTR_RE must be found in block_adaptive.js").toBeTruthy();
+  const regexStr = attrMatch[1];
+  const lastSlash = regexStr.lastIndexOf("/");
+  const pattern = regexStr.slice(1, lastSlash);
+  const flags = regexStr.slice(lastSlash + 1);
+  const combinedRe = new RegExp(pattern, flags);
+
+  // For each pattern in lists.js, generate a test string the pattern would
+  // match, then verify the combined block_adaptive.js regex also matches it.
+  const testStringFor = (pattern) => {
+    const src = String(pattern);
+    if (src.includes("lp-(ignore") || src.includes("gr-c-s")) return null;
+    if (src.includes("__lpform")) return "__lpform_test";
+    if (src.includes("data-")) {
+      const name = src.match(/data-([a-z]+(?:-[a-z]+)?)/);
+      return name ? `data-${name[1]}-test-attr` : null;
+    }
+    return null;
+  };
+
+  for (const pattern of domStripAttrs) {
+    const testStr = testStringFor(pattern);
+    if (!testStr) continue;
+    expect(combinedRe.test(testStr), `${String(pattern)} → "${testStr}" must match`).toBe(true);
+  }
+});
+
+test("block_adaptive.js DOM_MARKER_TAG_RE covers all domStripTags from lists.js", () => {
+  const listsContext = vm.createContext({});
+  vm.runInContext(readText("lists.js"), listsContext);
+  const domStripTags = listsContext.__static_config__.domStripTags;
+
+  const adaptiveSrc = readText("block_adaptive.js");
+  const tagMatch = adaptiveSrc.match(/DOM_MARKER_TAG_RE\s*=\s*(\/[^/]+\/[a-z]*)/);
+  expect(tagMatch, "DOM_MARKER_TAG_RE must be found in block_adaptive.js").toBeTruthy();
+  const tagRegexStr = tagMatch[1];
+  const tagLastSlash = tagRegexStr.lastIndexOf("/");
+  const combinedRe = new RegExp(
+    tagRegexStr.slice(1, tagLastSlash),
+    tagRegexStr.slice(tagLastSlash + 1)
+  );
+
+  for (const pattern of domStripTags) {
+    const src = String(pattern);
+    const name = src.match(/\^([a-z]+-)/);
+    if (!name) continue;
+    const testTag = `${name[1]}el`;
+    expect(combinedRe.test(testTag), `${src} → "${testTag}" must match`).toBe(true);
+  }
+});
+
+test("block_adaptive.js DOM_MARKER_CLASS_RE covers all domStripClasses from lists.js", () => {
+  const listsContext = vm.createContext({});
+  vm.runInContext(readText("lists.js"), listsContext);
+  const domStripClasses = listsContext.__static_config__.domStripClasses;
+
+  const adaptiveSrc = readText("block_adaptive.js");
+  const classMatch = adaptiveSrc.match(/DOM_MARKER_CLASS_RE\s*=\s*(\/[^/]+\/[a-z]*)/);
+  expect(classMatch, "DOM_MARKER_CLASS_RE must be found in block_adaptive.js").toBeTruthy();
+  const classRegexStr = classMatch[1];
+  const classLastSlash = classRegexStr.lastIndexOf("/");
+  const combinedRe = new RegExp(
+    classRegexStr.slice(1, classLastSlash),
+    classRegexStr.slice(classLastSlash + 1)
+  );
+
+  const testClassFor = (pattern) => {
+    const src = String(pattern);
+    if (src.includes("__lpform")) return "__lpform";
+    if (src.includes("lpform") && !src.includes("__lpform")) return "lpform-test";
+    const name = src.match(/\^([a-z]+)/);
+    return name ? `${name[1]}-test` : null;
+  };
+
+  for (const pattern of domStripClasses) {
+    const testClass = testClassFor(pattern);
+    if (!testClass) continue;
+    expect(combinedRe.test(testClass), `${String(pattern)} → "${testClass}" must match`).toBe(true);
   }
 });
