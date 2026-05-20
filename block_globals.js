@@ -29,7 +29,12 @@
 
   const applyConfigUpdate = (data) => {
     if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
+      const wasDisabled = disabled;
       disabled = data.disabled;
+      if (wasDisabled && !disabled) {
+        scrubTicks = 0;
+        startScrubTimer();
+      }
     }
   };
 
@@ -232,7 +237,6 @@
     });
   };
 
-  scrubGlobals();
   patchObjectDefineProperty();
   patchObjectDefineProperties();
   patchObjectAssign();
@@ -264,14 +268,12 @@
     }, FAST_SCRUB_MS);
   };
 
-  scrubGlobals();
   startScrubTimer();
 
   addEventListener(
     "DOMContentLoaded",
     () => {
       scrubGlobals();
-      // After DOMContentLoaded, slow the scrub to every 50ms for half the remaining ticks
       const remaining = FAST_SCRUB_TICKS - scrubTicks;
       if (remaining > 0) {
         scrubTicks = Math.max(scrubTicks, FAST_SCRUB_TICKS - Math.ceil(remaining / 2));

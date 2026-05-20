@@ -366,6 +366,34 @@
         .catch(() => sendResponse({ ok: false }));
       return true;
     }
+    if (msg && msg.type === "static_disabled_update") {
+      const wasDisabled = disabled;
+      disabled = !!msg.disabled;
+      if (disabled && !wasDisabled) {
+        resetProbeState();
+      }
+      if (disabled !== wasDisabled) {
+        const config = {
+          type: "config_update",
+          disabled,
+          persona: [],
+          fingerprintMode: "off",
+          fingerprintPersona: null,
+          diagnosticsMode: false,
+          noiseEnabled: false,
+          replayMode: "off",
+        };
+        for (const port of [...configPorts]) {
+          try {
+            port.postMessage(config);
+          } catch {
+            configPorts.delete(port);
+          }
+        }
+      }
+      sendResponse({ ok: true });
+      return true;
+    }
     return undefined;
   });
 })();

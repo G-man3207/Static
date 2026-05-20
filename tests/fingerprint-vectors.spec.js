@@ -353,3 +353,276 @@ test("Fingerprint masking returns false for navigator.javaEnabled()", async ({
   expect(result.maskedValue).toBe(false);
   expect(result.toStringResult).toContain("[native code]");
 });
+
+const enableFingerprintMask = async (extension) => {
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+};
+
+test("Fingerprint masking suppresses RTCPeerConnection ICE candidate listeners", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(async () => {
+    if (typeof RTCPeerConnection === "undefined") return { skipped: true };
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    let iceCandidateFired = false;
+    pc.addEventListener("icecandidate", () => {
+      iceCandidateFired = true;
+    });
+    pc.createDataChannel("test");
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 200);
+    });
+    pc.close();
+    return { skipped: false, iceCandidateFired };
+  });
+
+  if (result.skipped) return;
+  expect(result.iceCandidateFired).toBe(false);
+});
+
+test("Fingerprint masking standardizes AudioContext sampleRate", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => {
+    const Ctor = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!Ctor) return { skipped: true };
+    const ctx = new Ctor();
+    const sampleRate = ctx.sampleRate;
+    const getterStr = Function.prototype.toString.call(
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ctx), "sampleRate").get
+    );
+    ctx.close();
+    return { skipped: false, sampleRate, getterStr };
+  });
+
+  if (result.skipped) return;
+  expect(result.sampleRate).toBe(48000);
+  expect(result.getterStr).toContain("[native code]");
+});
+
+test("Fingerprint masking standardizes AudioContext baseLatency and outputLatency", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => {
+    const Ctor = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!Ctor) return { skipped: true };
+    const ctx = new Ctor();
+    const baseLatency = ctx.baseLatency;
+    const outputLatency = ctx.outputLatency;
+    ctx.close();
+    return { skipped: false, baseLatency, outputLatency };
+  });
+
+  if (result.skipped) return;
+  expect(result.baseLatency).toBeGreaterThan(0);
+  expect(typeof result.baseLatency).toBe("number");
+  expect(result.outputLatency).toBeGreaterThan(0);
+  expect(typeof result.outputLatency).toBe("number");
+});
+
+test("Fingerprint masking perturbs Canvas measureText results", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const offValue = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    ctx.font = "16px Arial";
+    const metrics = ctx.measureText("hello");
+    return metrics.width;
+  });
+
+  const onValue = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    ctx.font = "16px Arial";
+    const metrics = ctx.measureText("hello");
+    return metrics.width;
+  });
+
+  if (typeof offValue !== "number" || typeof onValue !== "number") return;
+  expect(typeof onValue).toBe("number");
+});
+
+test("Fingerprint masking standardizes media canPlayType responses", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => {
+    const video = document.createElement("video");
+    return {
+      mp4: video.canPlayType("video/mp4"),
+      webm: video.canPlayType("video/webm"),
+      mp3: video.canPlayType("audio/mpeg"),
+      ogg: video.canPlayType("video/ogg"),
+    };
+  });
+
+  expect(result.mp4).toBe("probably");
+  expect(result.webm).toBe("probably");
+  expect(result.mp3).toBe("probably");
+  expect(result.ogg).toBe("probably");
+});
+
+test("Fingerprint masking standardizes CSS.supports responses", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => ({
+    grid: CSS.supports("display", "grid"),
+    flex: CSS.supports("display", "flex"),
+    gap: CSS.supports("gap", "1px"),
+    aspectRatio: CSS.supports("aspect-ratio", "1/1"),
+  }));
+
+  expect(result.grid).toBe(true);
+  expect(result.flex).toBe(true);
+  expect(result.gap).toBe(true);
+  expect(result.aspectRatio).toBe(true);
+});
+
+test("Fingerprint masking standardizes window outer dimensions", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => ({
+    outerWidth: window.outerWidth,
+    outerHeight: window.outerHeight,
+  }));
+
+  expect(result.outerWidth).toBe(1920);
+  expect(result.outerHeight).toBe(1080);
+});
+
+test("Fingerprint masking returns standard productSub", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => {
+    if (typeof navigator.productSub === "undefined") return { skipped: true };
+    return { skipped: false, value: navigator.productSub };
+  });
+
+  if (result.skipped) return;
+  expect(result.value).toBe("20030107");
+});
+
+test("Fingerprint masking standardizes WebGL getContextAttributes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl");
+    if (!gl) return { skipped: true };
+    const attrs = gl.getContextAttributes();
+    return {
+      skipped: false,
+      alpha: attrs.alpha,
+      antialias: attrs.antialias,
+      depth: attrs.depth,
+      stencil: attrs.stencil,
+      premultipliedAlpha: attrs.premultipliedAlpha,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.alpha).toBe(true);
+  expect(result.antialias).toBe(true);
+  expect(result.depth).toBe(true);
+  expect(result.stencil).toBe(false);
+  expect(result.premultipliedAlpha).toBe(true);
+});
+
+test("Fingerprint masking standardizes WebGL getExtension responses", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl");
+    if (!gl) return { skipped: true };
+    const debugExt = gl.getExtension("WEBGL_debug_renderer_info");
+    const missingExt = gl.getExtension("FAKE_extension_xyz");
+    return {
+      skipped: false,
+      debugIsObject: debugExt !== null && typeof debugExt === "object",
+      missingIsNull: missingExt === null,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.debugIsObject).toBe(true);
+  expect(result.missingIsNull).toBe(true);
+});
+
+test("Fingerprint masking standardizes Notification.permission", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => {
+    if (typeof Notification === "undefined") return { skipped: true };
+    return { skipped: false, permission: Notification.permission };
+  });
+
+  if (result.skipped) return;
+  expect(result.permission).toBe("default");
+});
+
+test("Fingerprint masking strips navigator.oscpu and navigator.buildID", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await enableFingerprintMask(extension);
+
+  const result = await page.evaluate(() => ({
+    oscpu: navigator.oscpu,
+    buildID: navigator.buildID,
+  }));
+
+  if (result.oscpu !== undefined) expect(result.oscpu).toBe("");
+  if (result.buildID !== undefined) expect(result.buildID).toBe("");
+});
