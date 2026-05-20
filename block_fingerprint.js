@@ -1415,6 +1415,314 @@
     });
   };
 
+  const patchRtcPeerConnection = () => {
+    if (typeof RTCPeerConnection === "undefined") return;
+    const OrigPC = RTCPeerConnection;
+    const origDesc = Object.getOwnPropertyDescriptor(globalThis, "RTCPeerConnection") || {
+      value: OrigPC,
+      writable: true,
+      configurable: true,
+    };
+    const wrapped = function RTCPeerConnection() {
+      const pc = new OrigPC(...arguments);
+      if (!isMasking()) return pc;
+      const origAdd = pc.addEventListener.bind(pc);
+      pc.addEventListener = function iceSuppressed(type, listener, options) {
+        if (type !== "icecandidate") return origAdd(type, listener, options);
+      };
+      Object.defineProperty(pc, "onicecandidate", {
+        configurable: true,
+        set() {},
+        get() {
+          return null;
+        },
+      });
+      return pc;
+    };
+    wrapped.prototype = OrigPC.prototype;
+    Object.defineProperty(globalThis, "RTCPeerConnection", {
+      ...origDesc,
+      value: U.stealth(wrapped, "RTCPeerConnection", {
+        length: OrigPC.length,
+        source: U.nativeSourceFor(OrigPC, "RTCPeerConnection"),
+      }),
+    });
+  };
+
+  const patchAudioContextProperties = () => {
+    const targets = [globalThis.AudioContext, globalThis.webkitAudioContext].filter(Boolean);
+    for (const Ctor of targets) {
+      if (!Ctor.prototype) continue;
+      for (const prop of ["sampleRate", "baseLatency", "outputLatency"]) {
+        const found = U.descriptorOwnerFor(Ctor.prototype, prop);
+        if (!found || !found.desc || typeof found.desc.get !== "function") continue;
+        const { desc, owner } = found;
+        const DEFAULT_VALUES = {
+          sampleRate: 48000,
+          baseLatency: 0.005,
+          outputLatency: 0.01,
+        };
+        Object.defineProperty(owner, prop, {
+          ...desc,
+          get: U.stealth(
+            function get() {
+              if (isMasking()) return DEFAULT_VALUES[prop];
+              return desc.get.call(this);
+            },
+            `get ${prop}`,
+            { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
+          ),
+        });
+      }
+    }
+  };
+
+  const patchCanvasTextMetrics = () => {
+    const ctor = globalThis.CanvasRenderingContext2D;
+    if (!ctor || !ctor.prototype) return;
+    const desc = Object.getOwnPropertyDescriptor(ctor.prototype, "measureText");
+    if (!desc || typeof desc.value !== "function") return;
+    const orig = desc.value;
+    const wrapped = {
+      measureText(_text) {
+        const metrics = orig.apply(this, arguments);
+        if (!isMasking()) return metrics;
+        const seed = persona().canvasSeed;
+        const perturb = (value, key) => {
+          if (typeof value !== "number" || !Number.isFinite(value)) return value;
+          const hash = (Math.imul(seed ^ (stringHash(String(key)) || 1), 0x01000193) >>> 0) % 5;
+          if (hash === 0) return value;
+          const delta = (hash - 2) * 0.03125;
+          return value + delta;
+        };
+        for (const key of Object.getOwnPropertyNames(metrics)) {
+          const val = metrics[key];
+          if (typeof val === "number" && Number.isFinite(val)) metrics[key] = perturb(val, key);
+        }
+        return metrics;
+      },
+    }.measureText;
+    Object.defineProperty(ctor.prototype, "measureText", {
+      ...desc,
+      value: U.stealth(wrapped, "measureText", {
+        length: orig.length,
+        source: U.nativeSourceFor(orig, "measureText"),
+      }),
+    });
+  };
+
+  const patchMediaCanPlayType = () => {
+    const proto = HTMLMediaElement && HTMLMediaElement.prototype;
+    if (!proto) return;
+    const desc = Object.getOwnPropertyDescriptor(proto, "canPlayType");
+    if (!desc || typeof desc.value !== "function") return;
+    const orig = desc.value;
+    const PLAUSIBLE_CODECS = {
+      "audio/mpeg": "probably",
+      "audio/ogg": "probably",
+      "audio/wav": "probably",
+      "audio/webm": "probably",
+      "audio/aac": "probably",
+      "audio/flac": "probably",
+      "video/mp4": "probably",
+      "video/webm": "probably",
+      "video/ogg": "probably",
+    };
+    const wrapped = {
+      canPlayType(type) {
+        if (!isMasking()) return orig.apply(this, arguments);
+        const key = String(type || "")
+          .toLowerCase()
+          .replace(/\s+/g, "")
+          .split(";")[0];
+        return PLAUSIBLE_CODECS[key] || "";
+      },
+    }.canPlayType;
+    Object.defineProperty(proto, "canPlayType", {
+      ...desc,
+      value: U.stealth(wrapped, "canPlayType", {
+        length: orig.length,
+        source: U.nativeSourceFor(orig, "canPlayType"),
+      }),
+    });
+  };
+
+  const patchCssSupports = () => {
+    if (typeof CSS === "undefined" || typeof CSS.supports !== "function") return;
+    const desc = Object.getOwnPropertyDescriptor(CSS, "supports");
+    if (!desc || typeof desc.value !== "function") return;
+    const orig = desc.value;
+    const PLAUSIBLE_SUPPORTS = new Set([
+      "display:grid",
+      "display:flex",
+      "display:inline-grid",
+      "display:inline-flex",
+      "grid",
+      "flex",
+      "gap",
+      "aspect-ratio",
+    ]);
+    const wrapped = {
+      supports() {
+        if (!isMasking()) return orig.apply(this, arguments);
+        const key =
+          arguments.length === 2
+            ? [String(arguments[0]), String(arguments[1])].join(":")
+            : String(arguments[0] || "");
+        if (!key) return false;
+        if (PLAUSIBLE_SUPPORTS.has(key)) return true;
+        const hash = stringHash(key) >>> 0;
+        return hash % 3 !== 0;
+      },
+    }.supports;
+    Object.defineProperty(CSS, "supports", {
+      ...desc,
+      value: U.stealth(wrapped, "supports", {
+        length: orig.length,
+        source: U.nativeSourceFor(orig, "supports"),
+      }),
+    });
+  };
+
+  const patchOuterWindow = () => {
+    for (const prop of ["outerWidth", "outerHeight"]) {
+      patchGetter(window, prop, `get ${prop}`, (original) => {
+        if (!isMasking() || typeof original !== "number") return original;
+        if (prop === "outerWidth") return 1920;
+        return 1080;
+      });
+    }
+  };
+
+  const patchProductSub = () => {
+    try {
+      if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+      const found = U.descriptorOwnerFor(Navigator.prototype, "productSub");
+      if (found && found.desc && typeof found.desc.get === "function") {
+        patchGetter(Navigator.prototype, "productSub", "get productSub", () => "20030107");
+      }
+    } catch {}
+  };
+
+  const patchWebglContextAttributes = () => {
+    const maskCtorAttrs = (Ctor) => {
+      if (typeof Ctor === "undefined" || !Ctor.prototype) return;
+      const desc = Object.getOwnPropertyDescriptor(Ctor.prototype, "getContextAttributes");
+      if (!desc || typeof desc.value !== "function") return;
+      const orig = desc.value;
+      const wrapped = {
+        getContextAttributes() {
+          if (!isMasking()) return orig.apply(this, arguments);
+          return {
+            alpha: true,
+            antialias: true,
+            depth: true,
+            desynchronized: false,
+            failIfMajorPerformanceCaveat: false,
+            powerPreference: "default",
+            premultipliedAlpha: true,
+            preserveDrawingBuffer: false,
+            stencil: false,
+          };
+        },
+      }.getContextAttributes;
+      Object.defineProperty(Ctor.prototype, "getContextAttributes", {
+        ...desc,
+        value: U.stealth(wrapped, "getContextAttributes", {
+          length: orig.length,
+          source: U.nativeSourceFor(orig, "getContextAttributes"),
+        }),
+      });
+    };
+    maskCtorAttrs(globalThis.WebGLRenderingContext);
+    maskCtorAttrs(globalThis.WebGL2RenderingContext);
+  };
+
+  const patchWebglGetExtension = () => {
+    const maskCtorExt = (Ctor) => {
+      if (typeof Ctor === "undefined" || !Ctor.prototype) return;
+      const desc = Object.getOwnPropertyDescriptor(Ctor.prototype, "getExtension");
+      if (!desc || typeof desc.value !== "function") return;
+      const orig = desc.value;
+      const PLAUSIBLE_EXTENSION_OBJECTS = new Set([
+        "EXT_blend_minmax",
+        "EXT_color_buffer_float",
+        "EXT_color_buffer_half_float",
+        "EXT_disjoint_timer_query",
+        "EXT_float_blend",
+        "EXT_frag_depth",
+        "EXT_shader_texture_lod",
+        "EXT_texture_compression_bptc",
+        "EXT_texture_compression_rgtc",
+        "EXT_texture_filter_anisotropic",
+        "EXT_sRGB",
+        "OES_element_index_uint",
+        "OES_fbo_render_mipmap",
+        "OES_standard_derivatives",
+        "OES_texture_float",
+        "OES_texture_float_linear",
+        "OES_texture_half_float",
+        "OES_texture_half_float_linear",
+        "OES_vertex_array_object",
+        "WEBGL_color_buffer_float",
+        "WEBGL_compressed_texture_s3tc",
+        "WEBGL_compressed_texture_s3tc_srgb",
+        "WEBGL_debug_renderer_info",
+        "WEBGL_debug_shaders",
+        "WEBGL_depth_texture",
+        "WEBGL_draw_buffers",
+        "WEBGL_lose_context",
+        "WEBGL_multi_draw",
+      ]);
+      const wrapped = {
+        getExtension(name) {
+          if (!isMasking()) return orig.apply(this, arguments);
+          if (PLAUSIBLE_EXTENSION_OBJECTS.has(name)) {
+            return {};
+          }
+          return null;
+        },
+      }.getExtension;
+      Object.defineProperty(Ctor.prototype, "getExtension", {
+        ...desc,
+        value: U.stealth(wrapped, "getExtension", {
+          length: orig.length,
+          source: U.nativeSourceFor(orig, "getExtension"),
+        }),
+      });
+    };
+    maskCtorExt(globalThis.WebGLRenderingContext);
+    maskCtorExt(globalThis.WebGL2RenderingContext);
+  };
+
+  const patchNotificationPermission = () => {
+    if (typeof Notification === "undefined") return;
+    const found = U.descriptorOwnerFor(Notification, "permission");
+    if (found && found.desc && typeof found.desc.get === "function") {
+      patchGetter(Notification, "permission", "get permission", () => "default");
+    }
+  };
+
+  const patchOscpuBuildId = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    for (const prop of ["oscpu", "buildID"]) {
+      try {
+        const found = U.descriptorOwnerFor(Navigator.prototype, prop);
+        if (found && found.desc && typeof found.desc.get === "function") {
+          patchGetter(Navigator.prototype, prop, `get ${prop}`, () => "");
+        }
+      } catch {}
+    }
+  };
+
+  const stringHash = (str) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (Math.imul(hash, 31) + str.charCodeAt(i)) | 0;
+    }
+    return hash;
+  };
+
   const PLAUSIBLE_COMMON_FONTS = new Set([
     "arial",
     "arial black",
@@ -1902,6 +2210,17 @@
     patchHardwareAvailability();
     patchCredentials();
     patchClipboard();
+    patchRtcPeerConnection();
+    patchAudioContextProperties();
+    patchCanvasTextMetrics();
+    patchMediaCanPlayType();
+    patchCssSupports();
+    patchOuterWindow();
+    patchProductSub();
+    patchWebglContextAttributes();
+    patchWebglGetExtension();
+    patchNotificationPermission();
+    patchOscpuBuildId();
     patchFontFaceSet();
     patchFontFaceSetFull();
     patchGamepads();

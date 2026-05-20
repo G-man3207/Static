@@ -8,6 +8,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Added
 
+- Device signal poisoning now suppresses WebRTC `RTCPeerConnection` ICE candidate events, preventing local IP and network topology fingerprinting via WebRTC.
+- Device signal poisoning now masks `AudioContext.sampleRate`, `AudioContext.baseLatency`, and `AudioContext.outputLatency`, returning standardized values (48000, 0.005, 0.01) to prevent audio hardware fingerprinting.
+- Device signal poisoning now perturbs `CanvasRenderingContext2D.measureText()` results, preventing text-metrics fingerprinting while keeping measurements stable per-origin.
+- Device signal poisoning now masks `HTMLMediaElement.canPlayType()`, returning deterministic plausible codec support to prevent media capability fingerprinting.
+- Device signal poisoning now masks `CSS.supports()`, returning standardized results for common features and persona-seeded decisions for uncommon ones.
+- Device signal poisoning now masks `window.outerWidth` and `window.outerHeight`, returning `1920`/`1080` to prevent window chrome fingerprinting.
+- Device signal poisoning now masks `navigator.productSub`, returning `"20030107"` to prevent browser build number fingerprinting.
+- Device signal poisoning now masks `WebGLRenderingContext.getContextAttributes()`, returning standard WebGL configuration values to prevent GPU configuration fingerprinting.
+- Device signal poisoning now masks `WebGLRenderingContext.getExtension()`, returning empty objects for plausible extensions and `null` for unknown ones, preventing GPU extension enumeration fingerprinting.
+- Device signal poisoning now masks `Notification.permission`, returning `"default"` to prevent notification preference fingerprinting.
+- Device signal poisoning now masks `navigator.oscpu` and `navigator.buildID` (Firefox-specific), returning empty strings to prevent OS/build fingerprinting.
+- Playwright test coverage for all new fingerprint masking vectors (RTCPeerConnection, AudioContext properties, Canvas measureText, media canPlayType, CSS.supports, window outer dimensions, productSub, WebGL getContextAttributes/getExtension, Notification.permission, navigator.oscpu/buildID).
+
 - Device signal poisoning now masks `navigator.javaEnabled()`, returning `false` to prevent Java-capability fingerprinting.
 - Device signal poisoning now standardizes `permissions.query()` responses for `camera` and `microphone` permissions (returning `"prompt"`), closing a gap where device enumeration fingerprinters could probe for camera/microphone availability.
 - DNR fingerprint vendor rules for `fingerprintjs.io` (FingerprintJS open-source domain), `jscrambler.com` (Jscrambler code protection + fingerprinting), `netacea.com` (Netacea bot management), `maxmind.com` (MaxMind minFraud/GeoIP), `shieldsquare.com` (ShieldSquare bot detection), and `deviceatlas.com` (DeviceAtlas device detection), closing 6 gap domains at rule IDs 67–72.
@@ -21,6 +34,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Fixed
 
 - `navigator.javaEnabled()` now returns properly formatted `[native code]` under `Function.prototype.toString`, closing a stealth gap where detectors could identify the mock via non-native source-code output.
+- Bridge now handles `static_disabled_update` messages directly, immediately propagating per-site disable state to MAIN world scripts without requiring a service-worker round-trip. Previously, the message was sent by the service worker but no content script listened for it, relying instead on the slower `static_persona_update` refresh path.
+- Global scrub timer now properly restarts when a previously-disabled site is re-enabled, preventing a gap where protected globals could be set without scrubbing.
+- Initial global scrubbing is no longer duplicated at script load time, removing two synchronous scrub passes that ran before the bridge could deliver the per-site disabled config.
 
 ### Added
 
