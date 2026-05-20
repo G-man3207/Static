@@ -2,6 +2,9 @@
 globalThis.__static_log_diagnostics__ = (() => {
   const CFG = globalThis.__static_config__ || {};
   const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
+  const UUID_EXT_ID_RE = /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+  const isValidExtensionId = (id) =>
+    typeof id === "string" && (CHROME_EXT_ID_RE.test(id) || UUID_EXT_ID_RE.test(id));
   const fmt = (n) => n.toLocaleString();
 
   const sortedCountEntries = (counts, limit = 6) =>
@@ -49,7 +52,7 @@ globalThis.__static_log_diagnostics__ = (() => {
       const safeId = id.toLowerCase();
       const known = knownIds.has(safeId);
       const minCount = known ? minKnown : minUnknown;
-      if (CHROME_EXT_ID_RE.test(safeId) && typeof count === "number" && count >= minCount) {
+      if (isValidExtensionId(safeId) && typeof count === "number" && count >= minCount) {
         knownEligible += known ? 1 : 0;
         unknownEligible += known ? 0 : 1;
         eligibleIds.push(safeId);
@@ -142,5 +145,5 @@ globalThis.__static_log_diagnostics__ = (() => {
     ]);
   };
 
-  return { buildNoiseReadinessDetail, buildPlaybookDetail };
+  return { buildNoiseReadinessDetail, buildPlaybookDetail, noiseReadinessFor };
 })();

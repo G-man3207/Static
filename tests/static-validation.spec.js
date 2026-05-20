@@ -910,3 +910,82 @@ test("block_adaptive.js DOM_MARKER_CLASS_RE covers all domStripClasses from list
     expect(combinedRe.test(testClass), `${String(pattern)} → "${testClass}" must match`).toBe(true);
   }
 });
+
+const loadLogDiagnostics = () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  vm.runInContext(readText("log_diagnostics.js"), context);
+  return context.__static_log_diagnostics__;
+};
+
+test("log_diagnostics noiseReadinessFor handles Chrome-style extension IDs", () => {
+  const { noiseReadinessFor } = loadLogDiagnostics();
+  const idCounts = {
+    nngceckbapebfimnlniiiahkandclblb: 3,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: 1,
+  };
+  const result = noiseReadinessFor({ idCounts });
+  expect(result.knownEligible).toBe(1);
+  expect(result.unknownEligible).toBe(0);
+  expect(result.eligibleIds).toContain("nngceckbapebfimnlniiiahkandclblb");
+  expect(result.eligibleIds).not.toContain("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+});
+
+test("log_diagnostics noiseReadinessFor handles UUID-style extension IDs", () => {
+  const { noiseReadinessFor } = loadLogDiagnostics();
+  const uuidId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+  const chromeId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const idCounts = {
+    [uuidId]: 25,
+    [chromeId]: 25,
+  };
+  const result = noiseReadinessFor({ idCounts });
+  expect(result.knownEligible).toBe(0);
+  expect(result.unknownEligible).toBe(2);
+  expect(result.eligibleIds).toContain(uuidId);
+  expect(result.eligibleIds).toContain(chromeId);
+});
+
+test("log_diagnostics noiseReadinessFor rejects invalid IDs", () => {
+  const { noiseReadinessFor } = loadLogDiagnostics();
+  const idCounts = {
+    "not-an-extension-id": 100,
+    "": 100,
+    "too-short": 100,
+    zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 100,
+  };
+  const result = noiseReadinessFor({ idCounts });
+  expect(result.eligibleIds).toHaveLength(0);
+  expect(result.knownEligible).toBe(0);
+  expect(result.unknownEligible).toBe(0);
+});
+
+test("log_diagnostics noiseReadinessFor respects unknown min count threshold for UUID IDs", () => {
+  const { noiseReadinessFor } = loadLogDiagnostics();
+  const uuidId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+  const idCounts = { [uuidId]: 19 };
+  const result = noiseReadinessFor({ idCounts });
+  expect(result.eligibleIds).toHaveLength(0);
+  const highCounts = { [uuidId]: 20 };
+  const resultHigh = noiseReadinessFor({ idCounts: highCounts });
+  expect(resultHigh.eligibleIds).toContain(uuidId);
+});
+
+test("log_diagnostics noiseReadinessFor handles mixed Chrome and UUID ID pools", () => {
+  const { noiseReadinessFor } = loadLogDiagnostics();
+  const uuidId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+  const chromeKnown = "nngceckbapebfimnlniiiahkandclblb";
+  const chromeUnknown = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const idCounts = {
+    [uuidId]: 25,
+    [chromeKnown]: 3,
+    [chromeUnknown]: 25,
+  };
+  const result = noiseReadinessFor({ idCounts });
+  expect(result.knownEligible).toBe(1);
+  expect(result.unknownEligible).toBe(2);
+  expect(result.eligibleIds).toContain(uuidId);
+  expect(result.eligibleIds).toContain(chromeKnown);
+  expect(result.eligibleIds).toContain(chromeUnknown);
+  expect(result.eligibleIds).toHaveLength(3);
+});
