@@ -49,10 +49,10 @@
     "blur",
   ]);
   const DOM_MARKER_ATTR_RE =
-    /^(?:data-(?:1password(?:-|$)|1p(?:-|$)|onepassword(?:-|$)|op(?:-|$)|lastpass(?:-|$)|lp-(?:ignore|id|tab)|dashlane(?:-|$)|dashlanecreated|grammarly(?:-|$)|gramm(?:-|$)|gr-c-s-(?:loaded|check-loaded)$|honey(?:-|$)|honeyextension(?:-|$)|keeper(?:-|$)|roboform(?:-|$)|nordpass(?:-|$))|__lpform_)/i;
-  const DOM_MARKER_TAG_RE = /^(?:grammarly-|lastpass-|dashlane-|honey-|onepassword-)/i;
+    /^(?:data-(?:1password(?:-|$)|1p(?:-|$)|onepassword(?:-|$)|op(?:-|$)|lastpass(?:-|$)|lp-(?:ignore|id|tab)|dashlane(?:-|$)|dashlanecreated|grammarly(?:-|$)|gramm(?:-|$)|gr-c-s-(?:loaded|check-loaded)$|honey(?:-|$)|honeyextension(?:-|$)|keeper(?:-|$)|roboform(?:-|$)|nordpass(?:-|$)|bitwarden(?:-|$)|protonpass(?:-|$))|__lpform_)/i;
+  const DOM_MARKER_TAG_RE = /^(?:grammarly-|lastpass-|dashlane-|honey-|onepassword-|protonpass-)/i;
   const DOM_MARKER_CLASS_RE =
-    /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-))/i;
+    /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-)|protonpass(?:$|-))/i;
   const adaptiveWindows = new Map();
   const reportedVendorSignals = new Set();
   const instrumentedFingerprintGlobals = new WeakSet();
