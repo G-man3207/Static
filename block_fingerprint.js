@@ -1,4 +1,4 @@
-/* eslint-disable max-lines, max-statements -- MAIN-world fingerprint shims are safer kept contiguous */
+/* eslint-disable max-lines, max-statements, max-lines-per-function, complexity -- MAIN-world fingerprint shims are safer kept contiguous */
 // Static - MAIN-world opt-in device and browser signal poisoning.
 (() => {
   const U = globalThis.__static_block_utils__;
@@ -1080,9 +1080,10 @@
       get: U.stealth(
         function get() {
           const original = desc.get.call(this);
-          if (!isMasking() || !original || typeof original.enumerateDevices !== "function") {
-            return original;
-          }
+          if (!isMasking() || !original) return original;
+          const hasEnumerate = typeof original.enumerateDevices === "function";
+          const hasConstraints = typeof original.getSupportedConstraints === "function";
+          if (!hasEnumerate && !hasConstraints) return original;
           const wrappedDevices = new Proxy(original, {
             get(target, prop) {
               const value = Reflect.get(target, prop, target);
@@ -1093,6 +1094,15 @@
                   },
                   "enumerateDevices",
                   { length: 0, source: U.nativeSourceFor(value, "enumerateDevices") }
+                );
+              }
+              if (prop === "getSupportedConstraints") {
+                return U.stealth(
+                  function getSupportedConstraints() {
+                    return value.apply(target, arguments);
+                  },
+                  "getSupportedConstraints",
+                  { length: 0, source: U.nativeSourceFor(value, "getSupportedConstraints") }
                 );
               }
               return typeof value === "function" ? value.bind(target) : value;
@@ -1487,9 +1497,411 @@
     return hash >>> 0;
   };
 
+  const maskWebglCtorExtensions = (Ctor) => {
+    if (typeof Ctor === "undefined" || !Ctor.prototype) return;
+    const supportedDesc = Object.getOwnPropertyDescriptor(Ctor.prototype, "getSupportedExtensions");
+    const origSupported = supportedDesc && supportedDesc.value;
+    if (typeof origSupported === "function") {
+      const PLAUSIBLE_EXTENSIONS = [
+        "ANGLE_instanced_arrays",
+        "EXT_blend_minmax",
+        "EXT_color_buffer_half_float",
+        "EXT_disjoint_timer_query",
+        "EXT_float_blend",
+        "EXT_frag_depth",
+        "EXT_shader_texture_lod",
+        "EXT_texture_compression_bptc",
+        "EXT_texture_compression_rgtc",
+        "EXT_texture_filter_anisotropic",
+        "EXT_sRGB",
+        "OES_element_index_uint",
+        "OES_fbo_render_mipmap",
+        "OES_standard_derivatives",
+        "OES_texture_float",
+        "OES_texture_float_linear",
+        "OES_texture_half_float",
+        "OES_texture_half_float_linear",
+        "OES_vertex_array_object",
+        "WEBGL_color_buffer_float",
+        "WEBGL_compressed_texture_astc",
+        "WEBGL_compressed_texture_etc",
+        "WEBGL_compressed_texture_etc1",
+        "WEBGL_compressed_texture_pvrtc",
+        "WEBGL_compressed_texture_s3tc",
+        "WEBGL_compressed_texture_s3tc_srgb",
+        "WEBGL_debug_renderer_info",
+        "WEBGL_debug_shaders",
+        "WEBGL_depth_texture",
+        "WEBGL_draw_buffers",
+        "WEBGL_lose_context",
+        "WEBGL_multi_draw",
+      ];
+      const wrappedSupported = {
+        getSupportedExtensions() {
+          if (!isMasking()) return origSupported.apply(this, arguments);
+          return PLAUSIBLE_EXTENSIONS.slice();
+        },
+      }.getSupportedExtensions;
+      Object.defineProperty(Ctor.prototype, "getSupportedExtensions", {
+        ...supportedDesc,
+        value: U.stealth(wrappedSupported, "getSupportedExtensions", {
+          length: origSupported.length,
+          source: U.nativeSourceFor(origSupported, "getSupportedExtensions"),
+        }),
+      });
+    }
+    const precisionDesc = Object.getOwnPropertyDescriptor(
+      Ctor.prototype,
+      "getShaderPrecisionFormat"
+    );
+    const origPrecision = precisionDesc && precisionDesc.value;
+    if (typeof origPrecision === "function") {
+      const wrappedPrecision = {
+        getShaderPrecisionFormat(_shaderType, _precisionType) {
+          if (!isMasking()) return origPrecision.apply(this, arguments);
+          return {
+            rangeMin: 127,
+            rangeMax: 127,
+            precision: 23,
+          };
+        },
+      }.getShaderPrecisionFormat;
+      Object.defineProperty(Ctor.prototype, "getShaderPrecisionFormat", {
+        ...precisionDesc,
+        value: U.stealth(wrappedPrecision, "getShaderPrecisionFormat", {
+          length: origPrecision.length,
+          source: U.nativeSourceFor(origPrecision, "getShaderPrecisionFormat"),
+        }),
+      });
+    }
+  };
+
+  const patchWebglExtensions = () => {
+    maskWebglCtorExtensions(globalThis.WebGLRenderingContext);
+    maskWebglCtorExtensions(globalThis.WebGL2RenderingContext);
+  };
+
+  const patchFontFaceSetFull = () => {
+    if (typeof FontFaceSet === "undefined" || !FontFaceSet.prototype) return;
+    const proto = FontFaceSet.prototype;
+
+    const getFontFamily = (font) => {
+      const str = String(font || "").trim();
+      const match = str.match(/^(?:"([^"]+)"|'([^']+)'|([^,]+))/i);
+      return (match[1] || match[2] || match[3] || "").toLowerCase();
+    };
+
+    const PLAUSIBLE_COMMON_FONTS_INTERNAL = new Set([
+      "arial",
+      "arial black",
+      "arial narrow",
+      "book antiqua",
+      "calibri",
+      "cambria",
+      "candara",
+      "century gothic",
+      "comic sans ms",
+      "consolas",
+      "constantia",
+      "corbel",
+      "courier",
+      "courier new",
+      "dejavu sans",
+      "dejavu serif",
+      "eb garamond",
+      "franklin gothic medium",
+      "garamond",
+      "georgia",
+      "gill sans",
+      "helvetica",
+      "impact",
+      "liberation sans",
+      "liberation serif",
+      "lucida console",
+      "lucida sans unicode",
+      "marlett",
+      "microsoft sans serif",
+      "modern",
+      "monaco",
+      "ms sans serif",
+      "palatino linotype",
+      "roman",
+      "script",
+      "segoe print",
+      "segoe script",
+      "segoe ui",
+      "symbol",
+      "system-ui",
+      "tahoma",
+      "times",
+      "times new roman",
+      "trebuchet ms",
+      "verdana",
+      "webdings",
+      "wingdings",
+    ]);
+
+    const fontIsPlausible = (family) => !family || PLAUSIBLE_COMMON_FONTS_INTERNAL.has(family);
+
+    const isMaskingFonts = () => isMasking();
+
+    const loadDesc = Object.getOwnPropertyDescriptor(proto, "load");
+    const origLoad = loadDesc && loadDesc.value;
+    if (typeof origLoad === "function") {
+      const wrappedLoad = {
+        load(font, _text) {
+          if (!isMaskingFonts()) return origLoad.apply(this, arguments);
+          const family = getFontFamily(font);
+          if (fontIsPlausible(family)) return origLoad.apply(this, arguments);
+          return Promise.resolve([]);
+        },
+      }.load;
+      Object.defineProperty(proto, "load", {
+        ...loadDesc,
+        value: U.stealth(wrappedLoad, "load", {
+          length: origLoad.length,
+          source: U.nativeSourceFor(origLoad, "load"),
+        }),
+      });
+    }
+
+    const readyDesc = Object.getOwnPropertyDescriptor(proto, "ready");
+    if (readyDesc && readyDesc.get) {
+      Object.defineProperty(proto, "ready", {
+        configurable: true,
+        enumerable: readyDesc.enumerable,
+        get: U.stealth(
+          function get() {
+            const original = readyDesc.get.call(this);
+            if (!isMaskingFonts()) return original;
+            return Promise.resolve(original);
+          },
+          "get ready",
+          { length: 0, source: U.nativeSourceFor(readyDesc.get, "get ready") }
+        ),
+      });
+    }
+
+    const wrapFontIterator = (all, extractFont) => {
+      const filtered = all.filter((entry) => {
+        const font = extractFont(entry);
+        const family = font && font.family ? String(font.family).toLowerCase() : "";
+        return fontIsPlausible(family);
+      });
+      const iterator = filtered[Symbol.iterator]();
+      const result = { _filtered: filtered };
+      for (const builtin of ["next", "return", "throw"]) {
+        const fn = iterator[builtin];
+        if (typeof fn === "function") {
+          result[builtin] = U.stealth(fn.bind(iterator), builtin, {
+            length: fn.length,
+            source: U.nativeSourceFor(fn, builtin),
+          });
+        }
+      }
+      Object.defineProperty(result, Symbol.iterator, {
+        value: U.stealth(
+          function iteratorFn() {
+            return result;
+          },
+          "iterator",
+          { length: 0 }
+        ),
+        configurable: true,
+        enumerable: false,
+        writable: true,
+      });
+      return result;
+    };
+
+    for (const method of [
+      "forEach",
+      "has",
+      "add",
+      "delete",
+      "clear",
+      "entries",
+      "keys",
+      "values",
+    ]) {
+      const desc = Object.getOwnPropertyDescriptor(proto, method);
+      const orig = desc && desc.value;
+      if (typeof orig !== "function") continue;
+      const wrapped = {
+        [method](...args) {
+          if (!isMaskingFonts()) return orig.apply(this, args);
+          if (method === "forEach") {
+            const callback = args[0];
+            if (typeof callback !== "function") return orig.apply(this, args);
+            return orig.call(
+              this,
+              (value, key, set) => {
+                const family = value && value.family ? String(value.family).toLowerCase() : "";
+                if (fontIsPlausible(family)) callback(value, key, set);
+              },
+              args[1]
+            );
+          }
+          if (method === "entries" || method === "keys" || method === "values") {
+            const all = Array.from(orig.call(this));
+            const extract = method === "entries" ? (entry) => entry[1] : (entry) => entry;
+            return wrapFontIterator(all, extract);
+          }
+          if (method === "has") {
+            const font = args[0];
+            const family = font && font.family ? String(font.family).toLowerCase() : "";
+            if (!fontIsPlausible(family)) return false;
+          }
+          if (method === "add") {
+            const font = args[0];
+            const family = font && font.family ? String(font.family).toLowerCase() : "";
+            if (!fontIsPlausible(family)) return this;
+          }
+          if (method === "delete" || method === "clear") {
+            return this;
+          }
+          return orig.apply(this, args);
+        },
+      }[method];
+      Object.defineProperty(proto, method, {
+        ...desc,
+        value: U.stealth(wrapped, method, {
+          length: orig.length,
+          source: U.nativeSourceFor(orig, method),
+        }),
+      });
+    }
+
+    const sizeDesc = Object.getOwnPropertyDescriptor(proto, "size");
+    if (sizeDesc && sizeDesc.get) {
+      Object.defineProperty(proto, "size", {
+        configurable: true,
+        enumerable: sizeDesc.enumerable,
+        get: U.stealth(
+          function get() {
+            if (!isMaskingFonts()) return sizeDesc.get.call(this);
+            let count = 0;
+            try {
+              this.forEach((font) => {
+                const family = font && font.family ? String(font.family).toLowerCase() : "";
+                if (fontIsPlausible(family)) count++;
+              });
+            } catch {}
+            return count;
+          },
+          "get size",
+          { length: 0, source: U.nativeSourceFor(sizeDesc.get, "get size") }
+        ),
+      });
+    }
+  };
+
+  const patchGamepads = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    const found = U.descriptorOwnerFor(Navigator.prototype, "getGamepads");
+    const desc = found && found.desc;
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      getGamepads() {
+        if (!isMasking()) return orig.apply(this, arguments);
+        const result = orig.apply(this, arguments);
+        if (!result || !Array.isArray(result)) return result;
+        return result.map(() => null);
+      },
+    }.getGamepads;
+    Object.defineProperty(found.owner, "getGamepads", {
+      ...desc,
+      value: U.stealth(wrapped, "getGamepads", {
+        length: orig.length,
+        source: U.nativeSourceFor(orig, "getGamepads"),
+      }),
+    });
+  };
+
+  const patchScreenPosition = () => {
+    for (const prop of ["screenLeft", "screenTop", "availLeft", "availTop"]) {
+      patchGetter(window, prop, `get ${prop}`, () => 0);
+    }
+    if (typeof Screen !== "undefined" && Screen.prototype) {
+      for (const prop of ["left", "top", "availLeft", "availTop"]) {
+        patchGetter(Screen.prototype, prop, `get ${prop}`, () => 0);
+      }
+      const isExtendedDesc = Object.getOwnPropertyDescriptor(Screen.prototype, "isExtended");
+      if (isExtendedDesc && isExtendedDesc.get) {
+        patchGetter(Screen.prototype, "isExtended", "get isExtended", () => false);
+      }
+    }
+  };
+
+  const patchQueryLocalFonts = () => {
+    const origQueryLocalFonts = window.queryLocalFonts;
+    if (typeof origQueryLocalFonts === "function") {
+      try {
+        Object.defineProperty(window, "queryLocalFonts", {
+          configurable: true,
+          enumerable: false,
+          writable: true,
+          value: U.stealth(
+            function queryLocalFonts() {
+              if (isMasking()) return Promise.resolve([]);
+              return origQueryLocalFonts.apply(this, arguments);
+            },
+            "queryLocalFonts",
+            { length: 0, source: "function queryLocalFonts() { [native code] }" }
+          ),
+        });
+      } catch {}
+    }
+  };
+
+  const patchSpeechSynthesis = () => {
+    if (typeof window.speechSynthesis === "undefined") return;
+    const synth = window.speechSynthesis;
+    const synthProto = Object.getPrototypeOf(synth);
+    if (!synthProto) return;
+    const voicesDesc = Object.getOwnPropertyDescriptor(synthProto, "getVoices");
+    const origGetVoices = voicesDesc && voicesDesc.value;
+    if (typeof origGetVoices === "function") {
+      const wrappedGetVoices = {
+        getVoices() {
+          if (!isMasking()) return origGetVoices.apply(this, arguments);
+          return [];
+        },
+      }.getVoices;
+      Object.defineProperty(synthProto, "getVoices", {
+        ...voicesDesc,
+        value: U.stealth(wrappedGetVoices, "getVoices", {
+          length: origGetVoices.length,
+          source: U.nativeSourceFor(origGetVoices, "getVoices"),
+        }),
+      });
+    }
+  };
+
+  const patchNavigatorExtraGetters = () => {
+    try {
+      if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+      const cookieFound = U.descriptorOwnerFor(Navigator.prototype, "cookieEnabled");
+      if (cookieFound && cookieFound.desc && typeof cookieFound.desc.get === "function") {
+        patchGetter(Navigator.prototype, "cookieEnabled", "get cookieEnabled", () => true);
+      }
+    } catch {}
+
+    try {
+      if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+      const onlineFound = U.descriptorOwnerFor(Navigator.prototype, "onLine");
+      if (onlineFound && onlineFound.desc && typeof onlineFound.desc.get === "function") {
+        patchGetter(Navigator.prototype, "onLine", "get onLine", () => true);
+      }
+    } catch {}
+  };
+
   try {
     patchNavigatorGetters();
+    patchNavigatorExtraGetters();
     patchScreenGetters();
+    patchScreenPosition();
     patchUserAgentData();
     patchDateTimeFormatConstructor();
     patchTimezone();
@@ -1498,6 +1910,7 @@
     patchStorageEstimate();
     patchPerformanceMemory();
     patchWebgl();
+    patchWebglExtensions();
     patchCanvas();
     patchOffscreenCanvas();
     patchAudioRendering();
@@ -1511,5 +1924,9 @@
     patchCredentials();
     patchClipboard();
     patchFontFaceSet();
+    patchFontFaceSetFull();
+    patchGamepads();
+    patchQueryLocalFonts();
+    patchSpeechSynthesis();
   } catch {}
 })();
