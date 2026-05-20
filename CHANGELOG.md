@@ -9,7 +9,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Added
 
 - Device signal poisoning now masks `document.fonts.check()` (FontFaceSet), returning a deterministic per-origin font availability persona that always reports common system fonts as available and uses persona-seeded hash decisions for non-standard fonts, preventing font-enumeration fingerprinting.
+- Device signal poisoning now masks additional FontFaceSet methods (`load`, `ready`, `forEach`, `has`, `size`, `entries`, `keys`, `values`, `add`, `delete`, `clear`) to prevent font-enumeration fingerprinting through iteration, lookup, and mutation APIs.
+- Device signal poisoning now masks `WebGLRenderingContext.getSupportedExtensions()`, returning a stable plausible extension list to prevent GPU-capability fingerprinting.
+- Device signal poisoning now masks `WebGLRenderingContext.getShaderPrecisionFormat()`, returning plausible `{ rangeMin: 127, rangeMax: 127, precision: 23 }` values to prevent GPU shader-precision fingerprinting.
+- Device signal poisoning now masks `navigator.getGamepads()`, returning an all-null array to prevent gamepad-hardware fingerprinting.
+- Device signal poisoning now masks `navigator.mediaDevices.getSupportedConstraints()`, preserving native behavior while passing through the existing mediaDevices proxy.
+- Device signal poisoning now masks screen position properties (`screenLeft`, `screenTop`, `availLeft`, `availTop`) and `Screen.prototype.isExtended`, returning `0`/`0`/`0`/`0`/`false` for a single-monitor persona.
+- Device signal poisoning now masks `navigator.cookieEnabled` (returning `true`) and `navigator.onLine` (returning `true`) for persona consistency.
+- Device signal poisoning now masks `window.queryLocalFonts()`, returning an empty array to prevent local font-access API enumeration.
+- Device signal poisoning now masks `speechSynthesis.getVoices()`, returning an empty array to prevent voice-list fingerprinting.
 - Playwright test coverage for `document.fonts.check()` masking and FontFaceSet `toString()` stealth under fingerprint masking.
+- Playwright test coverage for all new fingerprint masking vectors: WebGL extensions/precision, FontFaceSet iterators/size/has/load, navigator.getGamepads, mediaDevices.getSupportedConstraints, screen position/isExtended, queryLocalFonts, speechSynthesis.getVoices, navigator.cookieEnabled, and navigator.onLine.
 
 ### Changed
 

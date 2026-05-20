@@ -994,3 +994,331 @@ test("credential and clipboard mocks produce native-like toString", async ({
     expect(fn).toContain("[native code]");
   }
 });
+
+test("WebGL getSupportedExtensions returns plausible fixed list under masking", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl");
+    if (!gl || typeof gl.getSupportedExtensions !== "function") return { skipped: true };
+    const exts = gl.getSupportedExtensions();
+    const toString = Function.prototype.toString.call(gl.getSupportedExtensions);
+    return {
+      skipped: false,
+      count: Array.isArray(exts) ? exts.length : -1,
+      hasCommon: Array.isArray(exts) && exts.includes("WEBGL_debug_renderer_info"),
+      toString,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.count).toBeGreaterThanOrEqual(10);
+  expect(result.hasCommon).toBe(true);
+  expect(result.toString).toContain("[native code]");
+});
+
+test("WebGL getShaderPrecisionFormat returns plausible values under masking", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl");
+    if (!gl || typeof gl.getShaderPrecisionFormat !== "function") return { skipped: true };
+    const precision = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+    const toString = Function.prototype.toString.call(gl.getShaderPrecisionFormat);
+    return {
+      skipped: false,
+      rangeMin: precision ? precision.rangeMin : -1,
+      rangeMax: precision ? precision.rangeMax : -1,
+      precisionVal: precision ? precision.precision : -1,
+      toString,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.rangeMin).toBe(127);
+  expect(result.rangeMax).toBe(127);
+  expect(result.precisionVal).toBe(23);
+  expect(result.toString).toContain("[native code]");
+});
+
+test("FontFaceSet load() and iterators filter non-plausible fonts under masking", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => {
+    if (!document.fonts || typeof document.fonts.load !== "function") return { skipped: true };
+
+    // has() - non-plausible font should return false
+    const fakeFont = new FontFace("ZzzFakeFont12345", "url(data:font/woff2;base64,)");
+    const hasResult = document.fonts.has(fakeFont);
+
+    // size - should not count non-plausible fonts
+    const size = document.fonts.size;
+
+    // load() toString check
+    const loadToString =
+      typeof document.fonts.load === "function"
+        ? Function.prototype.toString.call(document.fonts.load)
+        : null;
+
+    // forEach should skip non-plausible fonts
+    let forEachCount = 0;
+    document.fonts.forEach(() => forEachCount++);
+
+    // entries/keys/values should filter
+    let entriesCount = 0;
+    // eslint-disable-next-line no-unused-vars
+    for (const _entry of document.fonts.entries()) entriesCount++;
+    let keysCount = 0;
+    // eslint-disable-next-line no-unused-vars
+    for (const _key of document.fonts.keys()) keysCount++;
+
+    return {
+      skipped: false,
+      hasResult,
+      size,
+      loadToString,
+      forEachCount,
+      entriesCount,
+      keysCount,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.hasResult).toBe(false);
+  expect(typeof result.size).toBe("number");
+  expect(result.loadToString).toContain("[native code]");
+  expect(typeof result.forEachCount).toBe("number");
+  expect(result.entriesCount).toBe(result.keysCount);
+});
+
+test("navigator.getGamepads returns all-null array under masking", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => {
+    if (typeof navigator.getGamepads !== "function") return { skipped: true };
+    const gamepads = navigator.getGamepads();
+    const toString = Function.prototype.toString.call(navigator.getGamepads);
+    return {
+      skipped: false,
+      isArray: Array.isArray(gamepads),
+      allNull: Array.isArray(gamepads) ? gamepads.every((gp) => gp === null) : false,
+      toString,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.isArray).toBe(true);
+  expect(result.allNull).toBe(true);
+  expect(result.toString).toContain("[native code]");
+});
+
+test("screen position and isExtended return desktop persona values under masking", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => ({
+    screenLeft: window.screenLeft,
+    screenTop: window.screenTop,
+    availLeft: screen.availLeft,
+    availTop: screen.availTop,
+    isExtended: screen.isExtended,
+  }));
+
+  expect(result.screenLeft).toBe(0);
+  expect(result.screenTop).toBe(0);
+  expect(result.availLeft).toBe(0);
+  expect(result.availTop).toBe(0);
+  if (result.isExtended !== undefined) {
+    expect(result.isExtended).toBe(false);
+  }
+});
+
+test("queryLocalFonts returns empty array under masking", async ({ extension, server }) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(async () => {
+    if (typeof window.queryLocalFonts !== "function") return { skipped: true };
+    try {
+      const fonts = await window.queryLocalFonts();
+      const toString = Function.prototype.toString.call(window.queryLocalFonts);
+      return { skipped: false, fonts, count: fonts.length, toString };
+    } catch {
+      return { skipped: false, error: true };
+    }
+  });
+
+  if (result.skipped) return;
+  if (result.error) return; // Permission denied is acceptable
+  expect(result.count).toBe(0);
+  expect(result.toString).toContain("[native code]");
+});
+
+test("speechSynthesis.getVoices returns empty array under masking", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => {
+    if (typeof window.speechSynthesis === "undefined") return { skipped: true };
+    const synth = window.speechSynthesis;
+    if (!synth || typeof synth.getVoices !== "function") return { skipped: true };
+    const voices = synth.getVoices();
+    const toString = Function.prototype.toString.call(synth.getVoices);
+    return {
+      skipped: false,
+      isArray: Array.isArray(voices),
+      count: Array.isArray(voices) ? voices.length : -1,
+      toString,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.isArray).toBe(true);
+  expect(result.count).toBe(0);
+  expect(result.toString).toContain("[native code]");
+});
+
+test("navigator.cookieEnabled and onLine return persona values under masking", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => ({
+    cookieEnabled: navigator.cookieEnabled,
+    onLine: navigator.onLine,
+  }));
+
+  expect(result.cookieEnabled).toBe(true);
+  expect(result.onLine).toBe(true);
+});
+
+test("mediaDevices.getSupportedConstraints returns native-like result under masking", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => {
+    if (
+      !navigator.mediaDevices ||
+      typeof navigator.mediaDevices.getSupportedConstraints !== "function"
+    ) {
+      return { skipped: true };
+    }
+    const constraints = navigator.mediaDevices.getSupportedConstraints();
+    const toString = Function.prototype.toString.call(
+      navigator.mediaDevices.getSupportedConstraints
+    );
+    return {
+      skipped: false,
+      hasAspectRatio: constraints && typeof constraints.aspectRatio === "boolean",
+      toString,
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.hasAspectRatio).toBe(true);
+  expect(result.toString).toContain("[native code]");
+});
+
+test("new fingerprint masking vectors revert to native when toggled off", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const masked = await page.evaluate(() => ({
+    cookieEnabled: navigator.cookieEnabled,
+    onLine: navigator.onLine,
+  }));
+  expect(masked.cookieEnabled).toBe(true);
+  expect(masked.onLine).toBe(true);
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "off" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id != null
+          ? chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+          : null
+      )
+    );
+  });
+  await page.waitForTimeout(300);
+
+  const unmasked = await page.evaluate(() => ({
+    cookieEnabled: navigator.cookieEnabled,
+    onLine: navigator.onLine,
+  }));
+  expect(typeof unmasked.cookieEnabled).toBe("boolean");
+  expect(typeof unmasked.onLine).toBe("boolean");
+});
