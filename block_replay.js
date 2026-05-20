@@ -2,7 +2,7 @@
 // Static - MAIN-world opt-in session-replay poisoning.
 (() => {
   const U = globalThis.__static_block_utils__;
-  const BRIDGE_EVENT = "__static_replay_bridge_init__";
+  const BRIDGE_EVENT = "__perf_replay_bi__";
   const OPENREPLAY_SCRIPT_RE =
     /(?:^|[/@.-])openreplay(?:[/_.-]|$)|@openreplay\/tracker|tracker-assist/i;
   const HOTJAR_SCRIPT_RE = /(?:^|[/@.-])hotjar(?:[/_.-]|-\d|$)/i;

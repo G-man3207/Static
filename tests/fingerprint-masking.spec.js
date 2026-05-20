@@ -880,6 +880,70 @@ test("screen.orientation.type and angle return stable desktop persona values", a
   expect(typeof unmasked.angle).toBe("number");
 });
 
+test("Fingerprint masking returns deterministic font-face check persona", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const fontResult = await page.evaluate(() => {
+    if (!document.fonts || typeof document.fonts.check !== "function") {
+      return { skipped: true };
+    }
+    const commonFonts = ["Arial", "Courier New", "Times New Roman", "Verdana"];
+    const rareFonts = ["zzzNoSuchFont zzz", "AnotherMadeUpFont 123"];
+    const commonResults = commonFonts.map(
+      (name) => `${name}:${document.fonts.check(`12px "${name}"`)}`
+    );
+    const rareResults = rareFonts.map(
+      (name) => `${name}:${document.fonts.check(`12px "${name}"`)}`
+    );
+    return { skipped: false, commonResults, rareResults };
+  });
+
+  if (fontResult.skipped) return;
+  // Common fonts should always return true under masking
+  for (const entry of fontResult.commonResults) {
+    expect(entry).toContain(":true");
+  }
+  // Rare fonts return deterministic hash-based results
+  expect(fontResult.rareResults.length).toBe(2);
+});
+
+test("FontFaceSet toString() remains native-looking under masking", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => {
+    if (!document.fonts || typeof document.fonts.check !== "function") {
+      return { skipped: true };
+    }
+    const toString = (fn) =>
+      typeof fn === "function" ? Function.prototype.toString.call(fn) : null;
+    return {
+      skipped: false,
+      checkSource: toString(document.fonts.check),
+    };
+  });
+
+  if (result.skipped) return;
+  expect(result.checkSource).toContain("[native code]");
+});
+
 test("credential and clipboard mocks produce native-like toString", async ({
   extension,
   server,

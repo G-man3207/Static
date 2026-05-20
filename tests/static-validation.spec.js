@@ -420,7 +420,7 @@ test("service worker ID caps preserve known persona IDs under canary pressure", 
 test("bridge caps high-cardinality probe ID maps before service-worker flush", () => {
   const knownId = "nngceckbapebfimnlniiiahkandclblb";
   const harness = loadBridgeHarness();
-  const port = harness.portsByEvent.__static_noise_bridge_init__;
+  const port = harness.portsByEvent.__perf_noise_bi__;
   expect(port).toBeTruthy();
 
   let sent = 0;
@@ -455,7 +455,7 @@ test("bridge caps high-cardinality probe ID maps before service-worker flush", (
 
 test("bridge drops pending probe batches when log clear resets page state", () => {
   const harness = loadBridgeHarness();
-  const port = harness.portsByEvent.__static_noise_bridge_init__;
+  const port = harness.portsByEvent.__perf_noise_bi__;
   expect(port).toBeTruthy();
 
   port.postMessage({

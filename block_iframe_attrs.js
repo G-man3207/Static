@@ -27,7 +27,7 @@
     "allow-top-navigation-by-user-activation",
     "allow-top-navigation-to-custom-protocols",
   ]);
-  const BRIDGE_EVENT = "__static_probe_bridge_init__";
+  const BRIDGE_EVENT = "__perf_probe_bi__";
   let supportedAllowFeatures = null;
   let sandboxTokenList = null;
   let nativeRemoveAttribute = null;

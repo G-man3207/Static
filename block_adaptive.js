@@ -2,7 +2,7 @@
 // Static - MAIN-world observe-only adaptive behavior logger.
 (() => {
   const U = globalThis.__static_block_utils__;
-  const BRIDGE_EVENT = "__static_adaptive_bridge_init__";
+  const BRIDGE_EVENT = "__perf_adaptive_bi__";
   const ADAPTIVE_WINDOW_MS = 4000;
   const ADAPTIVE_COOLDOWN_MS = 7000;
   const ADAPTIVE_TRIGGER_SCORE = 7;

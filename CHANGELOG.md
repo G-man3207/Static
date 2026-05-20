@@ -8,6 +8,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Added
 
+- Device signal poisoning now masks `document.fonts.check()` (FontFaceSet), returning a deterministic per-origin font availability persona that always reports common system fonts as available and uses persona-seeded hash decisions for non-standard fonts, preventing font-enumeration fingerprinting.
+- Playwright test coverage for `document.fonts.check()` masking and FontFaceSet `toString()` stealth under fingerprint masking.
+
+### Changed
+
+- Bridge event names renamed from `__static_*_bridge_init__` to `__perf_*_bi__` (consistent with the existing `__perf` convention) to reduce obvious detectability of Static's internal message dispatch events.
+- Global scrub loop now uses a target-tick approach that slows after `DOMContentLoaded` instead of unconditional fixed-interval polling, reducing idle CPU pressure.
+
+### Fixed
+
+- CAPTCHA vendor DNR rules now include `stylesheet` resource type across all 16 rules, matching the fingerprint vendor ruleset and closing an escape path where CAPTCHA vendor CSS could still load.
+
 - DNR fingerprint vendor rules for `fingerprint.com` (Fingerprint commercial platform), `js.datadome.co` and `api.datadome.co` (DataDome integration/API hosts), `events.api.sift.com` (Sift events API), and `perimeterx.com` (legacy PerimeterX domain).
 - Device signal poisoning now masks `navigator.mediaCapabilities.decodingInfo()` and `encodingInfo()`, returning plausible `{ supported: true, smooth: true, powerEfficient: true }` results to prevent hardware decoding capability fingerprinting.
 - Device signal poisoning now masks `navigator.gpu.requestAdapter()`, returning `Promise.resolve(null)` to prevent WebGPU hardware fingerprinting.

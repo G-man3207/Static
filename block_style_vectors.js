@@ -2,7 +2,7 @@
 // Static - MAIN-world blocking for CSS declaration extension URL probes.
 (() => {
   const U = globalThis.__static_block_utils__;
-  const BRIDGE_EVENT = "__static_style_probe_bridge_init__";
+  const BRIDGE_EVENT = "__perf_style_bi__";
   const MAX_QUEUED_PROBES = 1000;
   const STYLE_MARKUP_RE = /<\s*style(?:\s|>|\/)/i;
   const STYLE_ATTR_MARKUP_RE = /\sstyle\s*=/i;

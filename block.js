@@ -1,7 +1,7 @@
 // Static - MAIN-world fetch/XHR extension probe blocker and Noise decoy engine.
 (() => {
   const U = globalThis.__static_block_utils__;
-  const BRIDGE_EVENT = "__static_noise_bridge_init__";
+  const BRIDGE_EVENT = "__perf_noise_bi__";
   const MAX_QUEUED_PROBES = 1000;
   let persona = new Set();
   let noiseEnabled = false;

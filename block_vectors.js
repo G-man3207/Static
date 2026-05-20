@@ -1,7 +1,7 @@
 // Static - MAIN-world blocking for extension probe vectors beyond fetch/XHR.
 (() => {
   const U = globalThis.__static_block_utils__;
-  const BRIDGE_EVENT = "__static_probe_bridge_init__";
+  const BRIDGE_EVENT = "__perf_probe_bi__";
   const MAX_QUEUED_PROBES = 1000;
   let disabled = false;
 

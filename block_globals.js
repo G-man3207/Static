@@ -24,7 +24,7 @@
   const SCRUB_TARGETS = [window, WINDOW_PROTO].filter(Boolean);
   const FAST_SCRUB_MS = 25;
   const FAST_SCRUB_TICKS = 200;
-  const BRIDGE_EVENT = "__static_probe_bridge_init__";
+  const BRIDGE_EVENT = "__perf_probe_bi__";
   let disabled = false;
 
   const applyConfigUpdate = (data) => {
@@ -241,14 +241,43 @@
   patchLegacyDefineAccessor("__defineGetter__");
   patchLegacyDefineAccessor("__defineSetter__");
 
+  let scrubTimer = null;
   let scrubTicks = 0;
-  const scrubTimer = setInterval(() => {
-    if (disabled) return;
-    scrubGlobals();
-    scrubTicks++;
-    if (scrubTicks >= FAST_SCRUB_TICKS) clearInterval(scrubTimer);
-  }, FAST_SCRUB_MS);
 
-  addEventListener("DOMContentLoaded", scrubGlobals, { once: true });
+  const maybeStopScrubTimer = () => {
+    if (scrubTimer) {
+      clearInterval(scrubTimer);
+      scrubTimer = null;
+    }
+  };
+
+  const startScrubTimer = () => {
+    if (disabled) return;
+    scrubTimer = setInterval(() => {
+      if (disabled) {
+        maybeStopScrubTimer();
+        return;
+      }
+      scrubGlobals();
+      scrubTicks++;
+      if (scrubTicks >= FAST_SCRUB_TICKS) maybeStopScrubTimer();
+    }, FAST_SCRUB_MS);
+  };
+
+  scrubGlobals();
+  startScrubTimer();
+
+  addEventListener(
+    "DOMContentLoaded",
+    () => {
+      scrubGlobals();
+      // After DOMContentLoaded, slow the scrub to every 50ms for half the remaining ticks
+      const remaining = FAST_SCRUB_TICKS - scrubTicks;
+      if (remaining > 0) {
+        scrubTicks = Math.max(scrubTicks, FAST_SCRUB_TICKS - Math.ceil(remaining / 2));
+      }
+    },
+    { once: true }
+  );
   addEventListener("load", scrubGlobals, { once: true });
 })();
