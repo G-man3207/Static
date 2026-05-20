@@ -1140,6 +1140,12 @@
                       permissionDesc && typeof permissionDesc === "object"
                         ? permissionDesc.name
                         : permissionDesc;
+                    if (name === "camera" || name === "microphone") {
+                      return Promise.resolve({
+                        name,
+                        state: "prompt",
+                      });
+                    }
                     if (name === "notifications") {
                       return Promise.resolve({
                         name: "notifications",
@@ -1409,60 +1415,61 @@
     });
   };
 
+  const PLAUSIBLE_COMMON_FONTS = new Set([
+    "arial",
+    "arial black",
+    "arial narrow",
+    "book antiqua",
+    "calibri",
+    "cambria",
+    "candara",
+    "century gothic",
+    "comic sans ms",
+    "consolas",
+    "constantia",
+    "corbel",
+    "courier",
+    "courier new",
+    "dejavu sans",
+    "dejavu serif",
+    "eb garamond",
+    "franklin gothic medium",
+    "garamond",
+    "georgia",
+    "gill sans",
+    "helvetica",
+    "impact",
+    "liberation sans",
+    "liberation serif",
+    "lucida console",
+    "lucida sans unicode",
+    "marlett",
+    "microsoft sans serif",
+    "modern",
+    "monaco",
+    "ms sans serif",
+    "palatino linotype",
+    "roman",
+    "script",
+    "segoe print",
+    "segoe script",
+    "segoe ui",
+    "symbol",
+    "system-ui",
+    "tahoma",
+    "times",
+    "times new roman",
+    "trebuchet ms",
+    "verdana",
+    "webdings",
+    "wingdings",
+  ]);
+
   const patchFontFaceSet = () => {
     if (typeof FontFaceSet === "undefined" || !FontFaceSet.prototype) return;
     const desc = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, "check");
     const origCheck = desc && desc.value;
     if (typeof origCheck !== "function") return;
-    const PLAUSIBLE_COMMON_FONTS = new Set([
-      "arial",
-      "arial black",
-      "arial narrow",
-      "book antiqua",
-      "calibri",
-      "cambria",
-      "candara",
-      "century gothic",
-      "comic sans ms",
-      "consolas",
-      "constantia",
-      "corbel",
-      "courier",
-      "courier new",
-      "dejavu sans",
-      "dejavu serif",
-      "eb garamond",
-      "franklin gothic medium",
-      "garamond",
-      "georgia",
-      "gill sans",
-      "helvetica",
-      "impact",
-      "liberation sans",
-      "liberation serif",
-      "lucida console",
-      "lucida sans unicode",
-      "marlett",
-      "microsoft sans serif",
-      "modern",
-      "monaco",
-      "ms sans serif",
-      "palatino linotype",
-      "roman",
-      "script",
-      "segoe print",
-      "segoe script",
-      "segoe ui",
-      "symbol",
-      "system-ui",
-      "tahoma",
-      "times",
-      "times new roman",
-      "trebuchet ms",
-      "verdana",
-      "webdings",
-      "wingdings",
-    ]);
     const extractFontFamily = (font) => {
       const str = String(font || "").trim();
       const match = str.match(/^(?:"([^"]+)"|'([^']+)'|([^,]+))/i);
@@ -1591,57 +1598,7 @@
       return (match[1] || match[2] || match[3] || "").toLowerCase();
     };
 
-    const PLAUSIBLE_COMMON_FONTS_INTERNAL = new Set([
-      "arial",
-      "arial black",
-      "arial narrow",
-      "book antiqua",
-      "calibri",
-      "cambria",
-      "candara",
-      "century gothic",
-      "comic sans ms",
-      "consolas",
-      "constantia",
-      "corbel",
-      "courier",
-      "courier new",
-      "dejavu sans",
-      "dejavu serif",
-      "eb garamond",
-      "franklin gothic medium",
-      "garamond",
-      "georgia",
-      "gill sans",
-      "helvetica",
-      "impact",
-      "liberation sans",
-      "liberation serif",
-      "lucida console",
-      "lucida sans unicode",
-      "marlett",
-      "microsoft sans serif",
-      "modern",
-      "monaco",
-      "ms sans serif",
-      "palatino linotype",
-      "roman",
-      "script",
-      "segoe print",
-      "segoe script",
-      "segoe ui",
-      "symbol",
-      "system-ui",
-      "tahoma",
-      "times",
-      "times new roman",
-      "trebuchet ms",
-      "verdana",
-      "webdings",
-      "wingdings",
-    ]);
-
-    const fontIsPlausible = (family) => !family || PLAUSIBLE_COMMON_FONTS_INTERNAL.has(family);
+    const fontIsPlausible = (family) => !!family && PLAUSIBLE_COMMON_FONTS.has(family);
 
     const isMaskingFonts = () => isMasking();
 
@@ -1893,6 +1850,28 @@
       const onlineFound = U.descriptorOwnerFor(Navigator.prototype, "onLine");
       if (onlineFound && onlineFound.desc && typeof onlineFound.desc.get === "function") {
         patchGetter(Navigator.prototype, "onLine", "get onLine", () => true);
+      }
+    } catch {}
+
+    try {
+      if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+      const javaFound = U.descriptorOwnerFor(Navigator.prototype, "javaEnabled");
+      if (javaFound && javaFound.desc && typeof javaFound.desc.value === "function") {
+        const desc = javaFound.desc;
+        const orig = desc.value;
+        const wrapped = {
+          javaEnabled() {
+            if (isMasking()) return false;
+            return orig.apply(this, arguments);
+          },
+        }.javaEnabled;
+        Object.defineProperty(javaFound.owner, "javaEnabled", {
+          ...desc,
+          value: U.stealth(wrapped, "javaEnabled", {
+            length: orig.length,
+            source: U.nativeSourceFor(orig, "javaEnabled"),
+          }),
+        });
       }
     } catch {}
   };

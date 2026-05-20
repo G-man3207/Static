@@ -97,12 +97,18 @@ test("Fingerprint masking standardizes permissions.query responses", async ({
     }
     const notifications = await navigator.permissions.query({ name: "notifications" });
     const clipboard = await navigator.permissions.query({ name: "clipboard-read" });
+    const camera = await navigator.permissions.query({ name: "camera" });
+    const microphone = await navigator.permissions.query({ name: "microphone" });
     return {
       skipped: false,
       notificationState: notifications.state,
       notificationName: notifications.name,
       clipboardState: clipboard.state,
       clipboardName: clipboard.name,
+      cameraState: camera.state,
+      cameraName: camera.name,
+      microphoneState: microphone.state,
+      microphoneName: microphone.name,
     };
   });
 
@@ -111,6 +117,10 @@ test("Fingerprint masking standardizes permissions.query responses", async ({
   expect(result.notificationName).toBe("notifications");
   expect(result.clipboardState).toBe("prompt");
   expect(result.clipboardName).toBe("clipboard-read");
+  expect(result.cameraState).toBe("prompt");
+  expect(result.cameraName).toBe("camera");
+  expect(result.microphoneState).toBe("prompt");
+  expect(result.microphoneName).toBe("microphone");
 });
 
 test("Fingerprint masking aligns matchMedia with desktop persona", async ({
@@ -311,4 +321,35 @@ test("Fingerprint masking hides hardware availability APIs", async ({ extension,
   expect(result.usb).toBeUndefined();
   expect(result.wakeLock).toBeUndefined();
   expect(result.xr).toBeUndefined();
+});
+
+test("Fingerprint masking returns false for navigator.javaEnabled()", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await extension.serviceWorker.evaluate(async () => {
+    await chrome.storage.local.set({ fingerprint_mode: "mask" });
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+
+  const result = await page.evaluate(() => {
+    if (typeof navigator.javaEnabled !== "function") return { skipped: true };
+    const maskedValue = navigator.javaEnabled();
+    const toStringResult = Function.prototype.toString.call(navigator.javaEnabled);
+    return { skipped: false, maskedValue, toStringResult };
+  });
+
+  if (result.skipped) return;
+  expect(result.maskedValue).toBe(false);
+  expect(result.toStringResult).toContain("[native code]");
 });

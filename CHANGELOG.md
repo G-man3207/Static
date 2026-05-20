@@ -8,6 +8,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Added
 
+- Device signal poisoning now masks `navigator.javaEnabled()`, returning `false` to prevent Java-capability fingerprinting.
+- Device signal poisoning now standardizes `permissions.query()` responses for `camera` and `microphone` permissions (returning `"prompt"`), closing a gap where device enumeration fingerprinters could probe for camera/microphone availability.
+- DNR fingerprint vendor rules for `fingerprintjs.io` (FingerprintJS open-source domain), `jscrambler.com` (Jscrambler code protection + fingerprinting), `netacea.com` (Netacea bot management), `maxmind.com` (MaxMind minFraud/GeoIP), `shieldsquare.com` (ShieldSquare bot detection), and `deviceatlas.com` (DeviceAtlas device detection), closing 6 gap domains at rule IDs 67–72.
+- Playwright test coverage for `navigator.javaEnabled()` masking, camera/microphone permission normalization, and new fingerprint vendor DNR domain rules.
+
+### Changed
+
+- Deduplicated the common font list used by `FontFaceSet.check()` and `FontFaceSet` iteration/mutation methods in `block_fingerprint.js`, consolidating to a single shared set to reduce maintenance burden.
+- Fixed `fontIsPlausible` in `block_fingerprint.js` to reject empty font family strings instead of treating them as plausible, closing a minor fingerprinting leak.
+
+### Fixed
+
+- `navigator.javaEnabled()` now returns properly formatted `[native code]` under `Function.prototype.toString`, closing a stealth gap where detectors could identify the mock via non-native source-code output.
+
+### Added
+
 - Device signal poisoning now masks `document.fonts.check()` (FontFaceSet), returning a deterministic per-origin font availability persona that always reports common system fonts as available and uses persona-seeded hash decisions for non-standard fonts, preventing font-enumeration fingerprinting.
 - Device signal poisoning now masks additional FontFaceSet methods (`load`, `ready`, `forEach`, `has`, `size`, `entries`, `keys`, `values`, `add`, `delete`, `clear`) to prevent font-enumeration fingerprinting through iteration, lookup, and mutation APIs.
 - Device signal poisoning now masks `WebGLRenderingContext.getSupportedExtensions()`, returning a stable plausible extension list to prevent GPU-capability fingerprinting.
