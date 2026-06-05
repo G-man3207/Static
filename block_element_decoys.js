@@ -220,9 +220,27 @@
     return null;
   };
 
-  const passiveDecoyKindFor = (url, prop, el) => {
+  const canHandleTagProp = (tag, prop) => {
+    if (prop === "src") return ["img", "input", "script", "source", "embed"].includes(tag);
+    if (prop === "srcset") return tag === "img" || tag === "source";
+    if (prop === "href") return tag === "link" || tag === "use" || tag === "image";
+    if (prop === "data") return tag === "object";
+    if (prop === "poster") return tag === "video";
+    if (prop === "action" || prop === "formaction") {
+      return ["form", "button", "input"].includes(tag);
+    }
+    return false;
+  };
+
+  const tagFrom = (elOrTag) => {
+    if (elOrTag == null) return "";
+    if (typeof elOrTag === "string") return elOrTag.toLowerCase();
+    return String((elOrTag && elOrTag.tagName) || "").toLowerCase();
+  };
+
+  const passiveDecoyKindFor = (url, prop, elOrTag) => {
     const pathname = pathFor(url);
-    const tag = String((el && el.tagName) || "").toLowerCase();
+    const tag = tagFrom(elOrTag);
     if (!pathname) return null;
 
     if (prop === "srcset" || prop === "poster") return imageDecoyPath(pathname) ? "image" : null;
@@ -366,6 +384,147 @@
     } catch {
       return null;
     }
+  };
+
+  // -----------------------------------------------------------------------
+  // HTML sink sanitization (innerHTML, outerHTML, insertAdjacentHTML,
+  // DOMParser, Range) to close extension-URL injection bypass.
+  // Always prevents the bad URL from persisting in the live DOM tree
+  // (fail-closed for sinks per noise contract) and reports the probe.
+  // For eligible decoy cases, replacement inert data is used in real DOM
+  // while getters/serialization still surface the original (via remember).
+  // -----------------------------------------------------------------------
+
+  const bumpSinkProbe = (baseLabel, url, isDecoy) => {
+    try {
+      const where = isDecoy ? `${baseLabel}-decoy` : baseLabel;
+      postProbe(url, where);
+    } catch {}
+  };
+
+  const rewriteSrcsetValue = (val, tagNameOrEl, bumpFn) => {
+    if (typeof val !== "string" || !val || !U.BAD_URL_RE.test(val)) return val;
+    return val
+      .split(",")
+      .map((piece) => {
+        const trimmed = piece.trim();
+        if (!trimmed) return piece;
+        const m = trimmed.match(/^(\S+)(.*)$/);
+        if (!m) return piece;
+        const u = m[1];
+        const rest = m[2] || "";
+        if (!U.isBad(u)) return piece;
+        const url = U.getUrl(u);
+        const k = passiveDecoyKindFor(url, "srcset", tagNameOrEl);
+        if (!k) {
+          bumpFn(url, false);
+          return `data:image/png;base64,not-valid${rest}`;
+        }
+        const mo = shouldDecoy(url) && k ? "decoy" : "block";
+        const r = replacementUrlFor(mo, k, "srcset", url);
+        bumpFn(url, mo === "decoy");
+        const clean = r.replace(/\s+1x$/i, "");
+        return `${clean}${rest}`;
+      })
+      .join(",");
+  };
+
+  const sanitizeHtmlMarkup = (html, labelBase) => {
+    if (typeof html !== "string" || !html || !U.BAD_URL_RE.test(html)) {
+      return { sanitized: html, tokenMap: new Map() };
+    }
+    const tokenMap = new Map();
+    const localBump = (url, isDecoy) => bumpSinkProbe(labelBase, url, isDecoy);
+
+    const sanitized = html.replace(
+      /<([a-z][a-z0-9-]*)\b([^>]*)>/gi,
+      (full, tagName, attrsChunk) => {
+        // eslint-disable-next-line max-params
+        const rewriteOneAttr = (am, attr, norm, quoteChar, val) => {
+          if (!val || !U.isBad(val)) return am;
+          const q = quoteChar || "";
+          const prop = norm.toLowerCase();
+          const url = U.getUrl(val);
+          if (prop === "srcset") {
+            // always rewrite per-candidate for srcset to support mixed
+            const finalVal = rewriteSrcsetValue(val, tagName, (u, d) => localBump(u, d));
+            return `${attr}=${q}${finalVal}${q}`;
+          }
+          const k = passiveDecoyKindFor(url, prop, tagName);
+          if (!canHandleTagProp(tagName, prop)) {
+            localBump(url, false);
+            return `${attr}=${q}${q}`;
+          }
+          const mo = k && shouldDecoy(url) ? "decoy" : "block";
+          const repl = replacementUrlFor(mo, k, prop, url);
+          const tm = repl.match(/static:([a-z0-9]+)/i) || repl.match(/not-valid-([a-z0-9]+)/i);
+          if (tm) tokenMap.set(tm[1], url);
+          localBump(url, mo === "decoy");
+          return `${attr}=${q}${repl}${q}`;
+        };
+        const chunk = attrsChunk.replace(
+          /\b((src|href|data|poster|action|formaction|srcset))\s*=\s*(["']?)([^"'\s>]*?)\3/gi,
+          rewriteOneAttr
+        );
+        return `<${tagName}${chunk}>`;
+      }
+    );
+
+    return { sanitized, tokenMap };
+  };
+
+  const attachRemembersToSubtree = (root, tokenMap) => {
+    if (!root || !tokenMap || tokenMap.size === 0) return;
+    const suspect = ["src", "href", "data", "poster", "srcset", "action", "formaction"];
+    // eslint-disable-next-line complexity
+    const visit = (el) => {
+      if (!el) return;
+      const hasAttrApi = typeof el.getAttribute === "function";
+      if (hasAttrApi) {
+        for (const prop of suspect) {
+          let realVal = null;
+          try {
+            const lc = prop === "formaction" ? "formaction" : prop;
+            if (prop === "srcset" || prop === "src" || prop === "href" || prop === "poster") {
+              // bypass getter via native desc if possible
+              const ctorProto = el.constructor && el.constructor.prototype;
+              const d = ctorProto && Object.getOwnPropertyDescriptor(ctorProto, prop);
+              // eslint-disable-next-line max-depth
+              if (d && d.get) realVal = d.get.call(el);
+            }
+            if (realVal == null) realVal = el.getAttribute(lc || prop);
+          } catch {
+            try {
+              realVal = el.getAttribute(prop === "formaction" ? "formaction" : prop);
+            } catch {}
+          }
+          if (!realVal || typeof realVal !== "string") continue;
+          const cands = prop === "srcset" ? realVal.split(",") : [realVal];
+          for (const c of cands) {
+            const u = c.trim().split(/\s+/)[0];
+            if (u && (u.includes("static:") || u.includes("not-valid-"))) {
+              const tm = u.match(/(?:static:|not-valid-)([a-z0-9]+)/i);
+              const tok = tm ? tm[1] : null;
+              // eslint-disable-next-line max-depth
+              if (tok && tokenMap.has(tok)) {
+                const orig = tokenMap.get(tok);
+                rememberOriginal(el, prop, orig);
+                // eslint-disable-next-line max-depth
+                if (prop === "srcset") rememberOriginal(el, "currentSrc", orig);
+                rememberElementAttrNodeOriginal(el, prop, orig);
+                rememberNativeMutationValue(el, prop, null, orig);
+              }
+            }
+          }
+        }
+      }
+      try {
+        let child = el.firstElementChild;
+        for (; child; child = child.nextElementSibling) visit(child);
+      } catch {}
+    };
+    const start = root.content || root;
+    visit(start);
   };
 
   const guardProp = (proto, prop, label) => {
@@ -755,6 +914,128 @@
       value: U.stealth(wrapped, "serializeToString", {
         length: orig.length,
         source: U.nativeSourceFor(orig, "serializeToString"),
+      }),
+    });
+  };
+
+  const patchHtmlSetters = () => {
+    const patchOne = (proto, prop) => {
+      if (!proto) return;
+      const desc = Object.getOwnPropertyDescriptor(proto, prop);
+      if (!desc || !desc.set) return;
+      const nativeSet = desc.set;
+      const wrapped = {
+        set [prop](value) {
+          if (disabled) {
+            nativeSet.call(this, value);
+            return;
+          }
+          const input = typeof value === "string" ? value : "";
+          const { sanitized, tokenMap } = sanitizeHtmlMarkup(input, prop);
+          nativeSet.call(this, sanitized);
+          if (tokenMap && tokenMap.size > 0) {
+            attachRemembersToSubtree(this, tokenMap);
+          }
+        },
+      };
+      const wset = Object.getOwnPropertyDescriptor(wrapped, prop).set;
+      Object.defineProperty(proto, prop, {
+        configurable: true,
+        enumerable: desc.enumerable,
+        get: desc.get,
+        set: U.stealth(wset, `set ${prop}`, {
+          length: desc.set.length,
+          source: U.nativeSourceFor(desc.set, `set ${prop}`),
+        }),
+      });
+    };
+    if (typeof Element !== "undefined" && Element.prototype) {
+      patchOne(Element.prototype, "innerHTML");
+      patchOne(Element.prototype, "outerHTML");
+    }
+    if (typeof ShadowRoot !== "undefined" && ShadowRoot.prototype) {
+      patchOne(ShadowRoot.prototype, "innerHTML");
+    }
+  };
+
+  const patchInsertAdjacentHTMLForElements = () => {
+    if (typeof Element === "undefined" || !Element.prototype) return;
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, "insertAdjacentHTML");
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      insertAdjacentHTML(position, html) {
+        if (disabled) return orig.call(this, position, html);
+        const input = typeof html === "string" ? html : "";
+        const { sanitized, tokenMap } = sanitizeHtmlMarkup(input, "insertAdjacentHTML");
+        const result = orig.call(this, position, sanitized);
+        if (tokenMap && tokenMap.size > 0) {
+          attachRemembersToSubtree(this, tokenMap);
+        }
+        return result;
+      },
+    }.insertAdjacentHTML;
+    Object.defineProperty(Element.prototype, "insertAdjacentHTML", {
+      ...desc,
+      value: U.stealth(wrapped, "insertAdjacentHTML", {
+        length: orig.length,
+        source: U.nativeSourceFor(orig, "insertAdjacentHTML"),
+      }),
+    });
+  };
+
+  const patchDomParser = () => {
+    if (typeof DOMParser === "undefined" || !DOMParser.prototype) return;
+    const desc = Object.getOwnPropertyDescriptor(DOMParser.prototype, "parseFromString");
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      parseFromString(markup, type) {
+        if (disabled || typeof markup !== "string" || !U.BAD_URL_RE.test(markup)) {
+          return orig.apply(this, arguments);
+        }
+        const t = String(type || "");
+        if (!/html/i.test(t)) return orig.apply(this, arguments);
+        const { sanitized, tokenMap } = sanitizeHtmlMarkup(markup, "DOMParser");
+        const doc = orig.call(this, sanitized, type);
+        if (tokenMap && tokenMap.size > 0 && doc) {
+          attachRemembersToSubtree(doc.documentElement || doc.body, tokenMap);
+        }
+        return doc;
+      },
+    }.parseFromString;
+    Object.defineProperty(DOMParser.prototype, "parseFromString", {
+      ...desc,
+      value: U.stealth(wrapped, "parseFromString", {
+        length: orig.length,
+        source: U.nativeSourceFor(orig, "parseFromString"),
+      }),
+    });
+  };
+
+  const patchRangeFragment = () => {
+    if (typeof Range === "undefined" || !Range.prototype) return;
+    const desc = Object.getOwnPropertyDescriptor(Range.prototype, "createContextualFragment");
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return;
+    const wrapped = {
+      createContextualFragment(html) {
+        if (disabled || typeof html !== "string" || !U.BAD_URL_RE.test(html)) {
+          return orig.apply(this, arguments);
+        }
+        const { sanitized, tokenMap } = sanitizeHtmlMarkup(html, "createContextualFragment");
+        const frag = orig.call(this, sanitized);
+        if (tokenMap && tokenMap.size > 0 && frag) {
+          attachRemembersToSubtree(frag, tokenMap);
+        }
+        return frag;
+      },
+    }.createContextualFragment;
+    Object.defineProperty(Range.prototype, "createContextualFragment", {
+      ...desc,
+      value: U.stealth(wrapped, "createContextualFragment", {
+        length: orig.length,
+        source: U.nativeSourceFor(orig, "createContextualFragment"),
       }),
     });
   };
@@ -1156,6 +1437,10 @@
   patchCurrentSrc();
   patchStyleSheetHref();
   patchMutationObserver();
+  patchHtmlSetters();
+  patchInsertAdjacentHTMLForElements();
+  patchDomParser();
+  patchRangeFragment();
   if (typeof SVGUseElement !== "undefined") patchSvgHref(SVGUseElement, "svg.use.href");
   if (typeof SVGImageElement !== "undefined") patchSvgHref(SVGImageElement, "svg.image.href");
   if (typeof SVGScriptElement !== "undefined") patchSvgHref(SVGScriptElement, "svg.script.href");
