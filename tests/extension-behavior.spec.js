@@ -170,6 +170,74 @@ test("does not leak probe activity through page-owned console hooks", async ({
   expect(observed).toEqual([]);
 });
 
+test("html sinks (innerHTML, DOMParser, Range, insertAdjacent) intercept extension URL probes and preserve visible originals on getters/attrs/serialization", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
+
+  const url = probedUrl();
+  await page.evaluate(
+    ([u]) => {
+      const host = document.createElement("div");
+      host.innerHTML = `<img src="${u}"><script src="${u}"></script>`;
+      document.body.appendChild(host);
+
+      const p = new DOMParser();
+      const d = p.parseFromString(`<input src="${u}">`, "text/html");
+      document.body.appendChild(d.querySelector("input"));
+
+      const r = document.createRange();
+      const f = r.createContextualFragment(`<video poster="${u}"></video>`);
+      document.body.appendChild(f);
+
+      const adj = document.createElement("div");
+      document.body.appendChild(adj);
+      adj.insertAdjacentHTML("beforeend", `<source src="${u}">`);
+    },
+    [url]
+  );
+  await page.waitForTimeout(250);
+
+  const storage = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get(["cumulative", "probe_log"])
+  );
+  expect(typeof storage.cumulative).toBe("number");
+  expect(storage.cumulative).toBeGreaterThanOrEqual(4);
+  const entry = Object.values(storage.probe_log || {}).find(
+    (e) => e && e.idCounts && e.idCounts[PROBED_ID]
+  );
+  expect(entry).toBeTruthy();
+  expect(entry.idCounts[PROBED_ID]).toBeGreaterThanOrEqual(4);
+
+  const vis = await page.evaluate(() => {
+    const img = document.querySelector("img");
+    const sc = document.querySelector("script[src]");
+    const inp = document.querySelector("input");
+    const vid = document.querySelector("video");
+    const srcEl = document.querySelector("source");
+    return {
+      imgAttr: img && img.getAttribute("src"),
+      imgProp: img && img.src,
+      scriptAttr: sc && sc.getAttribute("src"),
+      inputAttr: inp && inp.getAttribute("src"),
+      videoPosterAttr: vid && vid.getAttribute("poster"),
+      sourceAttr: srcEl && srcEl.getAttribute("src"),
+      htmlHasOrig: document.body.innerHTML.includes("chrome-extension://"),
+    };
+  });
+  // visible surfaces (getters, getAttribute, serialization) report original
+  expect(vis.imgAttr).toContain("chrome-extension://");
+  expect(vis.imgProp).toContain("chrome-extension://");
+  expect(vis.scriptAttr).toContain("chrome-extension://");
+  expect(vis.inputAttr).toContain("chrome-extension://");
+  expect(vis.videoPosterAttr).toContain("chrome-extension://");
+  expect(vis.sourceAttr).toContain("chrome-extension://");
+  expect(vis.htmlHasOrig).toBe(true);
+});
+
 test("filters unsupported iframe allow tokens without browser console warnings", async ({
   extension,
   server,
