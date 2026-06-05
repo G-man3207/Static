@@ -185,6 +185,53 @@
     return null;
   };
 
+  const decoyHeadersFor = (url, contentType, len) => {
+    const id =
+      (typeof U !== "undefined" && U.extractExtId ? U.extractExtId(url) : null) ||
+      "00000000000000000000000000000000";
+    const iid = id || "00000000000000000000000000000000";
+    let h = 0;
+    for (let i = 0; i < iid.length; i++) h = (h * 31 + iid.charCodeAt(i)) >>> 0;
+    const t = 1704067200000 + (h % 365) * 86400000;
+    const lm = new Date(t).toUTCString();
+    const hd = {
+      "content-type": contentType,
+      "last-modified": lm,
+      "cache-control": "public, max-age=3600",
+      etag: `"${h.toString(16).padStart(8, "0")}"`,
+    };
+    if (len != null) hd["content-length"] = String(len);
+    return hd;
+  };
+
+  const byteLengthFor = (body) => {
+    if (typeof body === "string") return new TextEncoder().encode(body).length;
+    if (body instanceof Uint8Array) return body.byteLength;
+    return 0;
+  };
+
+  const buildDecoyResponse = (url, method = "GET", decoyBody = buildDecoyBody(url)) => {
+    if (!decoyBody) return null;
+    const { body, contentType } = decoyBody;
+    const responseBody = method === "HEAD" ? null : body;
+    const len = byteLengthFor(body);
+    const headers = decoyHeadersFor(url, contentType, len);
+    try {
+      const response = new Response(responseBody, {
+        status: 200,
+        statusText: "OK",
+        headers,
+      });
+      fakeFetchResponses.set(response, { type: "default", url: String(url) });
+      return response;
+    } catch {
+      return new Response("", {
+        status: 200,
+        headers: { "content-type": contentType || "text/plain" },
+      });
+    }
+  };
+
   const fetchMethodFor = (input, init) => {
     const initMethod = init && init.method;
     if (initMethod != null) return String(initMethod).toUpperCase();
@@ -197,32 +244,6 @@
   };
 
   const isDecoyableMethod = (method) => method === "GET" || method === "HEAD";
-
-  const byteLengthFor = (body) => {
-    if (typeof body === "string") return new TextEncoder().encode(body).length;
-    if (body instanceof Uint8Array) return body.byteLength;
-    return 0;
-  };
-
-  const buildDecoyResponse = (url, method = "GET", decoyBody = buildDecoyBody(url)) => {
-    if (!decoyBody) return null;
-    const { body, contentType } = decoyBody;
-    const responseBody = method === "HEAD" ? null : body;
-    try {
-      const response = new Response(responseBody, {
-        status: 200,
-        statusText: "OK",
-        headers: {
-          "content-length": String(byteLengthFor(body)),
-          "content-type": contentType,
-        },
-      });
-      fakeFetchResponses.set(response, { type: "default", url: String(url) });
-      return response;
-    } catch {
-      return new Response("", { status: 200 });
-    }
-  };
 
   const bump = (where, url) => {
     try {
@@ -291,6 +312,7 @@
     allHeaders: "",
     contentLength: null,
     contentType: null,
+    lastModified: null,
     readyState,
     response: "",
     responseText: "",
@@ -324,15 +346,17 @@
     const responseValue = responseValueFor(xhr, body, contentType, text);
     const fake = emptyFakeXhr(1);
     fakeXhrResponses.set(xhr, fake);
+    const hdrs = decoyHeadersFor(blocked.url, contentType, contentLength);
     const settle = () => {
       try {
         xhr.dispatchEvent(new ProgressEvent("loadstart"));
       } catch {}
       try {
         Object.assign(fake, {
-          allHeaders: `content-type: ${contentType}\r\ncontent-length: ${contentLength}\r\n`,
+          allHeaders: `content-type: ${hdrs["content-type"]}\r\ncontent-length: ${contentLength}\r\nlast-modified: ${hdrs["last-modified"]}\r\ncache-control: ${hdrs["cache-control"]}\r\netag: ${hdrs.etag}\r\n`,
           contentLength,
-          contentType,
+          contentType: hdrs["content-type"],
+          lastModified: hdrs["last-modified"],
           readyState: 2,
           responseURL: url,
           status: 200,
@@ -438,6 +462,7 @@
           const lower = String(name).toLowerCase();
           if (lower === "content-type") return fake.contentType;
           if (lower === "content-length") return fake.contentLength;
+          if (lower === "last-modified") return fake.lastModified;
           return null;
         }
         const normalizedName = String(name == null ? "" : name)
