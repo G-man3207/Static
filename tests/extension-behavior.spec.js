@@ -637,6 +637,7 @@ test("Noise mode decoys eligible fetch, XHR, and passive element probes", async 
           resolve({
             status: xhr.status,
             contentType: xhr.getResponseHeader("content-type"),
+            lastModified: xhr.getResponseHeader("last-modified"),
             body: xhr.responseText,
           });
         });
@@ -650,6 +651,7 @@ test("Noise mode decoys eligible fetch, XHR, and passive element probes", async 
       return {
         fetchStatus: response.status,
         fetchContentType: response.headers.get("content-type"),
+        fetchLastModified: response.headers.get("last-modified"),
         manifest,
         xhr: xhrResult,
         blockedImageSrc: img.getAttribute("src"),
@@ -664,6 +666,7 @@ test("Noise mode decoys eligible fetch, XHR, and passive element probes", async 
 
   expect(decoys.fetchStatus).toBe(200);
   expect(decoys.fetchContentType).toContain("application/json");
+  expect(decoys.fetchLastModified).toBeTruthy();
   expect(decoys.manifest).toMatchObject({
     manifest_version: 3,
     name: "Browser Extension",
@@ -671,6 +674,7 @@ test("Noise mode decoys eligible fetch, XHR, and passive element probes", async 
   });
   expect(decoys.xhr.status).toBe(200);
   expect(decoys.xhr.contentType).toContain("application/json");
+  expect(decoys.xhr.lastModified).toBeTruthy();
   expect(JSON.parse(decoys.xhr.body)).toMatchObject({ name: "Browser Extension" });
   expect(decoys.blockedImageSrc).toBe(probedUrl(PROBED_ID, "/icon.png"));
   expect(decoys.resolvedImageSrc).toBe(probedUrl(PROBED_ID, "/icon.png"));

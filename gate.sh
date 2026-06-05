@@ -28,11 +28,14 @@ RUN_E2E=false
 
 for arg in "$@"; do
   case "$arg" in
-    --fast)   RUN_FAST=true ;;
-    --lint)   RUN_LINT=true ;;
-    --e2e)    RUN_E2E=true ;;
+    --fast|--quick) RUN_FAST=true; RUN_LINT=true ;;
+    --lint|--lint-strict) RUN_LINT=true ;;
+    --static) RUN_FAST=true ;;
+    --e2e|--e2e-xvfb) RUN_E2E=true ;;
+    --ci|--all) RUN_FAST=true; RUN_LINT=true; RUN_E2E=true ;;
     --docker) USE_DOCKER=true ;;
-    *)        echo "Unknown flag: $arg"; exit 1 ;;
+    --format) ;;
+    *) echo "Unknown flag: $arg"; exit 1 ;;
   esac
 done
 
