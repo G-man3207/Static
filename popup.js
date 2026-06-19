@@ -30,6 +30,15 @@ const replayState = {
 const fingerprintState = {
   fingerprintMode: "off",
 };
+const PROFILE_UA_HINTS = [
+  "architecture",
+  "bitness",
+  "model",
+  "platform",
+  "platformVersion",
+  "uaFullVersion",
+  "wow64",
+];
 const boundHelpTips = new WeakSet();
 let activeHelpTip = null;
 let helpTipPopover = null;
@@ -271,6 +280,290 @@ const addDiagnosticRow = (container, key, value) => {
   row.appendChild(keyEl);
   row.appendChild(valueEl);
   container.appendChild(row);
+};
+
+const textOrUnknown = (value) => {
+  if (value === 0) return "0";
+  const text = String(value ?? "").trim();
+  return text || "unknown";
+};
+
+const formatBytes = (bytes) => {
+  const number = Number(bytes);
+  if (!Number.isFinite(number) || number <= 0) return "unknown";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = number;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  const decimals = value >= 10 || unit === 0 ? 0 : 1;
+  return `${value.toFixed(decimals)} ${units[unit]}`;
+};
+
+const readWebglProfile = () => {
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    if (!gl) return null;
+    const debug = gl.getExtension("WEBGL_debug_renderer_info");
+    return {
+      renderer: debug
+        ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)
+        : gl.getParameter(gl.RENDERER),
+      vendor: debug ? gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const collectUaHints = async () => {
+  const uaData = navigator.userAgentData;
+  if (!uaData || typeof uaData !== "object") return {};
+  const base = typeof uaData.toJSON === "function" ? uaData.toJSON() : {};
+  if (typeof uaData.getHighEntropyValues !== "function") return base;
+  try {
+    return {
+      ...base,
+      ...(await uaData.getHighEntropyValues(PROFILE_UA_HINTS)),
+    };
+  } catch {
+    return base;
+  }
+};
+
+const collectStorageQuota = async () => {
+  try {
+    if (!navigator.storage || typeof navigator.storage.estimate !== "function") return null;
+    const estimate = await navigator.storage.estimate();
+    return estimate && typeof estimate.quota === "number" ? estimate.quota : null;
+  } catch {
+    return null;
+  }
+};
+
+const collectBatteryProfile = async () => {
+  try {
+    if (typeof navigator.getBattery !== "function") return null;
+    const battery = await navigator.getBattery();
+    return {
+      charging: !!battery.charging,
+      level: typeof battery.level === "number" ? Math.round(battery.level * 100) : null,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const connectionSnapshot = () => {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!connection) return null;
+  return {
+    downlink: connection.downlink,
+    effectiveType: connection.effectiveType,
+    rtt: connection.rtt,
+    saveData: connection.saveData,
+    type: connection.type,
+  };
+};
+
+const collectLocalBrowserProfile = async () => {
+  const [uaHints, storageQuota, battery] = await Promise.all([
+    collectUaHints(),
+    collectStorageQuota(),
+    collectBatteryProfile(),
+  ]);
+  const dateOptions = Intl.DateTimeFormat().resolvedOptions();
+  return {
+    architecture: uaHints.architecture,
+    battery,
+    bitness: uaHints.bitness,
+    connection: connectionSnapshot(),
+    deviceMemory: navigator.deviceMemory,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    language: navigator.language,
+    languages: Array.from(navigator.languages || []),
+    locale: dateOptions.locale,
+    platform: navigator.platform || uaHints.platform,
+    screen: {
+      availHeight: screen.availHeight,
+      availWidth: screen.availWidth,
+      colorDepth: screen.colorDepth,
+      devicePixelRatio: window.devicePixelRatio,
+      height: screen.height,
+      pixelDepth: screen.pixelDepth,
+      width: screen.width,
+    },
+    storageQuota,
+    timeZone: dateOptions.timeZone,
+    uaDataPlatform: uaHints.platform,
+    userAgent: navigator.userAgent,
+    webgl: readWebglProfile(),
+  };
+};
+
+const maskedUserAgentForPersona = (personaData) => {
+  const source = String(navigator.userAgent || "");
+  const uaOs = String(personaData.uaOs || "Windows NT 10.0; Win64; x64");
+  if (source.includes("(") && source.includes(")")) {
+    return source.replace(/\([^)]*\)/, `(${uaOs})`);
+  }
+  return `Mozilla/5.0 (${uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`;
+};
+
+const profileFromPersona = (personaData) => {
+  const languages = Array.isArray(personaData.languages) ? personaData.languages : [];
+  return {
+    architecture: personaData.architecture,
+    battery: { charging: true, level: 100 },
+    bitness: personaData.bitness,
+    connection: personaData.connection,
+    deviceMemory: personaData.deviceMemory,
+    hardwareConcurrency: personaData.hardwareConcurrency,
+    language: languages[0],
+    languages,
+    locale: Intl.DateTimeFormat().resolvedOptions().locale || languages[0],
+    platform: personaData.platform,
+    screen: personaData.screen,
+    storageQuota: personaData.storageQuota,
+    timeZone: personaData.timeZone,
+    uaDataPlatform: personaData.uaDataPlatform,
+    userAgent: maskedUserAgentForPersona(personaData),
+    webgl: {
+      renderer: personaData.webglRenderer,
+      vendor: personaData.webglVendor,
+    },
+  };
+};
+
+const formatLanguages = (languages) => {
+  if (Array.isArray(languages) && languages.length > 0) return languages.join(", ");
+  return textOrUnknown(languages);
+};
+
+const formatScreenProfile = (profile) => {
+  if (!profile) return "unknown";
+  const size = `${textOrUnknown(profile.width)}×${textOrUnknown(profile.height)}`;
+  const dpr = profile.devicePixelRatio ? ` @ ${profile.devicePixelRatio}x` : "";
+  const avail =
+    profile.availWidth && profile.availHeight
+      ? `; avail ${profile.availWidth}×${profile.availHeight}`
+      : "";
+  const depth = profile.colorDepth ? `; ${profile.colorDepth}-bit color` : "";
+  return `${size}${dpr}${avail}${depth}`;
+};
+
+const formatPlatformProfile = (profile) => {
+  const archBits = [profile.architecture, profile.bitness].filter(Boolean).join("/");
+  const values = [profile.platform, profile.uaDataPlatform, archBits].filter(Boolean);
+  return values.length ? values.join(" · ") : "unknown";
+};
+
+const formatHardwareProfile = (profile) => {
+  const values = [];
+  if (profile.hardwareConcurrency) values.push(`${profile.hardwareConcurrency} CPU threads`);
+  if (profile.deviceMemory) values.push(`${profile.deviceMemory} GB RAM bucket`);
+  return values.length ? values.join(" / ") : "unknown";
+};
+
+const formatConnectionProfile = (connection) => {
+  if (!connection) return "unknown";
+  const values = [];
+  if (connection.effectiveType) values.push(connection.effectiveType);
+  if (connection.type) values.push(connection.type);
+  if (typeof connection.downlink === "number") values.push(`${connection.downlink} Mbps`);
+  if (typeof connection.rtt === "number") values.push(`${connection.rtt} ms RTT`);
+  if (connection.saveData) values.push("save-data");
+  return values.length ? values.join(", ") : "unknown";
+};
+
+const formatBatteryProfile = (battery) => {
+  if (!battery) return "unknown";
+  const values = [];
+  if (typeof battery.level === "number") values.push(`${battery.level}%`);
+  values.push(battery.charging ? "charging" : "not charging");
+  return values.join(", ");
+};
+
+const formatWebglProfile = (webgl) => {
+  if (!webgl) return "unavailable";
+  const values = [webgl.vendor, webgl.renderer].filter(Boolean);
+  return values.length ? values.join(" / ") : "unavailable";
+};
+
+const exposedProfileStateFor = (resp, usesPersona) => {
+  if (resp && resp.disabled) {
+    return {
+      className: "profile-summary paused",
+      label: "Paused here — browser defaults exposed",
+      note: "Static is paused on this site, so the page sees your unpoisoned JavaScript-visible profile.",
+    };
+  }
+  if (usesPersona) {
+    return {
+      className: "profile-summary",
+      label: "Poisoned per-site persona exposed",
+      note: "Device signal poisoning is active here. These are the stable JavaScript-visible values Static presents to this origin. Network request headers may still differ by browser policy.",
+    };
+  }
+  if (resp && resp.fingerprintMode === "mask") {
+    return {
+      className: "profile-summary warning",
+      label: "Poisoning armed — no page persona available",
+      note: "Open Static from a regular web page to show that site's generated persona. This fallback shows the extension page's browser-visible defaults.",
+    };
+  }
+  return {
+    className: "profile-summary warning",
+    label: "Browser-default profile exposed",
+    note: "These are JavaScript-visible signals. Static does not claim to rewrite every network request header or browser Client Hint.",
+  };
+};
+
+const profileRows = (profile) => [
+  ["User agent", profile.userAgent],
+  ["Platform", formatPlatformProfile(profile)],
+  [
+    "Locale",
+    `${textOrUnknown(profile.locale || profile.language)}; ${formatLanguages(profile.languages)}`,
+  ],
+  ["Timezone", profile.timeZone],
+  ["Screen", formatScreenProfile(profile.screen)],
+  ["CPU / memory", formatHardwareProfile(profile)],
+  ["WebGL", formatWebglProfile(profile.webgl)],
+  ["Network", formatConnectionProfile(profile.connection)],
+  ["Storage quota", formatBytes(profile.storageQuota)],
+  ["Battery", formatBatteryProfile(profile.battery)],
+];
+
+const renderExposedProfile = async (resp) => {
+  const box = document.getElementById("exposed-profile");
+  const summary = document.getElementById("profile-summary");
+  const note = document.getElementById("profile-note");
+  box.innerHTML = "";
+  try {
+    const usesPersona = !!(resp && resp.fingerprintPersona && !resp.disabled);
+    const profile = usesPersona
+      ? profileFromPersona(resp.fingerprintPersona)
+      : await collectLocalBrowserProfile();
+    const state = exposedProfileStateFor(resp, usesPersona);
+    summary.className = state.className;
+    summary.textContent = state.label;
+    note.textContent = state.note;
+    for (const [key, value] of profileRows(profile)) {
+      addDiagnosticRow(box, key, textOrUnknown(value));
+    }
+  } catch {
+    summary.className = "profile-summary paused";
+    summary.textContent = "Profile unavailable";
+    note.textContent = "Static could not read this browser profile from the popup context.";
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No exposed profile snapshot available.";
+    box.appendChild(empty);
+  }
 };
 
 const personaStatusText = (diagnostics) => {
@@ -651,5 +944,6 @@ const renderRulesets = (enabledArr, counts) => {
   renderFingerprintSection(details);
   renderReplaySection(details);
   renderRulesets(enabledArr, counts);
+  await renderExposedProfile(details);
   setupHelpTips();
 })();

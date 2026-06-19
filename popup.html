@@ -270,6 +270,32 @@
         gap: 5px;
         padding-top: 2px;
       }
+      .profile-summary {
+        margin-bottom: 6px;
+        padding: 6px 7px;
+        color: #246236;
+        background: #f1fbf4;
+        border: 1px solid #bfdfc9;
+        border-radius: 6px;
+        font-size: 10px;
+        font-weight: 700;
+      }
+      .profile-summary.warning {
+        color: #8a4b00;
+        background: #fff7e8;
+        border-color: #efd4a8;
+      }
+      .profile-summary.paused {
+        color: var(--accent);
+        background: #fff5f5;
+        border-color: #ead0d0;
+      }
+      .profile-note {
+        margin: -1px 0 7px;
+        color: var(--text-subtle);
+        font-size: 10px;
+        line-height: 1.35;
+      }
       .diagnostic-row {
         display: grid;
         grid-template-columns: 82px minmax(0, 1fr);
@@ -780,6 +806,12 @@
         <details>
           <summary>Power diagnostics</summary>
           <div class="power-diagnostics" id="power-diagnostics"></div>
+        </details>
+        <details>
+          <summary>Exposed browser profile</summary>
+          <div class="profile-summary warning" id="profile-summary">Loading exposed profile…</div>
+          <div class="profile-note" id="profile-note"></div>
+          <div class="power-diagnostics" id="exposed-profile"></div>
         </details>
       </div>
 

@@ -54,7 +54,7 @@ Static is intentionally narrow. It is built to run alongside uBlock Origin or Pr
 6. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` that maps wrapped functions to native-looking strings, so the blocker's API overrides look like real native functions under `toString` checks.
 7. **Replay poisoning (opt-in).** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
 
-The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds.
+The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds. The popup's diagnostics also include an **Exposed browser profile** view showing the JavaScript-visible user agent, platform, locale/language, timezone, screen, hardware buckets, WebGL, network, storage, and battery signals the current site can read; when Device signal poisoning is active, this view shows Static's stable per-site persona.
 
 ## Compatibility warning
 

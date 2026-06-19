@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added
+
+- Popup diagnostics now include an **Exposed browser profile** view showing JavaScript-visible user agent, platform, locale/language, timezone, screen, hardware buckets, WebGL, network, storage, and battery signals; when Device signal poisoning is active, the view shows Static's stable per-site persona.
+
 ## [2.2.0] — 2026-06-19
 
 ### Added

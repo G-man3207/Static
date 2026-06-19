@@ -1134,6 +1134,7 @@ test("popup keeps detailed controls folded by default", async ({ extension }) =>
   await expect(popupPage.locator("#diagnostics-title-text")).toBeHidden();
   await expect(popupPage.locator("#rulesets")).toBeHidden();
   await expect(popupPage.getByText("Power diagnostics")).toBeHidden();
+  await expect(popupPage.getByText("Exposed browser profile")).toBeHidden();
 
   await openPopupAdvancedControls(popupPage);
 
@@ -1142,6 +1143,57 @@ test("popup keeps detailed controls folded by default", async ({ extension }) =>
   await expect(popupPage.locator("#diagnostics-title-text")).toBeVisible();
   await expect(popupPage.locator("#rulesets")).toBeVisible();
   await expect(popupPage.getByText("Power diagnostics")).toBeVisible();
+  await expect(popupPage.getByText("Exposed browser profile")).toBeVisible();
+});
+
+test("popup shows the JavaScript-visible browser profile", async ({ extension }) => {
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  await openPopupAdvancedControls(popupPage);
+  await popupPage.getByText("Exposed browser profile").click();
+
+  await expect(popupPage.locator("#profile-summary")).toContainText(/profile|persona/i);
+  await expect(popupPage.locator("#exposed-profile")).toContainText("User agent");
+  await expect(popupPage.locator("#exposed-profile")).toContainText(
+    await popupPage.evaluate(() => navigator.userAgent)
+  );
+  await expect(popupPage.locator("#exposed-profile")).toContainText("Timezone");
+  await expect(popupPage.locator("#exposed-profile")).toContainText("CPU / memory");
+});
+
+test("popup details include the per-site fingerprint persona", async ({ extension, server }) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.bringToFront();
+
+  const tabId = await extension.serviceWorker.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab && tab.id;
+  });
+  expect(typeof tabId).toBe("number");
+
+  const extensionPage = await extension.context.newPage();
+  await extensionPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  await expect
+    .poll(() =>
+      extensionPage.evaluate(
+        (id) => chrome.runtime.sendMessage({ tabId: id, type: "static_get_details" }),
+        tabId
+      )
+    )
+    .toMatchObject({
+      fingerprintMode: "mask",
+      fingerprintPersona: {
+        languages: expect.any(Array),
+        platform: expect.any(String),
+        screen: expect.objectContaining({ width: expect.any(Number) }),
+        timeZone: expect.any(String),
+      },
+      origin: server.origin,
+    });
 });
 
 test("popup paints visible content before pointer-driven invalidation", async ({ extension }) => {
