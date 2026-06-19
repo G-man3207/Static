@@ -1,11 +1,15 @@
+/* eslint-disable max-lines -- fetch/XHR blocking and Noise decoys are kept together for cross-vector consistency */
 // Static - MAIN-world fetch/XHR extension probe blocker and Noise decoy engine.
 (() => {
   const U = globalThis.__static_block_utils__;
   const BRIDGE_EVENT = "__perf_noise_bi__";
   const MAX_QUEUED_PROBES = 1000;
+  const COMPAT_SIGNAL_THROTTLE_MS = 15000;
+  const blockedFetchPromises = new WeakMap();
   let persona = new Set();
   let noiseEnabled = false;
   let disabled = false;
+  let lastCompatSignalAt = 0;
 
   const applyConfigUpdate = (data) => {
     if (!data || data.type !== "config_update") return;
@@ -27,6 +31,38 @@
     const safeWhere = where == null ? "" : String(where).slice(0, 64);
     bridge.post("probe_blocked", { url: safeUrl, where: safeWhere });
   };
+
+  const postCompatSignal = (signal) => {
+    bridge.post("compat_signal", {
+      kind: String(signal.kind || "unknown").slice(0, 64),
+      url: signal.url == null ? "" : String(signal.url).slice(0, 512),
+      vector: String(signal.vector || "unknown").slice(0, 64),
+    });
+  };
+
+  const rejectBlockedFetch = (url) => {
+    const rejection = Promise.reject(new TypeError("Failed to fetch"));
+    try {
+      blockedFetchPromises.set(rejection, { url, vector: "fetch" });
+    } catch {}
+    return rejection;
+  };
+
+  const reportUnhandledBlockedFetch = (event) => {
+    if (disabled || !event || !blockedFetchPromises.has(event.promise)) return;
+    const blocked = blockedFetchPromises.get(event.promise);
+    blockedFetchPromises.delete(event.promise);
+    const now = Date.now();
+    if (now - lastCompatSignalAt < COMPAT_SIGNAL_THROTTLE_MS) return;
+    lastCompatSignalAt = now;
+    postCompatSignal({
+      kind: "unhandled_blocked_fetch",
+      url: blocked && blocked.url,
+      vector: blocked && blocked.vector,
+    });
+  };
+
+  window.addEventListener("unhandledrejection", reportUnhandledBlockedFetch, { capture: true });
 
   const shouldDecoy = (url) => {
     if (!noiseEnabled) return false;
@@ -300,7 +336,7 @@
             return Promise.resolve(buildDecoyResponse(url, method, decoyBody));
           }
           bump("fetch", url);
-          return Promise.reject(new TypeError("Failed to fetch"));
+          return rejectBlockedFetch(url);
         }
         return origFetch.apply(this, arguments);
       },

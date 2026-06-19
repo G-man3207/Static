@@ -240,12 +240,27 @@
     } catch {}
   };
 
+  const sendCompatSignal = (signal = {}) => {
+    if (disabled) return;
+    try {
+      chrome.runtime.sendMessage({
+        type: "static_compat_signal",
+        signal: {
+          kind: String(signal.kind || "unknown").slice(0, 64),
+          pathKind: pathKindFor(signal.url),
+          vector: normalizeVector(signal.vector || signal.where),
+        },
+      });
+    } catch {}
+  };
+
   const handlePortMessage = (event) => {
     const data = event.data;
     if (!data || typeof data !== "object") return;
     if (data.type === "probe_blocked") handleProbeBlocked(data);
     if (data.type === "replay_detected") sendReplaySignal(data.signal);
     if (data.type === "adaptive_signal") sendAdaptiveSignal(data.signal);
+    if (data.type === "compat_signal") sendCompatSignal(data);
   };
 
   const createPort = (eventName) => {

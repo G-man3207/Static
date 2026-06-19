@@ -8,6 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Added
 
+- Compatibility warnings for high-confidence site breakage: when a Static-blocked extension-probe `fetch()` becomes an unhandled page error, the popup now warns that Static may be interfering and offers a **Pause here and reload** escape hatch.
+- Playwright coverage for compatibility warning recording and the no-warning path when sites handle blocked probe fetches.
 - Device signal poisoning now suppresses WebRTC `RTCPeerConnection` ICE candidate events, preventing local IP and network topology fingerprinting via WebRTC.
 - Device signal poisoning now masks `AudioContext.sampleRate`, `AudioContext.baseLatency`, and `AudioContext.outputLatency`, returning standardized values (48000, 0.005, 0.01) to prevent audio hardware fingerprinting.
 - Device signal poisoning now perturbs `CanvasRenderingContext2D.measureText()` results, preventing text-metrics fingerprinting while keeping measurements stable per-origin.

@@ -35,8 +35,10 @@ const UUID_EXT_ID_RE = /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const isValidExtensionId = (id) =>
   typeof id === "string" && (CHROME_EXT_ID_RE.test(id) || UUID_EXT_ID_RE.test(id));
 const MAX_CAPTURED_IDS = 2000;
+const MAX_COMPAT_ORIGINS = 50;
 const MAX_DIAGNOSTIC_EVENTS_PER_ORIGIN = 120;
 const MAX_DIAGNOSTIC_ORIGINS = 25;
+const COMPAT_WARNING_TTL_MS = 30 * 60 * 1000;
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -227,6 +229,40 @@ const recordAdaptiveSignal = async (origin, signal) => {
   await chrome.storage.local.set({ adaptive_log });
 };
 
+const normalizeCompatSignal = (signal) => ({
+  kind: String((signal && signal.kind) || "unknown").slice(0, 64),
+  pathKind: String((signal && signal.pathKind) || "unknown").slice(0, 32),
+  vector: String((signal && signal.vector) || "unknown").slice(0, 48),
+});
+
+const recordCompatSignal = async (origin, signal) => {
+  if (!origin || !signal || typeof signal !== "object") return;
+  const { compat_log = {} } = await chrome.storage.local.get({ compat_log: {} });
+  const now = Date.now();
+  const entry = compat_log[origin] || {
+    kinds: {},
+    lastUpdated: 0,
+    pathKinds: {},
+    total: 0,
+    vectors: {},
+  };
+  const normalized = normalizeCompatSignal(signal);
+  entry.kinds ||= {};
+  entry.pathKinds ||= {};
+  entry.vectors ||= {};
+  entry.total = (entry.total || 0) + 1;
+  entry.lastUpdated = now;
+  bumpCount(entry.kinds, normalized.kind);
+  bumpCount(entry.pathKinds, normalized.pathKind);
+  bumpCount(entry.vectors, normalized.vector);
+  entry.kinds = trimCountMap(entry.kinds, 20);
+  entry.pathKinds = trimCountMap(entry.pathKinds, 20);
+  entry.vectors = trimCountMap(entry.vectors, 20);
+  compat_log[origin] = entry;
+  trimLogOrigins(compat_log, MAX_COMPAT_ORIGINS);
+  await chrome.storage.local.set({ compat_log });
+};
+
 const safeDiagnosticText = (value, fallback, maxLength) => {
   const text = String(value || fallback || "unknown")
     .replace(/\s+/g, " ")
@@ -266,6 +302,15 @@ const normalizeDiagnosticEvent = (event, now) => {
         : [],
       score: Math.max(0, Math.min(100, Math.round(event.score || 0))),
       source: safeDiagnosticText(event.source, "unknown", 160),
+    };
+  }
+  if (type === "compat") {
+    return {
+      ...base,
+      action: "warned",
+      kind: safeDiagnosticText(event.kind, "unknown", 64),
+      pathKind: safeDiagnosticText(event.pathKind, "unknown", 32),
+      vector: safeDiagnosticText(event.vector, "unknown", 48),
     };
   }
   return {
@@ -611,6 +656,15 @@ const handleAdaptiveSignal = (msg, sender) => {
   }
 };
 
+const handleCompatSignal = (msg, sender) => {
+  if (!sender.tab) return;
+  const origin = rememberSenderOrigin(sender);
+  if (!origin || !msg.signal || typeof msg.signal !== "object") return;
+  const normalized = normalizeCompatSignal(msg.signal);
+  serialize(() => recordCompatSignal(origin, normalized));
+  serialize(() => recordDiagnosticEvents(origin, [{ ...normalized, type: "compat" }]));
+};
+
 const storedEntryForOrigin = (origin, log) => (origin ? log[origin] : null);
 
 const loggedOriginsFor = (stored) =>
@@ -623,11 +677,31 @@ const loggedOriginsFor = (stored) =>
 
 const diagnosticEventCountFor = (entry) => (entry ? (entry.events || []).length : 0);
 
+const topCompatEntries = (counts) =>
+  Object.entries(counts || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+const compatWarningForEntry = (entry) => {
+  if (!entry || !entry.lastUpdated || Date.now() - entry.lastUpdated > COMPAT_WARNING_TTL_MS) {
+    return null;
+  }
+  return {
+    kinds: topCompatEntries(entry.kinds),
+    lastUpdated: entry.lastUpdated,
+    level: "high",
+    pathKinds: topCompatEntries(entry.pathKinds),
+    total: entry.total || 0,
+    vectors: topCompatEntries(entry.vectors),
+  };
+};
+
 const detailsResponseFor = async (tabId, stored) => {
   const state = perTabState.get(tabId);
   const origin = state ? state.origin : null;
   const originProbeEntry = storedEntryForOrigin(origin, stored.probe_log);
   const adaptiveEntry = storedEntryForOrigin(origin, stored.adaptive_log);
+  const compatEntry = storedEntryForOrigin(origin, stored.compat_log);
   const diagnosticEntry = storedEntryForOrigin(origin, stored.diagnostic_log);
   const selectedPersonaIds =
     originProbeEntry && stored.noise_enabled ? await personaFor(origin) : [];
@@ -645,6 +719,7 @@ const detailsResponseFor = async (tabId, stored) => {
     adaptiveDetected: !!adaptiveEntry,
     adaptiveScore: adaptiveEntry ? adaptiveEntry.scoreMax || 0 : 0,
     adaptiveCategories: adaptiveEntry ? adaptiveEntry.categories || {} : {},
+    compatWarning: compatWarningForEntry(compatEntry),
     diagnosticEvents: diagnosticEventCountFor(diagnosticEntry),
     diagnosticOrigins: Object.keys(stored.diagnostic_log).length,
     diagnosticsMode: stored.diagnostics_mode,
@@ -671,6 +746,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
+      compat_log: {},
       replay_mode: "off",
     });
     sendResponse(await detailsResponseFor(msg.tabId, stored));
@@ -826,6 +902,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       probe_log = {},
       replay_log = {},
       adaptive_log = {},
+      compat_log = {},
       diagnostic_log = {},
       diagnostics_mode = false,
       fingerprint_mode = "off",
@@ -834,6 +911,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
+      compat_log: {},
       diagnostic_log: {},
       diagnostics_mode: false,
       fingerprint_mode: "off",
@@ -843,6 +921,7 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
       schema: "static.probe-log.v1",
       exportedAt: new Date().toISOString(),
       cumulative,
+      compatibilityWarnings: compat_log,
       diagnostics: diagnostic_log,
       diagnosticsMode: diagnostics_mode,
       fingerprintMode: fingerprint_mode,
@@ -864,6 +943,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
         "replay_log",
         "adaptive_log",
         "diagnostic_log",
+        "compat_log",
         "cumulative",
         "user_secret",
       ])
@@ -878,6 +958,7 @@ const handleClearLog = (_msg, _sender, sendResponse) => {
 const messageHandlers = {
   static_adaptive_signal: handleAdaptiveSignal,
   static_clear_log: handleClearLog,
+  static_compat_signal: handleCompatSignal,
   static_export_log: handleExportLog,
   static_get_details: handleGetDetails,
   static_get_persona: handleGetPersona,
