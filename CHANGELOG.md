@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-06-19
+
 ### Added
 
 - Compatibility warnings for high-confidence site breakage: when a Static-blocked extension-probe `fetch()` becomes an unhandled page error, the popup now warns that Static may be interfering and offers a **Pause here and reload** escape hatch.
@@ -296,7 +298,8 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/G-man3207/Static/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/G-man3207/Static/compare/v2.0.10...v2.1.0
 [2.0.10]: https://github.com/G-man3207/Static/compare/v2.0.4...v2.0.10
 [2.0.4]: https://github.com/G-man3207/Static/compare/v2.0.3...v2.0.4
