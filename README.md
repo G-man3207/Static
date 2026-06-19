@@ -56,6 +56,10 @@ Static is intentionally narrow. It is built to run alongside uBlock Origin or Pr
 
 The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds.
 
+## Compatibility warning
+
+Static also watches for one high-confidence breakage signal: a Static-blocked extension-probe `fetch()` that becomes an unhandled page error. When that happens, the popup shows a local compatibility warning with a **Pause here and reload** escape hatch. Static does not auto-disable itself, and the warning evidence stays local.
+
 ## Playbook drift detection
 
 Static keeps a local, weekly summary of how each origin probes for extensions: probe vector mix (`fetch`, XHR, element setters, workers, EventSource, etc.), extension-resource path kinds (`manifest`, image, script, HTML, CSS, other), repeated ID dictionary changes, and one-shot ID pressure.

@@ -188,6 +188,48 @@ const renderAdaptiveNotice = (resp) => {
   adaptiveEl.hidden = false;
 };
 
+const compatibilityDetailText = (warning) => {
+  const kinds = new Set((warning && warning.kinds ? warning.kinds : []).map(([kind]) => kind));
+  if (kinds.has("unhandled_blocked_fetch")) {
+    return "A blocked extension-probe fetch became an unhandled page error. If the site looks broken, pausing Static here is the safest quick fix.";
+  }
+  return "A recent Static action was followed by a page error. If the site looks broken, try pausing Static here.";
+};
+
+const pauseSiteAndReload = async (origin, button) => {
+  if (!origin) return;
+  button.disabled = true;
+  try {
+    await chrome.runtime.sendMessage({
+      disabled: true,
+      origin,
+      type: "static_set_site_disabled",
+    });
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.id != null) await chrome.tabs.reload(tab.id);
+    window.close();
+  } catch (e) {
+    console.error("[Static] compatibility pause failed", e);
+    button.disabled = false;
+  }
+};
+
+const renderCompatibilityNotice = (resp) => {
+  const compatEl = document.getElementById("compat");
+  const detailEl = document.getElementById("compat-detail");
+  const pauseButton = document.getElementById("compat-pause");
+  const warning = resp && resp.compatWarning;
+  if (!warning || resp.disabled || !resp.origin) {
+    compatEl.hidden = true;
+    pauseButton.onclick = null;
+    return;
+  }
+  detailEl.textContent = compatibilityDetailText(warning);
+  pauseButton.disabled = false;
+  pauseButton.onclick = () => pauseSiteAndReload(resp.origin, pauseButton);
+  compatEl.hidden = false;
+};
+
 const renderTopIds = (topIds) => {
   const topEl = document.getElementById("top-ids");
   topEl.innerHTML = "";
@@ -350,6 +392,7 @@ const renderDetails = (resp) => {
   renderCumulative(cumulative);
   renderDriftNotice(resp && resp.drift);
   renderAdaptiveNotice(resp);
+  renderCompatibilityNotice(resp);
   renderTopIds(topIds);
   renderPowerDiagnostics(resp);
 };

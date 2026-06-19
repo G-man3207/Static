@@ -136,6 +136,43 @@
       .adaptive[hidden] {
         display: none;
       }
+      .compat {
+        margin-top: 10px;
+        padding: 8px;
+        border: 1px solid #efd4a8;
+        border-radius: 7px;
+        color: #744100;
+        background: #fff7e8;
+        font-size: 10px;
+        line-height: 1.35;
+      }
+      .compat[hidden] {
+        display: none;
+      }
+      .compat-title {
+        font-weight: 700;
+      }
+      .compat-detail {
+        margin-top: 2px;
+        color: #8a4b00;
+      }
+      .compat-actions {
+        margin-top: 7px;
+      }
+      .compat-button {
+        padding: 5px 7px;
+        color: #744100;
+        background: #fff;
+        border: 1px solid #efd4a8;
+        border-radius: 6px;
+        font: inherit;
+        font-size: 10px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .compat-button:hover {
+        border-color: #d88030;
+      }
       .site-section {
         padding: 12px 16px;
         background: var(--surface);
@@ -693,6 +730,15 @@
       <div class="cumulative" id="cumulative"></div>
       <div class="drift" id="drift" hidden></div>
       <div class="adaptive" id="adaptive" hidden></div>
+      <div class="compat" id="compat" hidden>
+        <div class="compat-title">Static may be interfering with this site</div>
+        <div class="compat-detail" id="compat-detail"></div>
+        <div class="compat-actions">
+          <button class="compat-button" id="compat-pause" type="button">
+            Pause here and reload
+          </button>
+        </div>
+      </div>
     </div>
 
     <div class="section site-section" id="site-control">

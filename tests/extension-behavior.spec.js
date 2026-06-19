@@ -170,6 +170,82 @@ test("does not leak probe activity through page-owned console hooks", async ({
   expect(observed).toEqual([]);
 });
 
+test("records compatibility warnings for unhandled blocked fetch probes", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await page.evaluate((url) => {
+    window.__staticUnhandledProbe = fetch(url);
+  }, probedUrl());
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(
+        (origin) =>
+          chrome.storage.local
+            .get("compat_log")
+            .then(({ compat_log }) => compat_log && compat_log[origin]),
+        server.origin
+      )
+    )
+    .toMatchObject({
+      kinds: { unhandled_blocked_fetch: 1 },
+      pathKinds: { manifest: 1 },
+      total: 1,
+      vectors: { fetch: 1 },
+    });
+
+  await page.bringToFront();
+  const tabId = await extension.serviceWorker.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab && tab.id;
+  });
+  expect(typeof tabId).toBe("number");
+
+  const extensionPage = await extension.context.newPage();
+  await extensionPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  const details = await extensionPage.evaluate(
+    (id) => chrome.runtime.sendMessage({ tabId: id, type: "static_get_details" }),
+    tabId
+  );
+  expect(details).toMatchObject({
+    compatWarning: {
+      kinds: [["unhandled_blocked_fetch", 1]],
+      level: "high",
+      pathKinds: [["manifest", 1]],
+      total: 1,
+      vectors: [["fetch", 1]],
+    },
+    origin: server.origin,
+  });
+});
+
+test("does not warn when blocked fetch probes are handled by the page", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await page.evaluate(async (url) => {
+    await fetch(url).catch(() => "handled");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100);
+    });
+  }, probedUrl());
+  await page.waitForTimeout(300);
+
+  const storage = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get("compat_log")
+  );
+  expect(storage.compat_log).toBeUndefined();
+});
+
 test("html sinks (innerHTML, DOMParser, Range, insertAdjacent) intercept extension URL probes and preserve visible originals on getters/attrs/serialization", async ({
   extension,
   server,
@@ -2792,6 +2868,15 @@ test("Clear log removes probe state and Noise identity while preserving preferen
             totals: { probe: 1 },
           },
         },
+        compat_log: {
+          "https://example.test": {
+            kinds: { unhandled_blocked_fetch: 1 },
+            lastUpdated: Date.now(),
+            pathKinds: { manifest: 1 },
+            total: 1,
+            vectors: { fetch: 1 },
+          },
+        },
         user_secret: "secret",
         probe_log: {
           "https://example.test": {
@@ -2814,6 +2899,7 @@ test("Clear log removes probe state and Noise identity while preserving preferen
         chrome.storage.local.get([
           "cumulative",
           "diagnostic_log",
+          "compat_log",
           "diagnostics_mode",
           "fingerprint_mode",
           "noise_enabled",
