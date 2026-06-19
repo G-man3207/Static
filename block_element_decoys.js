@@ -265,12 +265,8 @@
   };
 
   const pngDataUrlFor = (original) => {
-    const token = `static:${replacementTokenFor(original)}`;
-    let binary = PNG_1X1_BINARY;
-    for (let index = 0; index < token.length; index++) {
-      binary += String.fromCharCode(token.charCodeAt(index) & 0xff);
-    }
-    return `data:image/png;base64,${btoa(binary)}`;
+    const token = replacementTokenFor(original);
+    return `data:image/png;base64,${btoa(PNG_1X1_BINARY)}#static:${token}`;
   };
 
   const textDataUrlFor = (mime, body) => `data:${mime},${encodeURIComponent(body)}`;
@@ -402,7 +398,25 @@
     } catch {}
   };
 
-  const rewriteSrcsetValue = (val, tagNameOrEl, bumpFn) => {
+  const tokenMatchFor = (value) => {
+    const text = String(value || "");
+    const direct = text.match(/static:([a-z0-9]+)/i) || text.match(/not-valid-([a-z0-9]+)/i);
+    if (direct) return direct;
+    try {
+      const decoded = decodeURIComponent(text);
+      return decoded.match(/static:([a-z0-9]+)/i) || decoded.match(/not-valid-([a-z0-9]+)/i);
+    } catch {
+      return null;
+    }
+  };
+
+  const rememberReplacementToken = (tokenMap, replacement, original) => {
+    if (!tokenMap) return;
+    const token = tokenMatchFor(replacement);
+    if (token) tokenMap.set(token[1], original);
+  };
+
+  const rewriteSrcsetValue = (val, tagNameOrEl, bumpFn, tokenMap) => {
     if (typeof val !== "string" || !val || !U.BAD_URL_RE.test(val)) return val;
     return val
       .split(",")
@@ -416,14 +430,11 @@
         if (!U.isBad(u)) return piece;
         const url = U.getUrl(u);
         const k = passiveDecoyKindFor(url, "srcset", tagNameOrEl);
-        if (!k) {
-          bumpFn(url, false);
-          return `data:image/png;base64,not-valid${rest}`;
-        }
         const mo = shouldDecoy(url) && k ? "decoy" : "block";
-        const r = replacementUrlFor(mo, k, "srcset", url);
+        const replacement = replacementUrlFor(mo, k, "srcset", val);
+        rememberReplacementToken(tokenMap, replacement, { currentSrc: url, srcset: val });
         bumpFn(url, mo === "decoy");
-        const clean = r.replace(/\s+1x$/i, "");
+        const clean = replacement.replace(/\s+1x$/i, "");
         return `${clean}${rest}`;
       })
       .join(",");
@@ -439,17 +450,18 @@
     const sanitized = html.replace(
       /<([a-z][a-z0-9-]*)\b([^>]*)>/gi,
       (full, tagName, attrsChunk) => {
-        // eslint-disable-next-line max-params
-        const rewriteOneAttr = (am, attr, norm, quoteChar, val) => {
-          if (!val || !U.isBad(val)) return am;
+        const rewriteOneAttr = (am, attr, quoteChar, val) => {
+          if (!val) return am;
           const q = quoteChar || "";
-          const prop = norm.toLowerCase();
-          const url = U.getUrl(val);
+          const prop = attr.toLowerCase();
           if (prop === "srcset") {
-            // always rewrite per-candidate for srcset to support mixed
-            const finalVal = rewriteSrcsetValue(val, tagName, (u, d) => localBump(u, d));
+            if (!U.BAD_URL_RE.test(String(val))) return am;
+            // Always rewrite per-candidate for srcset to support descriptors and mixed values.
+            const finalVal = rewriteSrcsetValue(val, tagName, (u, d) => localBump(u, d), tokenMap);
             return `${attr}=${q}${finalVal}${q}`;
           }
+          if (!U.isBad(val)) return am;
+          const url = U.getUrl(val);
           const k = passiveDecoyKindFor(url, prop, tagName);
           if (!canHandleTagProp(tagName, prop)) {
             localBump(url, false);
@@ -457,14 +469,24 @@
           }
           const mo = k && shouldDecoy(url) ? "decoy" : "block";
           const repl = replacementUrlFor(mo, k, prop, url);
-          const tm = repl.match(/static:([a-z0-9]+)/i) || repl.match(/not-valid-([a-z0-9]+)/i);
-          if (tm) tokenMap.set(tm[1], url);
+          rememberReplacementToken(tokenMap, repl, url);
           localBump(url, mo === "decoy");
           return `${attr}=${q}${repl}${q}`;
         };
         const chunk = attrsChunk.replace(
-          /\b((src|href|data|poster|action|formaction|srcset))\s*=\s*(["']?)([^"'\s>]*?)\3/gi,
-          rewriteOneAttr
+          /\b(srcset|src|href|data|poster|action|formaction)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi,
+          (match, attr, ...values) => {
+            const [doubleValue, singleValue, unquotedValue] = values;
+            const isDoubleQuoted = doubleValue !== undefined;
+            const isSingleQuoted = singleValue !== undefined;
+            const quoteChar = isDoubleQuoted ? '"' : isSingleQuoted ? "'" : "";
+            const val = isDoubleQuoted
+              ? doubleValue
+              : isSingleQuoted
+                ? singleValue
+                : unquotedValue || "";
+            return rewriteOneAttr(match, attr, quoteChar, val);
+          }
         );
         return `<${tagName}${chunk}>`;
       }
@@ -502,15 +524,18 @@
           const cands = prop === "srcset" ? realVal.split(",") : [realVal];
           for (const c of cands) {
             const u = c.trim().split(/\s+/)[0];
-            if (u && (u.includes("static:") || u.includes("not-valid-"))) {
-              const tm = u.match(/(?:static:|not-valid-)([a-z0-9]+)/i);
+            if (u && (u.includes("static") || u.includes("not-valid-"))) {
+              const tm = tokenMatchFor(u);
               const tok = tm ? tm[1] : null;
               // eslint-disable-next-line max-depth
               if (tok && tokenMap.has(tok)) {
-                const orig = tokenMap.get(tok);
+                const mapped = tokenMap.get(tok);
+                const srcsetOriginal = mapped && typeof mapped === "object" ? mapped.srcset : null;
+                const currentSrc = mapped && typeof mapped === "object" ? mapped.currentSrc : null;
+                const orig = srcsetOriginal || mapped;
                 rememberOriginal(el, prop, orig);
                 // eslint-disable-next-line max-depth
-                if (prop === "srcset") rememberOriginal(el, "currentSrc", orig);
+                if (prop === "srcset") rememberOriginal(el, "currentSrc", currentSrc || orig);
                 rememberElementAttrNodeOriginal(el, prop, orig);
                 rememberNativeMutationValue(el, prop, null, orig);
               }
