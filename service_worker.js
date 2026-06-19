@@ -696,6 +696,16 @@ const compatWarningForEntry = (entry) => {
   };
 };
 
+const selectedNoisePersonaIdsForDetails = async (origin, entry, noiseEnabled) => {
+  if (!entry || !noiseEnabled) return [];
+  return personaFor(origin);
+};
+
+const fingerprintPersonaForDetails = async (origin, mode, disabled) => {
+  if (!origin || mode !== "mask" || disabled) return null;
+  return fingerprintPersonaFor(origin);
+};
+
 const detailsResponseFor = async (tabId, stored) => {
   const state = perTabState.get(tabId);
   const origin = state ? state.origin : null;
@@ -703,16 +713,23 @@ const detailsResponseFor = async (tabId, stored) => {
   const adaptiveEntry = storedEntryForOrigin(origin, stored.adaptive_log);
   const compatEntry = storedEntryForOrigin(origin, stored.compat_log);
   const diagnosticEntry = storedEntryForOrigin(origin, stored.diagnostic_log);
-  const selectedPersonaIds =
-    originProbeEntry && stored.noise_enabled ? await personaFor(origin) : [];
+  const selectedPersonaIds = await selectedNoisePersonaIdsForDetails(
+    origin,
+    originProbeEntry,
+    stored.noise_enabled
+  );
   const loggedOrigins = loggedOriginsFor(stored);
   const disabledOrigins = stored.disabled_origins || {};
+  const disabled = !!(origin && disabledOrigins[origin]);
+  const fingerprintMode = stored.fingerprint_mode === "mask" ? "mask" : "off";
+  const fingerprintPersona = await fingerprintPersonaForDetails(origin, fingerprintMode, disabled);
   return {
-    disabled: !!(origin && disabledOrigins[origin]),
+    disabled,
     total: sumTabTotal(tabId),
     topIds: topIdsForTab(tabId, 5),
     cumulative: stored.cumulative,
-    fingerprintMode: stored.fingerprint_mode,
+    fingerprintMode,
+    fingerprintPersona,
     noiseEnabled: stored.noise_enabled,
     replayMode: stored.replay_mode,
     replayDetected: !!(origin && stored.replay_log[origin]),
