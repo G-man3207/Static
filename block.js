@@ -312,6 +312,7 @@
     allHeaders: "",
     contentLength: null,
     contentType: null,
+    headers: {},
     lastModified: null,
     readyState,
     response: "",
@@ -356,6 +357,7 @@
           allHeaders: `content-type: ${hdrs["content-type"]}\r\ncontent-length: ${contentLength}\r\nlast-modified: ${hdrs["last-modified"]}\r\ncache-control: ${hdrs["cache-control"]}\r\netag: ${hdrs.etag}\r\n`,
           contentLength,
           contentType: hdrs["content-type"],
+          headers: hdrs,
           lastModified: hdrs["last-modified"],
           readyState: 2,
           responseURL: url,
@@ -457,18 +459,17 @@
     }.send;
     const wrappedGetResponseHeader = {
       getResponseHeader(name) {
-        const fake = fakeXhrResponses.get(this);
-        if (fake) {
-          const lower = String(name).toLowerCase();
-          if (lower === "content-type") return fake.contentType;
-          if (lower === "content-length") return fake.contentLength;
-          if (lower === "last-modified") return fake.lastModified;
-          return null;
-        }
         const normalizedName = String(name == null ? "" : name)
           .trim()
           .toLowerCase();
         if (!normalizedName) return null;
+        const fake = fakeXhrResponses.get(this);
+        if (fake) {
+          const headers = fake.headers || {};
+          return Object.prototype.hasOwnProperty.call(headers, normalizedName)
+            ? headers[normalizedName]
+            : null;
+        }
         const visibleHeaderNames = visibleHeaderNamesFor(this);
         if (visibleHeaderNames && !visibleHeaderNames.has(normalizedName)) return null;
         return origGetResponseHeader.apply(this, arguments);

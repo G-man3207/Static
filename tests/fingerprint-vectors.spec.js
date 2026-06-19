@@ -403,13 +403,24 @@ test("Fingerprint masking standardizes AudioContext sampleRate", async ({ extens
   await enableFingerprintMask(extension);
 
   const result = await page.evaluate(() => {
+    const descriptorFor = (object, prop) => {
+      let cursor = Object.getPrototypeOf(object);
+      while (cursor) {
+        const desc = Object.getOwnPropertyDescriptor(cursor, prop);
+        if (desc) return desc;
+        cursor = Object.getPrototypeOf(cursor);
+      }
+      return null;
+    };
     const Ctor = globalThis.AudioContext || globalThis.webkitAudioContext;
     if (!Ctor) return { skipped: true };
     const ctx = new Ctor();
     const sampleRate = ctx.sampleRate;
-    const getterStr = Function.prototype.toString.call(
-      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ctx), "sampleRate").get
-    );
+    const sampleRateDesc = descriptorFor(ctx, "sampleRate");
+    const getterStr =
+      sampleRateDesc && typeof sampleRateDesc.get === "function"
+        ? Function.prototype.toString.call(sampleRateDesc.get)
+        : "";
     ctx.close();
     return { skipped: false, sampleRate, getterStr };
   });

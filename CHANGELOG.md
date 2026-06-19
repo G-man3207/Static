@@ -34,6 +34,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Fixed
 
+- Noise-mode HTML sink `srcset` decoys now parse quoted descriptor and mixed-candidate values, then preserve original page-visible `srcset` / `currentSrc` / serialization instead of leaking inert data URLs.
+- Noise XHR decoys now return every header listed by `getAllResponseHeaders()` through `getResponseHeader()`, including `cache-control` and `etag`.
+- Device signal poisoning now returns `WEBGL_debug_renderer_info` constants from masked `getExtension()` and treats two-argument `CSS.supports()` property probes such as `gap` and `aspect-ratio` as standardized supported values.
 - `navigator.javaEnabled()` now returns properly formatted `[native code]` under `Function.prototype.toString`, closing a stealth gap where detectors could identify the mock via non-native source-code output.
 - Device signal poisoning now silently returns `null` for non-numeric `getParameter` calls during masking, preventing `WebGL: INVALID_ENUM` console noise from invalid parameter probes while keeping legitimate WebGL rendering intact.
 - Bridge now handles `static_disabled_update` messages directly, immediately propagating per-site disable state to MAIN world scripts without requiring a service-worker round-trip. Previously, the message was sent by the service worker but no content script listened for it, relying instead on the slower `static_persona_update` refresh path.

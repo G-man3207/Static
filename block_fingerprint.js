@@ -1566,12 +1566,15 @@
     const wrapped = {
       supports() {
         if (!isMasking()) return orig.apply(this, arguments);
-        const key =
-          arguments.length === 2
-            ? [String(arguments[0]), String(arguments[1])].join(":")
-            : String(arguments[0] || "");
+        const prop = String(arguments[0] || "")
+          .trim()
+          .toLowerCase();
+        const value = String(arguments[1] || "")
+          .trim()
+          .toLowerCase();
+        const key = arguments.length === 2 ? `${prop}:${value}` : prop;
         if (!key) return false;
-        if (PLAUSIBLE_SUPPORTS.has(key)) return true;
+        if (PLAUSIBLE_SUPPORTS.has(key) || PLAUSIBLE_SUPPORTS.has(prop)) return true;
         const hash = stringHash(key) >>> 0;
         return hash % 3 !== 0;
       },
@@ -1678,7 +1681,14 @@
       const wrapped = {
         getExtension(name) {
           if (!isMasking()) return orig.apply(this, arguments);
-          if (PLAUSIBLE_EXTENSION_OBJECTS.has(name)) {
+          const extensionName = String(name || "");
+          if (extensionName === "WEBGL_debug_renderer_info") {
+            return {
+              UNMASKED_RENDERER_WEBGL,
+              UNMASKED_VENDOR_WEBGL,
+            };
+          }
+          if (PLAUSIBLE_EXTENSION_OBJECTS.has(extensionName)) {
             return {};
           }
           return null;
