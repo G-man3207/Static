@@ -1,4 +1,3 @@
-/* eslint-env node -- Playwright test environment */
 // Static — compatibility regression tests.
 //
 // These tests verify that the extension does not break common web platform
@@ -79,10 +78,7 @@ test("insertAdjacentHTML with an object (custom toString) renders correctly", as
 //  Realistic autocomplete fixture renders visible content
 // ---------------------------------------------------------------------------
 
-test("realistic autocomplete fixture renders visible content", async ({
-  extension,
-  server,
-}) => {
+test("realistic autocomplete fixture renders visible content", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/realistic-autocomplete.html"));
   await page.waitForTimeout(500);
@@ -113,10 +109,7 @@ test("realistic autocomplete fixture renders visible content", async ({
 //  Realistic dashboard fixture renders visible content
 // ---------------------------------------------------------------------------
 
-test("realistic dashboard fixture renders visible content", async ({
-  extension,
-  server,
-}) => {
+test("realistic dashboard fixture renders visible content", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/realistic-dashboard.html"));
   await page.waitForTimeout(500);
@@ -158,7 +151,9 @@ test("innerHTML with React-like object pattern renders content correctly", async
 
     // Pattern 1: Object with toString (like Google's autocomplete)
     const obj1 = {
-      toString() { return '<div data-testid="obj1"><span>rendered from object</span></div>'; }
+      toString() {
+        return '<div data-testid="obj1"><span>rendered from object</span></div>';
+      },
     };
     root.innerHTML = obj1;
     patterns.push(document.querySelector("[data-testid=obj1]")?.textContent?.trim() || "FAIL");
@@ -174,9 +169,9 @@ test("innerHTML with React-like object pattern renders content correctly", async
     // Pattern 4: null/undefined (should not throw, native converts to "null"/"undefined")
     try {
       root.innerHTML = null;
-      patterns.push("null -> " + root.textContent);
+      patterns.push(`null -> ${root.textContent}`);
     } catch (e) {
-      patterns.push("null threw: " + e.message);
+      patterns.push(`null threw: ${e.message}`);
     }
 
     document.body.removeChild(root);

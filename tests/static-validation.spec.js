@@ -84,6 +84,11 @@ const loadBridgeHarness = () => {
           return Promise.resolve({ ok: true });
         },
       },
+      storage: {
+        onChanged: {
+          addListener() {},
+        },
+      },
     },
     document: {
       visibilityState: "visible",
