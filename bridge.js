@@ -411,4 +411,39 @@
     }
     return undefined;
   });
+
+  // React immediately when disabled_origins changes from any context
+  if (chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes) => {
+      if (!changes.disabled_origins) return;
+      const currentOrigin = location.origin;
+      if (!currentOrigin || currentOrigin === "null") return;
+      const newOrigins = changes.disabled_origins.newValue || {};
+      const wasDisabled = disabled;
+      const nowDisabled = !!newOrigins[currentOrigin];
+      if (nowDisabled !== wasDisabled) {
+        disabled = nowDisabled;
+        if (nowDisabled && !wasDisabled) {
+          resetProbeState();
+        }
+        const config = {
+          type: "config_update",
+          disabled: nowDisabled,
+          persona: [],
+          fingerprintMode: "off",
+          fingerprintPersona: null,
+          diagnosticsMode: false,
+          noiseEnabled: false,
+          replayMode: "off",
+        };
+        for (const port of [...configPorts]) {
+          try {
+            port.postMessage(config);
+          } catch {
+            configPorts.delete(port);
+          }
+        }
+      }
+    });
+  }
 })();

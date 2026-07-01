@@ -1,4 +1,3 @@
-/* eslint-env node -- Playwright test environment */
 // Static — real-URL smoke tests.
 //
 // These tests navigate to real public websites with the extension loaded and
@@ -15,7 +14,6 @@
 //   3. Call navigateAndCheckHealth(page, url) and assert the result.
 
 const { expect, test, isOnline, navigateAndCheckHealth } = require("./helpers/real-browser");
-const { assertNoUnhandledErrors } = require("./helpers/real-browser");
 
 // ---------------------------------------------------------------------------
 //  Google Search – autocomplete / recommendation dropdown
@@ -52,8 +50,8 @@ test("Google Search autocomplete dropdown shows suggestions", async ({ realBrows
   // Dismiss any cookie consent overlay if present
   const acceptButtons = page.locator(
     'button:has-text("Accept all"), button:has-text("Accept"), ' +
-    'button:has-text("I agree"), button:has-text("Got it"), ' +
-    'div[role="dialog"] button:first-child'
+      'button:has-text("I agree"), button:has-text("Got it"), ' +
+      'div[role="dialog"] button:first-child'
   );
   try {
     await acceptButtons.first().click({ timeout: 3000 });
@@ -116,7 +114,6 @@ test("Multiple normie websites render without going blank", async ({ realBrowser
   const page = await realBrowser.context.newPage();
 
   for (const site of sites) {
-    // eslint-disable-next-line no-await-in-loop
     const health = await navigateAndCheckHealth(page, site.url, {
       timeout: 30_000,
       waitUntil: "networkidle",
@@ -146,7 +143,7 @@ test("Google search results page renders visible content", async ({ realBrowser 
   // Dismiss cookie consent if present
   const acceptButtons = page.locator(
     'button:has-text("Accept all"), button:has-text("Accept"), ' +
-    'button:has-text("I agree"), button:has-text("Got it")'
+      'button:has-text("I agree"), button:has-text("Got it")'
   );
   try {
     await acceptButtons.first().click({ timeout: 3000 });

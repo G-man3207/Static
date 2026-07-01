@@ -36,6 +36,8 @@
   let decoySurface = null;
   let replayScanTicks = 0;
   let disabled = false;
+  let configReceived = false;
+  const pendingSignals = [];
 
   const isObjectLike = (value) =>
     value && (typeof value === "object" || typeof value === "function");
@@ -466,12 +468,27 @@
     if (typeof data.disabled === "boolean") {
       disabled = data.disabled;
     }
+    if (!configReceived) {
+      configReceived = true;
+      // Drain any signals queued before the first config arrived
+      for (const sig of pendingSignals) {
+        if (!disabled) {
+          const safeSignal = sig == null ? "unknown" : String(sig).slice(0, 96);
+          bridge.post("replay_detected", { signal: safeSignal });
+        }
+      }
+      pendingSignals.length = 0;
+    }
   };
 
   const bridge = U.setupBridge(BRIDGE_EVENT, MAX_QUEUED_SIGNALS, applyConfigUpdate);
 
   const postReplayDetected = (signal) => {
     if (disabled) return;
+    if (!configReceived) {
+      pendingSignals.push(signal);
+      return;
+    }
     const safeSignal = signal == null ? "unknown" : String(signal).slice(0, 96);
     bridge.post("replay_detected", { signal: safeSignal });
   };

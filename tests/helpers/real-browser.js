@@ -7,9 +7,6 @@
 // All functions that interact with the page accept a Playwright Page object and
 // are designed to compose cleanly with Playwright's test/expect API.
 
-const { chromium } = require("@playwright/test");
-const http = require("http");
-const { extensionPath } = require("./extension");
 const { visibleContentRatio } = require("./png");
 
 /** Minimum visible-content ratio below which a page is considered blank. */
@@ -97,7 +94,7 @@ async function computeVisibleContentRatio(page) {
  */
 async function assertPageHasVisibleContent(
   page,
-  { minRatio = MIN_VISIBLE_CONTENT_RATIO, name = "page", screenshotPath } = {},
+  { minRatio = MIN_VISIBLE_CONTENT_RATIO, name = "page", screenshotPath } = {}
 ) {
   const ratio = await computeVisibleContentRatio(page);
   if (ratio < minRatio) {
@@ -106,7 +103,7 @@ async function assertPageHasVisibleContent(
     throw new Error(
       `${name} appears blank or nearly blank: visible content ratio ` +
         `${(ratio * 100).toFixed(2)}% (threshold: ${(minRatio * 100).toFixed(2)}%). ` +
-        `Screenshot saved to ${path}`,
+        `Screenshot saved to ${path}`
     );
   }
 }
@@ -135,7 +132,7 @@ function assertNoUnhandledErrors(errors, { name = "page" } = {}) {
  * Assert that an element matching `selector` is visible on the page.
  * Throws a descriptive error if the element does not exist or is not visible.
  */
-async function assertElementVisible(page, selector, { name, timeout = 5000 } = {}) {
+async function assertElementVisible(page, selector, { name, _timeout = 5000 } = {}) {
   const label = name || selector;
   const el = await page.$(selector);
   if (!el) {
@@ -150,7 +147,7 @@ async function assertElementVisible(page, selector, { name, timeout = 5000 } = {
   if (!box || box.width === 0 || box.height === 0) {
     throw new Error(
       `Element "${label}" has zero dimensions (${box ? `${box.width}×${box.height}` : "null"}) ` +
-        `on "${page.url()}"`,
+        `on "${page.url()}"`
     );
   }
 }
@@ -177,7 +174,7 @@ async function assertElementVisible(page, selector, { name, timeout = 5000 } = {
 async function navigateAndCheckHealth(
   page,
   url,
-  { timeout = 30_000, waitUntil = "networkidle" } = {},
+  { timeout = 30_000, waitUntil = "networkidle" } = {}
 ) {
   const capture = captureConsoleErrors(page);
   let navigationError = null;
@@ -227,7 +224,7 @@ async function checkPageHealth(page) {
  * This is a convenience alias for `launchExtension()` from `./extension.js`
  * so callers can import everything from this module.
  */
-async function launchRealBrowser({ headless = false } = {}) {
+async function launchRealBrowser({ _headless = false } = {}) {
   const { launchExtension } = require("./extension");
   // launchExtension already uses headless:false and loads the extension
   return launchExtension();
@@ -248,7 +245,7 @@ async function launchRealBrowser({ headless = false } = {}) {
  * ```
  */
 const realBrowserTest = require("@playwright/test").test.extend({
-  realBrowser: async ({}, use) => {
+  realBrowser: async (_, use) => {
     const ext = await launchRealBrowser();
     try {
       await ext.serviceWorker.evaluate(() => chrome.storage.local.clear());
