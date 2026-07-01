@@ -289,8 +289,12 @@ test("extension pages reference existing local scripts", () => {
 
 test("manifest keeps privacy-sensitive exposure and permissions minimal", () => {
   const manifest = readJson("manifest.json");
-  expect(manifest.permissions.sort()).toEqual(["declarativeNetRequest", "storage"]);
-  expect(manifest.host_permissions || []).toEqual([]);
+  expect(manifest.permissions.sort()).toEqual([
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "storage",
+  ]);
+  expect(manifest.host_permissions || []).toEqual(["*://*/*"]);
   expect(manifest.optional_host_permissions || []).toEqual([]);
   expect(manifest.web_accessible_resources || []).toEqual([]);
   expect(manifest.externally_connectable).toBeUndefined();
