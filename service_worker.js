@@ -28,6 +28,145 @@ const {
   trimCountMap,
 } = globalThis.__static_sw_utils__;
 
+// ─── DNR header-rule management for network-layer fingerprint spoofing ────
+const UA_RULE_ID_BASE = 10_000;
+const SEC_CH_UA_HEADERS = [
+  "Sec-CH-UA",
+  "Sec-CH-UA-Arch",
+  "Sec-CH-UA-Bitness",
+  "Sec-CH-UA-Full-Version",
+  "Sec-CH-UA-Full-Version-List",
+  "Sec-CH-UA-Mobile",
+  "Sec-CH-UA-Model",
+  "Sec-CH-UA-Platform",
+  "Sec-CH-UA-Platform-Version",
+  "Sec-CH-UA-WoW64",
+];
+
+// Tracks in-memory state: origin -> { uaRuleId, stripRuleId }
+const originHeaderRules = new Map();
+let dnrNextRuleId = UA_RULE_ID_BASE;
+
+const ALL_RESOURCE_TYPES = [
+  "main_frame",
+  "sub_frame",
+  "stylesheet",
+  "script",
+  "image",
+  "font",
+  "object",
+  "xmlhttprequest",
+  "ping",
+  "csp_report",
+  "media",
+  "websocket",
+  "webtransport",
+  "webbundle",
+  "other",
+];
+
+const userAgentStringFor = (uaOs) => {
+  // Build the same UA string format as block_fingerprint.js's maskedUa()
+  const realUA = globalThis.navigator && globalThis.navigator.userAgent;
+  if (typeof realUA === "string" && realUA.includes("(") && realUA.includes(")")) {
+    return realUA.replace(/\([^)]*\)/, `(${uaOs})`);
+  }
+  return `Mozilla/5.0 (${uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`;
+};
+
+const ensureOriginHeaderRule = async (origin, fingerprintMode, persona) => {
+  if (!origin || fingerprintMode !== "mask" || !persona || !persona.uaOs) return;
+
+  // Remove stale rule for this origin first
+  await removeOriginHeaderRule(origin);
+
+  const uaString = userAgentStringFor(persona.uaOs);
+  const hostname = new URL(origin).hostname;
+
+  // Build a single modifyHeaders rule that sets User-Agent AND strips Sec-CH-UA
+  const requestHeaders = [{ header: "User-Agent", operation: "set", value: uaString }];
+  for (const header of SEC_CH_UA_HEADERS) {
+    requestHeaders.push({ header, operation: "remove" });
+  }
+
+  const ruleId = dnrNextRuleId++;
+  // Use urlFilter for IP addresses (requestDomains doesn't match bare IPs),
+  // requestDomains for normal domain names.
+  const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname === "localhost";
+  const condition = isIp
+    ? { urlFilter: `*${hostname}*`, resourceTypes: ALL_RESOURCE_TYPES }
+    : { requestDomains: [hostname], resourceTypes: ALL_RESOURCE_TYPES };
+  const rule = {
+    id: ruleId,
+    priority: 100,
+    action: { type: "modifyHeaders", requestHeaders },
+    condition,
+  };
+
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [rule] });
+  } catch (_err) {
+    // If adding fails (e.g. rule limit exceeded), silently skip
+    return;
+  }
+
+  originHeaderRules.set(origin, { ruleId, uaString });
+};
+
+const removeOriginHeaderRule = async (origin) => {
+  const existing = originHeaderRules.get(origin);
+  if (!existing) return;
+
+  originHeaderRules.delete(origin);
+
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [existing.ruleId] });
+  } catch {
+    // Ignore removal errors — rule may already be gone
+  }
+};
+
+const clearAllHeaderRules = async () => {
+  if (originHeaderRules.size === 0) {
+    // Still attempt to clean any stale rules in our ID range
+    try {
+      const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+      const staleIds = existingRules.filter((r) => r.id >= UA_RULE_ID_BASE).map((r) => r.id);
+      if (staleIds.length > 0) {
+        await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: staleIds });
+      }
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
+  const ruleIds = [];
+  for (const [, entry] of originHeaderRules) {
+    ruleIds.push(entry.ruleId);
+  }
+  originHeaderRules.clear();
+
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: ruleIds });
+  } catch {
+    // ignore
+  }
+};
+
+const cleanupStaleHeaderRules = async () => {
+  // Called on service-worker init to purge any leftover rules from a prior session
+  try {
+    const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const staleIds = existingRules.filter((r) => r.id >= UA_RULE_ID_BASE).map((r) => r.id);
+    if (staleIds.length > 0) {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: staleIds });
+    }
+  } catch {
+    // ignore
+  }
+};
+
 // ─── In-memory per-tab state ──────────────────────────────────────────────
 const perTabState = new Map(); // tabId -> { origin, frames: Map<frameId, {total, idCounts}> }
 const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
@@ -723,6 +862,12 @@ const detailsResponseFor = async (tabId, stored) => {
   const disabled = !!(origin && disabledOrigins[origin]);
   const fingerprintMode = stored.fingerprint_mode === "mask" ? "mask" : "off";
   const fingerprintPersona = await fingerprintPersonaForDetails(origin, fingerprintMode, disabled);
+
+  // Ensure DNR header rule matches the persona for this origin
+  if (origin && !disabled) {
+    await ensureOriginHeaderRule(origin, fingerprintMode, fingerprintPersona);
+  }
+
   return {
     disabled,
     total: sumTabTotal(tabId),
@@ -791,6 +936,14 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
     const fingerprintMode = fingerprint_mode === "mask" ? "mask" : "off";
     const fingerprintPersona =
       fingerprintMode === "mask" ? await fingerprintPersonaFor(origin) : null;
+
+    // Ensure DNR header rule matches the persona for this origin
+    if (origin && !disabled) {
+      await ensureOriginHeaderRule(origin, fingerprintMode, fingerprintPersona);
+    } else if (origin) {
+      await removeOriginHeaderRule(origin);
+    }
+
     if (!noise_enabled || !origin) {
       sendResponse({
         diagnosticsMode: diagnostics_mode,
@@ -859,6 +1012,9 @@ const handleSetFingerprint = (msg, _sender, sendResponse) => {
     const allowed = new Set(["off", "mask"]);
     const mode = allowed.has(msg.mode) ? msg.mode : "off";
     await chrome.storage.local.set({ fingerprint_mode: mode });
+    if (mode !== "mask") {
+      await clearAllHeaderRules();
+    }
     await broadcastConfigUpdate();
     sendResponse({ ok: true, mode });
   })();
@@ -880,6 +1036,9 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
       delete disabled_origins[origin];
     }
     await chrome.storage.local.set({ disabled_origins });
+    if (disabled && origin) {
+      await removeOriginHeaderRule(origin);
+    }
     // Notify the tab for this origin so content scripts can update immediately
     const tabs = await chrome.tabs.query({});
     await Promise.all(
@@ -1004,3 +1163,16 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
     chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
   }
 });
+
+// ─── Storage change listener: react to fingerprint_mode changes ───────────
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.fingerprint_mode) {
+    const newMode = changes.fingerprint_mode.newValue;
+    if (newMode !== "mask") {
+      clearAllHeaderRules();
+    }
+  }
+});
+
+// ─── Startup: clean stale DNR header rules from prior sessions ─────────────
+cleanupStaleHeaderRules();
