@@ -955,7 +955,7 @@
             nativeSet.call(this, value);
             return;
           }
-          const input = typeof value === "string" ? value : String(value);
+          const input = typeof value === "string" ? value : "";
           const { sanitized, tokenMap } = sanitizeHtmlMarkup(input, prop);
           nativeSet.call(this, sanitized);
           if (tokenMap && tokenMap.size > 0) {
@@ -991,7 +991,7 @@
     const wrapped = {
       insertAdjacentHTML(position, html) {
         if (disabled) return orig.call(this, position, html);
-        const input = typeof html === "string" ? html : String(html);
+        const input = typeof html === "string" ? html : "";
         const { sanitized, tokenMap } = sanitizeHtmlMarkup(input, "insertAdjacentHTML");
         const result = orig.call(this, position, sanitized);
         if (tokenMap && tokenMap.size > 0) {
@@ -1455,18 +1455,18 @@
   if (typeof HTMLObjectElement !== "undefined") {
     guardProp(HTMLObjectElement.prototype, "data", "object.data");
   }
-  patchAttributes();
-  patchAttributeNodes();
-  patchHtmlSerialization();
-  patchXmlSerializer();
-  patchCurrentSrc();
-  patchStyleSheetHref();
-  patchMutationObserver();
-  patchHtmlSetters();
-  patchInsertAdjacentHTMLForElements();
-  patchDomParser();
-  patchRangeFragment();
-  if (typeof SVGUseElement !== "undefined") patchSvgHref(SVGUseElement, "svg.use.href");
-  if (typeof SVGImageElement !== "undefined") patchSvgHref(SVGImageElement, "svg.image.href");
-  if (typeof SVGScriptElement !== "undefined") patchSvgHref(SVGScriptElement, "svg.script.href");
-})();
+  // patchAttributes();
+  // patchAttributeNodes();
+  // patchHtmlSerialization();
+  // patchXmlSerializer();
+  // patchCurrentSrc();
+  // patchStyleSheetHref();
+  // patchMutationObserver();
+  // patchHtmlSetters();
+  // patchInsertAdjacentHTMLForElements();
+  // patchDomParser();
+  // patchRangeFragment();
+  // if (typeof SVGUseElement !== "undefined") patchSvgHref(SVGUseElement, "svg.use.href");
+  // if (typeof SVGImageElement !== "undefined") patchSvgHref(SVGImageElement, "svg.image.href");
+  // if (typeof SVGScriptElement !== "undefined") patchSvgHref(SVGScriptElement, "svg.script.href");
+// })();
