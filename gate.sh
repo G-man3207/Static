@@ -124,8 +124,9 @@ fi
 # Gate 5 — Browser E2E tests
 if $RUN_E2E; then
   header "Browser E2E tests"
-  # Use the same explicit spec list as npm run test:e2e
-  E2E_SPECS="tests/network-header-spoof.spec.js tests/globals-stealth.spec.js tests/bridge-flush.spec.js tests/extension-behavior.spec.js tests/fingerprint-masking.spec.js tests/fingerprint-depth.spec.js tests/fingerprint-vectors.spec.js tests/replay-datadog.spec.js tests/replay-hotjar.spec.js tests/replay-openreplay.spec.js tests/replay-posthog.spec.js tests/replay-sentry.spec.js tests/replay-depth.spec.js tests/edge-privacy.spec.js tests/worklet-vectors.spec.js tests/svg-href.spec.js tests/noise-xhr-consistency.spec.js tests/noise-canary.spec.js tests/adversarial-consistency.spec.js tests/stealth-hardness.spec.js tests/decoy-serialization.spec.js tests/compat-regression.spec.js"
+  # Spec list lives in tests/e2e-specs.txt (shared with package.json's
+  # test:e2e) so the two never drift apart.
+  E2E_SPECS="$(grep -v '^#' tests/e2e-specs.txt | grep -v '^$' | tr '\n' ' ')"
   if ${USE_DOCKER:-false}; then
     docker run --rm --user "$(id -u):$(id -g)" --ipc=host -v "$PWD":/work -w /work --network host \
       mcr.microsoft.com/playwright:v1.59.1-noble \

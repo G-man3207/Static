@@ -1,0 +1,25 @@
+# Single source of truth for the browser E2E Playwright spec list.
+# Read by package.json (test:e2e) and gate.sh so the two never drift apart.
+# One spec path per line. Blank lines and comments (#) are ignored.
+tests/network-header-spoof.spec.js
+tests/globals-stealth.spec.js
+tests/bridge-flush.spec.js
+tests/extension-behavior.spec.js
+tests/fingerprint-masking.spec.js
+tests/fingerprint-depth.spec.js
+tests/fingerprint-vectors.spec.js
+tests/replay-datadog.spec.js
+tests/replay-hotjar.spec.js
+tests/replay-openreplay.spec.js
+tests/replay-posthog.spec.js
+tests/replay-sentry.spec.js
+tests/replay-depth.spec.js
+tests/edge-privacy.spec.js
+tests/worklet-vectors.spec.js
+tests/svg-href.spec.js
+tests/noise-xhr-consistency.spec.js
+tests/noise-canary.spec.js
+tests/adversarial-consistency.spec.js
+tests/stealth-hardness.spec.js
+tests/decoy-serialization.spec.js
+tests/compat-regression.spec.js

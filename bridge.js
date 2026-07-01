@@ -1,8 +1,15 @@
 // Static - MAIN-world modules to service-worker bridge (ISOLATED world).
 (() => {
   const CFG = globalThis.__static_config__ || {};
-  const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
+  const H = CFG.helpers || {};
   const MAX_CAPTURED_IDS = 2000;
+
+  // Centralized error swallow: replaces bare `catch {}` so failures are
+  // labelled and (in diagnostics mode) surfaced without leaking to the page
+  // (this runs in the ISOLATED world, so console output is not page-visible).
+  const safeLog = (err, label) => {
+    if (diagnosticsMode) console.error(`[Static] ${label}:`, err);
+  };
   const CONFIG_EVENTS = [
     "__perf_decoy_bi__",
     "__perf_fingerprint_bi__",
@@ -23,20 +30,17 @@
   const pendingIdCounts = new Map();
   const pendingVectorCounts = new Map();
   const pendingPathKindCounts = new Map();
-  const knownExtensionIds = new Set();
-
-  for (const slotIds of Object.values(CFG.conflictSlots || {})) {
-    for (const id of slotIds || []) {
-      if (typeof id === "string") knownExtensionIds.add(id.toLowerCase());
-    }
-  }
+  const knownExtensionIds = H.knownPersonaIds ? H.knownPersonaIds(CFG) : new Set();
 
   const bumpMap = (map, key, amount = 1) => {
     const safeKey = key || "unknown";
     map.set(safeKey, (map.get(safeKey) || 0) + amount);
   };
 
-  const countPriorityFor = (id, count) => (knownExtensionIds.has(id) ? 1000000 : 0) + count;
+  const countPriorityFor = (id, count) =>
+    H.countPriorityFor
+      ? H.countPriorityFor(id, count, knownExtensionIds)
+      : (knownExtensionIds.has(id) ? 1000000 : 0) + count;
 
   const lowestPriorityIdFor = (map) => {
     let lowestId = null;
@@ -85,60 +89,9 @@
     return value || "unknown";
   };
 
-  const pathKindFor = (url) => {
-    const pathname = pathnameFor(url);
-    if (pathname === null) return "unknown";
-    if (pathname === "" || pathname === "/") return "root";
-    if (pathname.endsWith("/manifest.json")) return "manifest";
-    if (/\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(pathname)) return "image";
-    if (pathname.endsWith(".svg")) return "svg";
-    if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) return "script";
-    if (pathname.endsWith(".css")) return "style";
-    if (pathname.endsWith(".html") || pathname.endsWith(".htm")) return "html";
-    if (pathname.endsWith(".json")) return "json";
-    return "other";
-  };
-
-  const pathnameFor = (url) => {
-    try {
-      return new URL(url).pathname.toLowerCase();
-    } catch {
-      return null;
-    }
-  };
-
-  const EXT_ID_RE_BY_SCHEME = {
-    "chrome-extension": CHROME_EXT_ID_RE,
-    "edge-extension": CHROME_EXT_ID_RE,
-    "moz-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
-    "safari-web-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
-  };
-
-  const extensionPathFor = (url) => {
-    try {
-      const parsed = new URL(String(url || ""));
-      const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
-      const id = parsed.hostname.toLowerCase();
-      const idRe = EXT_ID_RE_BY_SCHEME[scheme];
-      if (idRe && idRe.test(id)) {
-        return parsed.pathname.slice(0, 96);
-      }
-    } catch {}
-    return "";
-  };
-
-  const extractProbeId = (url) => {
-    try {
-      const parsed = new URL(String(url || ""));
-      const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
-      const id = parsed.hostname.toLowerCase();
-      const idRe = EXT_ID_RE_BY_SCHEME[scheme];
-      if (idRe && idRe.test(id)) {
-        return id;
-      }
-    } catch {}
-    return null;
-  };
+  const pathKindFor = (url) => (H.pathKindFor ? H.pathKindFor(url) : "unknown");
+  const extensionPathFor = (url) => (H.extensionPathFor ? H.extensionPathFor(url) : "");
+  const extractProbeId = (url) => (H.extractExtId ? H.extractExtId(url) : null);
 
   const queueDiagnosticProbe = (data) => {
     if (!diagnosticsMode || pendingDiagnosticEvents.length >= 80) return;
@@ -177,7 +130,9 @@
       };
       if (diagnosticSnapshot.length > 0) message.diagnosticEvents = diagnosticSnapshot;
       chrome.runtime.sendMessage(message);
-    } catch {}
+    } catch (err) {
+      safeLog(err, "probe flush");
+    }
   };
 
   const resetProbeState = () => {
@@ -219,7 +174,9 @@
         type: "static_replay_detected",
         signal: String(signal || "unknown").slice(0, 96),
       });
-    } catch {}
+    } catch (err) {
+      safeLog(err, "replay signal");
+    }
   };
 
   const sendAdaptiveSignal = (signal = {}) => {
@@ -237,7 +194,9 @@
             : [],
         },
       });
-    } catch {}
+    } catch (err) {
+      safeLog(err, "adaptive signal");
+    }
   };
 
   const sendCompatSignal = (signal = {}) => {
@@ -251,7 +210,9 @@
           vector: normalizeVector(signal.vector || signal.where),
         },
       });
-    } catch {}
+    } catch (err) {
+      safeLog(err, "compat signal");
+    }
   };
 
   const handlePortMessage = (event) => {
@@ -269,11 +230,15 @@
     port.onmessage = handlePortMessage;
     try {
       port.start();
-    } catch {}
+    } catch (err) {
+      safeLog(err, "port start");
+    }
     if (CONFIG_EVENTS.includes(eventName)) configPorts.add(port);
     try {
       document.dispatchEvent(new MessageEvent(eventName, { ports: [channel.port2] }));
-    } catch {}
+    } catch (err) {
+      safeLog(err, "bridge dispatch");
+    }
     return port;
   };
 
@@ -329,7 +294,9 @@
           }
         }
       }
-    } catch {}
+    } catch (err) {
+      safeLog(err, "disabled state check");
+    }
   };
 
   const refreshPersona = async () => {
@@ -347,7 +314,9 @@
         resetProbeState();
       }
       for (const port of [...configPorts]) postConfig(port, response);
-    } catch {}
+    } catch (err) {
+      safeLog(err, "persona refresh");
+    }
   };
 
   const allEvents = new Set([...PROBE_EVENTS, ...CONFIG_EVENTS, "__perf_adaptive_bi__"]);

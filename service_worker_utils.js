@@ -1,5 +1,6 @@
 // Static - pure service-worker helpers for caps, playbooks, and drift scoring.
 globalThis.__static_sw_utils__ = (() => {
+  const CONFIG_HELPERS = (globalThis.__static_config__ || {}).helpers || {};
   const sumCounts = (counts) => {
     let total = 0;
     for (const value of Object.values(counts || {})) {
@@ -10,16 +11,10 @@ globalThis.__static_sw_utils__ = (() => {
 
   const countValue = (count) => (typeof count === "number" && count > 0 ? count : 0);
 
-  const knownPersonaIdsForCaps = () => {
-    const ids = new Set();
-    const config = globalThis.__static_config__ || {};
-    for (const slotIds of Object.values(config.conflictSlots || {})) {
-      for (const id of slotIds || []) {
-        if (typeof id === "string") ids.add(id.toLowerCase());
-      }
-    }
-    return ids;
-  };
+  const knownPersonaIdsForCaps = () =>
+    CONFIG_HELPERS.knownPersonaIds
+      ? CONFIG_HELPERS.knownPersonaIds(globalThis.__static_config__)
+      : new Set();
 
   const countPriorityFor = ([key, count], priorityIds) =>
     (priorityIds && priorityIds.has(String(key).toLowerCase()) ? 1000000 : 0) + countValue(count);
@@ -153,20 +148,11 @@ globalThis.__static_sw_utils__ = (() => {
     };
   };
 
-  const knownPersonaIds = (config) => {
-    const ids = new Set();
-    for (const slotIds of Object.values((config && config.conflictSlots) || {})) {
-      for (const id of slotIds) ids.add(id);
-    }
-    return ids;
-  };
+  const knownPersonaIds = (config) =>
+    CONFIG_HELPERS.knownPersonaIds ? CONFIG_HELPERS.knownPersonaIds(config) : new Set();
 
   const eligibilityKindFor = (id, count, knownIds, config) => {
-    const chromeExtIdRe = /^[a-p]{32}$/;
-    const uuidExtIdRe = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
-    if (!(chromeExtIdRe.test(id) || uuidExtIdRe.test(id)) || typeof count !== "number") {
-      return null;
-    }
+    if (!CONFIG_HELPERS.isValidExtensionId(id) || typeof count !== "number") return null;
     const known = knownIds.has(id);
     const min = known ? config.personaMinCount || 2 : config.unknownPersonaMinCount || 20;
     return count >= min ? (known ? "known" : "unknown") : null;

@@ -3,6 +3,13 @@
 (() => {
   const U = {};
 
+  // Leak-safe error swallow for MAIN-world code. We intentionally do NOT
+  // console.log here: console output in the MAIN world is visible to the page
+  // and would leak Static's presence. Catches are centralized + labelled so
+  // they can later be routed through the diagnostics bridge instead.
+  const safeLog = (_err, _label) => {};
+  U.safeLog = safeLog;
+
   // ======================================================================
   // Stealth infrastructure — makes wrapped functions look native under
   // Function.prototype.toString inspection.
@@ -19,18 +26,24 @@
   try {
     Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
     Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch {}
+  } catch (err) {
+    safeLog(err, "toString name/length");
+  }
   Function.prototype.toString = patchedFnToString;
 
   U.stealth = (fn, nativeName, opts = {}) => {
     stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
     try {
       Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch {}
+    } catch (err) {
+      safeLog(err, "stealth name");
+    }
     if (typeof opts.length === "number") {
       try {
         Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch {}
+      } catch (err) {
+        safeLog(err, "stealth length");
+      }
     }
     return fn;
   };
@@ -70,7 +83,9 @@
         writable: true,
       };
       Object.defineProperty(proto, "constructor", { ...desc, value: wrapped });
-    } catch {}
+    } catch (err) {
+      safeLog(err, "align constructor");
+    }
   };
 
   U.copyConstructorStatics = (wrapped, original) => {
@@ -79,7 +94,9 @@
       try {
         const desc = Object.getOwnPropertyDescriptor(original, key);
         if (desc) Object.defineProperty(wrapped, key, desc);
-      } catch {}
+      } catch (err) {
+        safeLog(err, "copy statics");
+      }
     }
   };
 
@@ -142,7 +159,9 @@
       if (idRe && idRe.test(id)) {
         return { id, scheme };
       }
-    } catch {}
+    } catch (err) {
+      safeLog(err, "extension identity parse");
+    }
     return null;
   };
 
@@ -188,10 +207,14 @@
     if (!policy) return [];
     try {
       if (typeof policy.features === "function") return policy.features();
-    } catch {}
+    } catch (err) {
+      safeLog(err, "policy features");
+    }
     try {
       if (typeof policy.allowedFeatures === "function") return policy.allowedFeatures();
-    } catch {}
+    } catch (err) {
+      safeLog(err, "policy allowedFeatures");
+    }
     return [];
   };
 
@@ -224,16 +247,22 @@
       if (!p || typeof p.postMessage !== "function") return;
       try {
         event.stopImmediatePropagation();
-      } catch {}
+      } catch (err) {
+        safeLog(err, "stop propagation");
+      }
       port = p;
       port.onmessage = (portEvent) => {
         try {
           onConfigUpdate(portEvent.data);
-        } catch {}
+        } catch (err) {
+          safeLog(err, "config update");
+        }
       };
       try {
         port.start();
-      } catch {}
+      } catch (err) {
+        safeLog(err, "port start");
+      }
       const batch = queued.splice(0, queued.length);
       for (const msg of batch) {
         try {
@@ -268,10 +297,13 @@
   };
 
   // Export on globalThis so subsequent MAIN-world scripts can access it.
+  // configurable: true so block_globals.js (the last MAIN-world script) can
+  // delete this global after every script has captured its own `U` reference,
+  // leaving no enumerable-or-not trace for pages to find.
   try {
     Object.defineProperty(globalThis, "__static_block_utils__", {
       value: U,
-      configurable: false,
+      configurable: true,
       writable: false,
     });
   } catch {

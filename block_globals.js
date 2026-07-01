@@ -282,4 +282,15 @@
     { once: true }
   );
   addEventListener("load", scrubGlobals, { once: true });
+
+  // Hardening: every MAIN-world block script captured its own `const U =
+  // globalThis.__static_block_utils__` reference synchronously at document_start
+  // before this (the last) script runs. Remove the shared global so pages
+  // cannot detect Static via Object.getOwnPropertyNames(window) / `in` checks.
+  // All captured `U` references remain valid via closure.
+  try {
+    delete globalThis.__static_block_utils__;
+  } catch {
+    // Non-configurable or locked down — ignore; stealth is best-effort.
+  }
 })();
