@@ -5,8 +5,10 @@ const { hotjarFixtureFiles } = require("./hotjar-fixtures");
 const { posthogFixtureFiles } = require("./posthog-fixtures");
 const { startFixtureServer } = require("./server");
 const { sentryFixtureFiles } = require("./sentry-fixtures");
+const { realisticFixtureFiles } = require("./realistic-fixtures");
 
 const fixtureFiles = {
+  ...realisticFixtureFiles,
   "/blank.html": '<!doctype html><meta charset="utf-8"><body>blank</body>',
   "/trusted-types.html": `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"><body>trusted</body>`,
   "/message-listener.html": `

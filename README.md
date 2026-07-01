@@ -191,11 +191,13 @@ Static intentionally does not ship broad ad-tech, analytics, social pixel, or ge
 
 ## Test
 
-Static has three Playwright-backed test layers:
+Static has five Playwright-backed test layers:
 
 - **Static validation** checks manifest references, DNR rule shape, ruleset metadata, and popup ruleset IDs.
 - **Extension integration** launches Chromium with the unpacked MV3 extension and verifies content-script, service-worker, DOM scrubber, Noise mode, log clearing, and stealth-wrapper behavior.
 - **Adversarial consistency** probes one learned Noise persona across fetch, XHR, passive elements, attributes, active fail-closed vectors, and API descriptors to catch detector-visible contradictions.
+- **Compatibility regression** tests real-world web patterns (innerHTML with objects, dynamic DOM mutations, CSS animations, async content loading, postMessage) to detect breakage from extension patches.
+- **Real-site smoke tests** navigate to live websites (Google, Facebook, example.com) with the extension loaded and verify pages render visible content without blank screens. These require internet access and auto-skip when offline.
 
 Install dependencies once:
 
@@ -230,11 +232,33 @@ On a desktop session with a display, this also works:
 npm run test:e2e
 ```
 
+Run compatibility regression tests (included in `test:e2e`):
+
+```bash
+npx playwright test tests/compat-regression.spec.js
+```
+
+Run real-site smoke tests (requires internet):
+
+```bash
+npm run test:real-sites:xvfb
+```
+
 Run the full CI-style local check on Linux:
 
 ```bash
 npm run check
 ```
+
+### Test helpers
+
+- `tests/helpers/real-browser.js` — reusable test helper for navigating to real URLs with the extension loaded and asserting basic page health (visible content ratio, console error capture, element visibility). See the module's JSDoc for the full API.
+  - `navigateAndCheckHealth(page, url)` — navigate to a URL and return a health report.
+  - `assertPageHasVisibleContent(page)` — assert a page is not blank.
+  - `captureConsoleErrors(page)` — capture and assert no console errors.
+  - `checkPageHealth(page)` — check health of the current page without navigating.
+  - `isOnline()` — check internet connectivity for conditional test skipping.
+- `tests/helpers/realistic-fixtures.js` — enriched local fixture pages exercising realistic patterns: autocomplete with async suggestion loading, dashboard with live data feeds, dynamic DOM mutation cycling, and postMessage-based messaging. Spread into the fixture server via `extension-fixture.js`.
 
 ## Extend coverage
 
