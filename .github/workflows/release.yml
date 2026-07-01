@@ -27,20 +27,67 @@ jobs:
       - name: Build release zip
         run: |
           ZIP_NAME="static-${GITHUB_REF_NAME}.zip"
+          # Exclude repo-infra and dev-only files so the zip contains only
+          # the runtime files Chrome actually loads.
           zip -r "$ZIP_NAME" . \
             -x ".git/*" \
             -x ".github/*" \
+            -x ".husky/*" \
             -x "_metadata/*" \
+            -x "node_modules/*" \
+            -x "tests/*" \
+            -x "docs/*" \
+            -x "test-results/*" \
             -x ".editorconfig" \
             -x ".prettierrc" \
             -x ".prettierignore" \
             -x ".gitignore" \
+            -x "eslint.config.mjs" \
+            -x "playwright.config.js" \
+            -x "gate.sh" \
+            -x "package.json" \
+            -x "package-lock.json" \
+            -x "IMPROVEMENTS.md" \
+            -x "*.diag" \
             -x "*.zip" \
             -x ".DS_Store" \
             -x "Thumbs.db"
           echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
           echo "--- zip contents ---"
           unzip -l "$ZIP_NAME"
+
+      - name: Validate release package
+        run: |
+          # Confirm manifest.json is well-formed and that every content
+          # script, background worker, ruleset and popup referenced by the
+          # manifest is actually present in the zip.
+          TMP_DIR="$(mktemp -d)"
+          unzip -q "$ZIP_NAME" -d "$TMP_DIR"
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const root = process.argv[1];
+            const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+            const required = new Set(["manifest.json"]);
+            for (const cs of manifest.content_scripts || []) {
+              for (const js of cs.js || []) required.add(js);
+            }
+            if (manifest.background && manifest.background.service_worker) {
+              required.add(manifest.background.service_worker);
+            }
+            if (manifest.action && manifest.action.default_popup) {
+              required.add(manifest.action.default_popup);
+            }
+            for (const rs of (manifest.declarative_net_request && manifest.declarative_net_request.rule_resources) || []) {
+              required.add(rs.path);
+            }
+            const missing = [...required].filter((f) => !fs.existsSync(path.join(root, f)));
+            if (missing.length) {
+              console.error("Missing runtime files in release zip:", missing);
+              process.exit(1);
+            }
+            console.log("Release package OK:", [...required].length, "runtime files present.");
+          ' "$TMP_DIR"
 
       - uses: softprops/action-gh-release@v2
         with:

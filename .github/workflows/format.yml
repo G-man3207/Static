@@ -1,11 +1,14 @@
 name: Format
 
-# Checks Prettier formatting only when a new version tag is pushed.
-# Tags should point at an already-prepared commit, so this workflow does not
-# create follow-up formatting commits after a release tag exists.
+# Checks Prettier formatting on pull requests and pushes to main for early
+# feedback, and again when a new version tag is pushed. Tags should point at
+# an already-prepared commit, so this workflow does not create follow-up
+# formatting commits after a release tag exists.
 
 on:
+  pull_request:
   push:
+    branches: [main]
     tags: ["v*.*.*"]
 
 permissions:
@@ -13,7 +16,6 @@ permissions:
 
 jobs:
   format:
-    if: ${{ github.event.created && !github.event.deleted }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

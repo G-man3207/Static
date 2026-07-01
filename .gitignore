@@ -19,5 +19,8 @@ Thumbs.db
 *.crx
 *.pem
 
+# Inactive / diagnostic copies of source files (never shipped)
+*.diag
+
 # Pi goals
 /.pi

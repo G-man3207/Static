@@ -146,6 +146,113 @@
     personaRotationWeeks: 1,
   };
 
+  // ========================================================================
+  // Shared helpers — single source of truth for extension-ID validation,
+  // persona/known-ID extraction, path-kind classification and priority
+  // ordering. Used by the service worker, service_worker_utils.js and the
+  // ISOLATED-world bridge.js so the three never drift apart.
+  //
+  // MAIN-world block content scripts intentionally keep their own copies
+  // (see block_utils.js) so Static does not expose a detectable page global.
+  // ========================================================================
+  data.helpers = {
+    // Regexes for extension-ID shapes across browser schemes.
+    CHROME_EXT_ID_RE: /^[a-p]{32}$/,
+    UUID_EXT_ID_RE: /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
+    get EXT_ID_RE_BY_SCHEME() {
+      return {
+        "chrome-extension": this.CHROME_EXT_ID_RE,
+        "edge-extension": this.CHROME_EXT_ID_RE,
+        "moz-extension": this.UUID_EXT_ID_RE,
+        "safari-web-extension": this.UUID_EXT_ID_RE,
+      };
+    },
+
+    isValidExtensionId(id) {
+      return (
+        typeof id === "string" && (this.CHROME_EXT_ID_RE.test(id) || this.UUID_EXT_ID_RE.test(id))
+      );
+    },
+
+    extensionIdentityFor(url) {
+      try {
+        const parsed = new URL(String(url || ""));
+        const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+        const id = parsed.hostname.toLowerCase();
+        const idRe = this.EXT_ID_RE_BY_SCHEME[scheme];
+        if (idRe && idRe.test(id)) return { id, scheme };
+      } catch {}
+      return null;
+    },
+
+    extractExtId(url) {
+      const identity = this.extensionIdentityFor(url);
+      return identity ? identity.id : null;
+    },
+
+    // Path portion of an extension URL (capped) for diagnostics.
+    extensionPathFor(url) {
+      const identity = this.extensionIdentityFor(url);
+      if (!identity) return "";
+      try {
+        return new URL(String(url || "")).pathname.slice(0, 96);
+      } catch {
+        return "";
+      }
+    },
+
+    // Set of every known extension ID across all conflictSlots, lowercased.
+    knownPersonaIds(config = data) {
+      const ids = new Set();
+      for (const slotIds of Object.values((config && config.conflictSlots) || {})) {
+        for (const id of slotIds || []) {
+          if (typeof id === "string") ids.add(id.toLowerCase());
+        }
+      }
+      return ids;
+    },
+
+    // Map of known ID -> slot name, lowercased, for conflict-aware persona
+    // selection.
+    buildConflictSlotMap(config = data) {
+      const idToSlot = new Map();
+      for (const [slotName, ids] of Object.entries((config && config.conflictSlots) || {})) {
+        for (const id of ids || []) {
+          if (typeof id === "string") idToSlot.set(id.toLowerCase(), slotName);
+        }
+      }
+      return idToSlot;
+    },
+
+    // Coarse resource kind for a URL's path. Used for probe-path telemetry.
+    pathnameFor(url) {
+      try {
+        return new URL(url).pathname.toLowerCase();
+      } catch {
+        return null;
+      }
+    },
+
+    pathKindFor(url) {
+      const pathname = this.pathnameFor(url);
+      if (pathname === null) return "unknown";
+      if (pathname === "" || pathname === "/") return "root";
+      if (pathname.endsWith("/manifest.json")) return "manifest";
+      if (/\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(pathname)) return "image";
+      if (pathname.endsWith(".svg")) return "svg";
+      if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) return "script";
+      if (pathname.endsWith(".css")) return "style";
+      if (pathname.endsWith(".html") || pathname.endsWith(".htm")) return "html";
+      if (pathname.endsWith(".json")) return "json";
+      return "other";
+    },
+
+    // Priority weight for trim/sort ordering: known IDs outrank unknown ones.
+    countPriorityFor(id, count, knownIds) {
+      return (knownIds && knownIds.has(String(id).toLowerCase()) ? 1000000 : 0) + count;
+    },
+  };
+
   try {
     Object.defineProperty(globalThis, "__static_config__", {
       value: data,

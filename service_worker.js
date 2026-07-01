@@ -28,6 +28,14 @@ const {
   trimCountMap,
 } = globalThis.__static_sw_utils__;
 
+// Whether diagnostics logging is active (mirrors the `diagnostics_mode` storage
+// flag). safeLog only emits when this is true, so error swallows stay silent
+// in normal use but surface during QA.
+let diagnosticsEnabled = false;
+const safeLog = (err, label) => {
+  if (diagnosticsEnabled) console.error(`[Static] ${label}:`, err);
+};
+
 // ─── DNR header-rule management for network-layer fingerprint spoofing ────
 const UA_RULE_ID_BASE = 10_000;
 const SEC_CH_UA_HEADERS = [
@@ -43,8 +51,13 @@ const SEC_CH_UA_HEADERS = [
   "Sec-CH-UA-WoW64",
 ];
 
-// Tracks in-memory state: origin -> { uaRuleId, stripRuleId }
+// Tracks in-memory state: origin -> { ruleId, uaString, lastUsed }
+// Persisted to chrome.storage.local (key "header_rules") so rules survive
+// service-worker restarts instead of leaking as orphans or being recreated
+// with ever-increasing IDs.
 const originHeaderRules = new Map();
+const HEADER_RULES_STORAGE_KEY = "header_rules";
+const MAX_HEADER_RULE_ORIGINS = 150; // LRU cap (DNR dynamic-rule budget is finite)
 let dnrNextRuleId = UA_RULE_ID_BASE;
 
 const ALL_RESOURCE_TYPES = [
@@ -90,12 +103,11 @@ const ensureOriginHeaderRule = async (origin, fingerprintMode, persona) => {
   }
 
   const ruleId = dnrNextRuleId++;
-  // Use urlFilter for IP addresses (requestDomains doesn't match bare IPs),
-  // requestDomains for normal domain names.
-  const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname === "localhost";
-  const condition = isIp
-    ? { urlFilter: `*${hostname}*`, resourceTypes: ALL_RESOURCE_TYPES }
-    : { requestDomains: [hostname], resourceTypes: ALL_RESOURCE_TYPES };
+  // requestDomains matches normal domain names. For bare IP addresses and
+  // localhost, requestDomains does not apply, so use a regexFilter anchored to
+  // scheme+host with a separator boundary. (A bare `*host*` urlFilter would
+  // match the host as an arbitrary substring anywhere in the URL.)
+  const condition = headerRuleConditionFor(hostname);
   const rule = {
     id: ruleId,
     priority: 100,
@@ -110,7 +122,23 @@ const ensureOriginHeaderRule = async (origin, fingerprintMode, persona) => {
     return;
   }
 
-  originHeaderRules.set(origin, { ruleId, uaString });
+  originHeaderRules.set(origin, { ruleId, uaString, lastUsed: Date.now() });
+  evictExcessHeaderRules();
+  await persistHeaderRules();
+};
+
+// Build a DNR condition that matches requests to `hostname` without matching
+// it as an arbitrary substring of a larger URL.
+const headerRuleConditionFor = (hostname) => {
+  const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname === "localhost";
+  if (isIp) {
+    const escaped = hostname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return {
+      regexFilter: `^https?://${escaped}([:/]|$)`,
+      resourceTypes: ALL_RESOURCE_TYPES,
+    };
+  }
+  return { requestDomains: [hostname], resourceTypes: ALL_RESOURCE_TYPES };
 };
 
 const removeOriginHeaderRule = async (origin) => {
@@ -118,6 +146,7 @@ const removeOriginHeaderRule = async (origin) => {
   if (!existing) return;
 
   originHeaderRules.delete(origin);
+  await persistHeaderRules();
 
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [existing.ruleId] });
@@ -126,26 +155,60 @@ const removeOriginHeaderRule = async (origin) => {
   }
 };
 
-const clearAllHeaderRules = async () => {
-  if (originHeaderRules.size === 0) {
-    // Still attempt to clean any stale rules in our ID range
-    try {
-      const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
-      const staleIds = existingRules.filter((r) => r.id >= UA_RULE_ID_BASE).map((r) => r.id);
-      if (staleIds.length > 0) {
-        await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: staleIds });
-      }
-    } catch {
-      // ignore
-    }
-    return;
+// LRU eviction: if the map exceeds the cap, drop the least-recently-used
+// origins (smallest lastUsed) until under the limit.
+const evictExcessHeaderRules = async () => {
+  if (originHeaderRules.size <= MAX_HEADER_RULE_ORIGINS) return;
+  const entries = [...originHeaderRules.entries()].sort(
+    (a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0)
+  );
+  const removeRuleIds = [];
+  while (originHeaderRules.size > MAX_HEADER_RULE_ORIGINS && entries.length > 0) {
+    const [origin, entry] = entries.shift();
+    originHeaderRules.delete(origin);
+    removeRuleIds.push(entry.ruleId);
   }
+  if (removeRuleIds.length === 0) return;
+  await persistHeaderRules();
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds });
+  } catch {
+    // Ignore removal errors
+  }
+};
 
+// Persist the in-memory rule map so a restarted service worker can reconcile
+// against the live DNR rules instead of orphaning them.
+const persistHeaderRules = () =>
+  serialize(async () => {
+    const serializable = {};
+    for (const [origin, entry] of originHeaderRules) {
+      serializable[origin] = entry;
+    }
+    await chrome.storage.local.set({ [HEADER_RULES_STORAGE_KEY]: serializable });
+  });
+
+const clearAllHeaderRules = async () => {
   const ruleIds = [];
   for (const [, entry] of originHeaderRules) {
     ruleIds.push(entry.ruleId);
   }
   originHeaderRules.clear();
+  await persistHeaderRules();
+
+  // Always sweep our whole ID range to catch any orphaned rules from a prior
+  // session, even if the in-memory map was already empty.
+  try {
+    const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const staleIds = existingRules.filter((r) => r.id >= UA_RULE_ID_BASE).map((r) => r.id);
+    for (const id of staleIds) {
+      if (!ruleIds.includes(id)) ruleIds.push(id);
+    }
+  } catch {
+    // ignore
+  }
+
+  if (ruleIds.length === 0) return;
 
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: ruleIds });
@@ -155,24 +218,50 @@ const clearAllHeaderRules = async () => {
 };
 
 const cleanupStaleHeaderRules = async () => {
-  // Called on service-worker init to purge any leftover rules from a prior session
+  // Called on service-worker init. Reconcile the persisted rule map against
+  // the live DNR rules: keep rules that still exist, drop orphans, and reset
+  // the next-rule-id counter above the highest known id.
   try {
-    const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
-    const staleIds = existingRules.filter((r) => r.id >= UA_RULE_ID_BASE).map((r) => r.id);
-    if (staleIds.length > 0) {
-      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: staleIds });
+    const { [HEADER_RULES_STORAGE_KEY]: stored = {} } =
+      await chrome.storage.local.get(HEADER_RULES_STORAGE_KEY);
+    const liveRuleIds = new Set();
+    try {
+      const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+      for (const r of existingRules) {
+        if (r.id >= UA_RULE_ID_BASE) liveRuleIds.add(r.id);
+      }
+    } catch (err) {
+      safeLog(err, "read dynamic rules");
     }
+
+    originHeaderRules.clear();
+    let maxId = UA_RULE_ID_BASE - 1;
+    for (const [origin, entry] of Object.entries(stored || {})) {
+      if (entry && typeof entry.ruleId === "number" && liveRuleIds.has(entry.ruleId)) {
+        originHeaderRules.set(origin, entry);
+        if (entry.ruleId > maxId) maxId = entry.ruleId;
+      }
+    }
+
+    // Remove orphan DNR rules in our range that have no persisted entry.
+    const knownIds = new Set([...originHeaderRules.values()].map((e) => e.ruleId));
+    const orphanIds = [...liveRuleIds].filter((id) => !knownIds.has(id));
+    if (orphanIds.length > 0) {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: orphanIds });
+    }
+
+    dnrNextRuleId = maxId + 1;
+    await persistHeaderRules();
   } catch {
-    // ignore
+    dnrNextRuleId = UA_RULE_ID_BASE;
   }
 };
 
 // ─── In-memory per-tab state ──────────────────────────────────────────────
 const perTabState = new Map(); // tabId -> { origin, frames: Map<frameId, {total, idCounts}> }
-const CHROME_EXT_ID_RE = /^[a-p]{32}$/;
-const UUID_EXT_ID_RE = /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+const SW_HELPERS = CFG.helpers || {};
 const isValidExtensionId = (id) =>
-  typeof id === "string" && (CHROME_EXT_ID_RE.test(id) || UUID_EXT_ID_RE.test(id));
+  SW_HELPERS.isValidExtensionId ? SW_HELPERS.isValidExtensionId(id) : false;
 const MAX_CAPTURED_IDS = 2000;
 const MAX_COMPAT_ORIGINS = 50;
 const MAX_DIAGNOSTIC_EVENTS_PER_ORIGIN = 120;
@@ -222,7 +311,9 @@ const clearTabStateAndBadges = async () => {
         return chrome.action.setBadgeText({ tabId: tab.id, text: "" }).catch(() => {});
       })
     );
-  } catch {}
+  } catch (err) {
+    safeLog(err, "clear tab state");
+  }
 };
 
 // ─── Persistent storage (serialized writes) ───────────────────────────────
@@ -303,7 +394,9 @@ const recordProbes = async (origin, batch) => {
 
 const recordReplayDetection = async (origin, signal) => {
   if (!origin) return;
-  const { replay_log = {} } = await chrome.storage.local.get({ replay_log: {} });
+  const replay_log = await chrome.storage.local
+    .get({ replay_log: {} })
+    .then((r) => r.replay_log || {});
   const entry = replay_log[origin] || { signals: {}, total: 0, lastUpdated: 0 };
   const safeSignal = signal || "unknown";
   entry.signals[safeSignal] = (entry.signals[safeSignal] || 0) + 1;
@@ -335,7 +428,9 @@ const bumpCount = (counts, key) => {
 
 const recordAdaptiveSignal = async (origin, signal) => {
   if (!origin || !signal || typeof signal !== "object") return;
-  const { adaptive_log = {} } = await chrome.storage.local.get({ adaptive_log: {} });
+  const adaptive_log = await chrome.storage.local
+    .get({ adaptive_log: {} })
+    .then((r) => r.adaptive_log || {});
   const now = Date.now();
   const entry = adaptive_log[origin] || {
     total: 0,
@@ -376,7 +471,9 @@ const normalizeCompatSignal = (signal) => ({
 
 const recordCompatSignal = async (origin, signal) => {
   if (!origin || !signal || typeof signal !== "object") return;
-  const { compat_log = {} } = await chrome.storage.local.get({ compat_log: {} });
+  const compat_log = await chrome.storage.local
+    .get({ compat_log: {} })
+    .then((r) => r.compat_log || {});
   const now = Date.now();
   const entry = compat_log[origin] || {
     kinds: {},
@@ -465,11 +562,13 @@ const bumpDiagnosticTotal = (entry, type) => {
 
 const recordDiagnosticEvents = async (origin, events) => {
   if (!origin || !Array.isArray(events) || events.length === 0) return;
-  const { diagnostics_mode = false, diagnostic_log = {} } = await chrome.storage.local.get({
-    diagnostic_log: {},
+  const { diagnostics_mode = false } = await chrome.storage.local.get({
     diagnostics_mode: false,
   });
   if (!diagnostics_mode) return;
+  const diagnostic_log = await chrome.storage.local
+    .get({ diagnostic_log: {} })
+    .then((r) => r.diagnostic_log || {});
 
   const now = Date.now();
   const entry = diagnostic_log[origin] || { events: [], lastUpdated: 0, totals: {} };
@@ -533,13 +632,8 @@ const shuffleInPlace = (arr, rng) => {
   }
 };
 
-const knownPersonaIds = () => {
-  const ids = new Set();
-  for (const slotIds of Object.values(CFG.conflictSlots || {})) {
-    for (const id of slotIds) ids.add(id);
-  }
-  return ids;
-};
+const knownPersonaIds = () =>
+  SW_HELPERS.knownPersonaIds ? SW_HELPERS.knownPersonaIds(CFG) : new Set();
 
 const eligiblePersonaIds = (entry) => {
   const minCount = CFG.personaMinCount || 2;
@@ -554,13 +648,8 @@ const eligiblePersonaIds = (entry) => {
     .map(([id]) => id.toLowerCase());
 };
 
-const buildConflictSlotMap = () => {
-  const idToSlot = new Map();
-  for (const [slotName, ids] of Object.entries(CFG.conflictSlots || {})) {
-    for (const id of ids) idToSlot.set(id, slotName);
-  }
-  return idToSlot;
-};
+const buildConflictSlotMap = () =>
+  SW_HELPERS.buildConflictSlotMap ? SW_HELPERS.buildConflictSlotMap(CFG) : new Map();
 
 const splitIdsBySlot = (ids, idToSlot) => {
   const bySlot = {};
@@ -984,7 +1073,9 @@ const broadcastConfigUpdate = async (options = {}) => {
           .catch(() => {});
       })
     );
-  } catch {}
+  } catch (err) {
+    safeLog(err, "broadcast config update");
+  }
 };
 
 const handleSetNoise = (msg, _sender, sendResponse) => {
@@ -1065,6 +1156,7 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
 const handleSetDiagnostics = (msg, _sender, sendResponse) => {
   (async () => {
     const enabled = !!msg.enabled;
+    diagnosticsEnabled = enabled;
     await chrome.storage.local.set({ diagnostics_mode: enabled });
     await broadcastConfigUpdate();
     sendResponse({ enabled, ok: true });
@@ -1166,13 +1258,27 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 
 // ─── Storage change listener: react to fingerprint_mode changes ───────────
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.fingerprint_mode) {
+  if (area !== "local") return;
+  if (changes.fingerprint_mode) {
     const newMode = changes.fingerprint_mode.newValue;
     if (newMode !== "mask") {
       clearAllHeaderRules();
     }
   }
+  // If an origin was just disabled, drop its header rule promptly.
+  if (changes.disabled_origins) {
+    const next = changes.disabled_origins.newValue || {};
+    const prev = changes.disabled_origins.oldValue || {};
+    for (const origin of Object.keys(next)) {
+      if (next[origin] && !prev[origin]) removeOriginHeaderRule(origin);
+    }
+  }
 });
 
-// ─── Startup: clean stale DNR header rules from prior sessions ─────────────
+// ─── Startup: reconcile persisted DNR header rules against live state ────
 cleanupStaleHeaderRules();
+// Mirror the persisted diagnostics flag into the in-memory gate so safeLog is
+// active immediately after a service-worker restart.
+chrome.storage.local.get({ diagnostics_mode: false }, ({ diagnostics_mode }) => {
+  diagnosticsEnabled = !!diagnostics_mode;
+});

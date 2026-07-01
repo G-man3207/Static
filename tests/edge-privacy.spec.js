@@ -818,7 +818,10 @@ test("adaptive logs redact high-entropy endpoint path segments", async ({ extens
         server.origin
       )
     )
-    .not.toBeNull();
+    // .toBeTruthy (not .not.toBeNull): the service worker batches log writes
+    // (see IMPROVEMENTS.md #3), so adaptive_log is undefined until flushed.
+    // .not.toBeNull() would falsely pass on undefined and resolve too early.
+    .toBeTruthy();
 
   const adaptiveEntry = await extension.serviceWorker.evaluate((origin) => {
     return chrome.storage.local
@@ -854,7 +857,10 @@ test("replay detection logs redact high-entropy script path segments", async ({
         server.origin
       )
     )
-    .not.toBeNull();
+    // .toBeTruthy (not .not.toBeNull): the service worker batches log writes
+    // (see IMPROVEMENTS.md #3), so replay_log is undefined until flushed.
+    // .not.toBeNull() would falsely pass on undefined and resolve too early.
+    .toBeTruthy();
 
   const stored = await extension.serviceWorker.evaluate((origin) => {
     return chrome.storage.local.get("replay_log").then(({ replay_log }) => replay_log[origin]);

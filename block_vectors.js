@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- vector blocking spans many probe surfaces kept together for cross-vector consistency */
 // Static - MAIN-world blocking for extension probe vectors beyond fetch/XHR.
 (() => {
   const U = globalThis.__static_block_utils__;
@@ -22,7 +23,9 @@
   const bump = (where, url) => {
     try {
       postProbe(url, where);
-    } catch {}
+    } catch (err) {
+      U.safeLog(err, "vector bump");
+    }
   };
 
   const guardProp = (proto, prop, label, urlFinder = U.badUrlFor) => {
@@ -111,11 +114,15 @@
         supported.push(
           ...U.readPolicyFeatures(document.featurePolicy || document.permissionsPolicy)
         );
-      } catch {}
+      } catch (err) {
+        U.safeLog(err, "read feature policy");
+      }
       if (!supported.length) {
         try {
           supported.push(...U.readPolicyFeatures(document.createElement("iframe").featurePolicy));
-        } catch {}
+        } catch (err) {
+          U.safeLog(err, "read iframe feature policy");
+        }
       }
       cached = new Set(supported.map((feature) => String(feature).toLowerCase()));
       return cached;
@@ -248,7 +255,9 @@
         configurable: true,
         enumerable: false,
       });
-    } catch {}
+    } catch (err) {
+      U.safeLog(err, "define vector global");
+    }
   };
 
   const patchWorkerCtor = (Ctor, label) => {
@@ -376,7 +385,9 @@
           ? (event) => {
               try {
                 onerror.call(fake, wrapEvent(event));
-              } catch {}
+              } catch (err) {
+                U.safeLog(err, "onerror handler");
+              }
             }
           : null;
         if (onerrorHandler) target.addEventListener("error", onerrorHandler);
@@ -390,7 +401,9 @@
       readyState = origES.CLOSED;
       try {
         target.dispatchEvent(new Event("error"));
-      } catch {}
+      } catch (err) {
+        U.safeLog(err, "dispatch error event");
+      }
     });
     return fake;
   };
@@ -437,7 +450,9 @@
         ...registerDesc,
         value: U.stealth(wrappedRegister, "register", { length: 1 }),
       });
-    } catch {}
+    } catch (err) {
+      U.safeLog(err, "patch register");
+    }
   };
 
   const patchWorkletAddModule = () => {
