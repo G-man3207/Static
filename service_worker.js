@@ -934,9 +934,26 @@ const fingerprintPersonaForDetails = async (origin, mode, disabled) => {
   return fingerprintPersonaFor(origin);
 };
 
-const detailsResponseFor = async (tabId, stored) => {
+const resolveTabOrigin = async (tabId) => {
   const state = perTabState.get(tabId);
-  const origin = state ? state.origin : null;
+  if (state && state.origin) return state.origin;
+  // Fall back to tab URL when the in-memory state doesn't have the origin.
+  // This happens when a site is disabled — content scripts stop sending
+  // probe messages, so rememberSenderOrigin never populates the origin.
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const origin = originFromUrl(tab && tab.url);
+    // Store origin so subsequent popup opens find it without another lookup
+    const s = getOrInitTab(tabId);
+    if (origin) s.origin = origin;
+    return origin || null;
+  } catch {
+    return null;
+  }
+};
+
+const detailsResponseFor = async (tabId, stored) => {
+  const origin = await resolveTabOrigin(tabId);
   const originProbeEntry = storedEntryForOrigin(origin, stored.probe_log);
   const adaptiveEntry = storedEntryForOrigin(origin, stored.adaptive_log);
   const compatEntry = storedEntryForOrigin(origin, stored.compat_log);
