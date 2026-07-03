@@ -301,6 +301,35 @@ const updateBadge = (tabId, total) => {
   chrome.action.setBadgeBackgroundColor({ tabId, color: "#c93131" }).catch(() => {});
 };
 
+const DISABLED_BADGE_COLOR = "#888";
+
+const updateBadgeForTab = async (tabId, tabUrl) => {
+  let origin = null;
+  try {
+    origin = originFromUrl(tabUrl || (await chrome.tabs.get(tabId)).url);
+  } catch {
+    // tab may have been removed
+  }
+  if (!origin) {
+    // No origin available — clear badge
+    chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
+    return;
+  }
+  try {
+    const { disabled_origins = {} } = await chrome.storage.local.get({ disabled_origins: {} });
+    if (disabled_origins[origin]) {
+      chrome.action.setBadgeText({ tabId, text: "OFF" }).catch(() => {});
+      chrome.action.setBadgeBackgroundColor({ tabId, color: DISABLED_BADGE_COLOR }).catch(() => {});
+      return;
+    }
+  } catch {
+    // storage read failed
+  }
+  // Fall through to normal probe-count badge
+  const total = sumTabTotal(tabId);
+  updateBadge(tabId, total);
+};
+
 const clearTabStateAndBadges = async () => {
   perTabState.clear();
   try {
@@ -841,7 +870,7 @@ const handleProbeBlocked = (msg, sender) => {
     total: msg.frameTotal || 0,
     idCounts: mapIdCounts(msg.idCounts),
   });
-  updateBadge(tabId, sumTabTotal(tabId));
+  updateBadgeForTab(tabId, sender.tab && sender.tab.url);
 
   const delta = typeof msg.delta === "number" ? msg.delta : 0;
   if (delta > 0) serialize(() => addToCumulative(delta));
@@ -1153,6 +1182,11 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
       tabs.map((tab) => {
         if (tab.id == null) return null;
         const tabOrigin = originFromUrl(tab.url);
+        // Update badge regardless of matching origin — tabs on other origins
+        // may need badge update too (e.g. the toggle was toggled on a tab whose
+        // origin just got disabled/re-enabled). But updateBadgeForTab with the
+        // tab's own URL origin handles this correctly.
+        updateBadgeForTab(tab.id, tab.url).catch(() => {});
         if (tabOrigin === origin) {
           // Send direct disabled update to MAIN world scripts AND persona update to bridge
           return Promise.all([
@@ -1266,10 +1300,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   perTabState.delete(tabId);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, info) => {
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.status === "loading") {
     perTabState.delete(tabId);
-    chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
+  }
+  if (info.status === "loading" || info.status === "complete") {
+    updateBadgeForTab(tabId, tab && tab.url).catch(() => {});
   }
 });
 
@@ -1289,6 +1325,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
     for (const origin of Object.keys(next)) {
       if (next[origin] && !prev[origin]) removeOriginHeaderRule(origin);
     }
+    // Update badges for all tabs after disabled_origins changes
+    chrome.tabs
+      .query({})
+      .then((tabs) => {
+        for (const tab of tabs) {
+          if (tab.id != null) updateBadgeForTab(tab.id, tab.url).catch(() => {});
+        }
+      })
+      .catch(() => {});
   }
 });
 
@@ -1298,4 +1343,18 @@ cleanupStaleHeaderRules();
 // active immediately after a service-worker restart.
 chrome.storage.local.get({ diagnostics_mode: false }, ({ diagnostics_mode }) => {
   diagnosticsEnabled = !!diagnostics_mode;
+});
+
+// Sweep existing tabs on startup to set badges for disabled origins
+chrome.storage.local.get({ disabled_origins: {} }, ({ disabled_origins }) => {
+  if (Object.keys(disabled_origins).length > 0) {
+    chrome.tabs
+      .query({})
+      .then((tabs) => {
+        for (const tab of tabs) {
+          if (tab.id != null) updateBadgeForTab(tab.id, tab.url).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }
 });

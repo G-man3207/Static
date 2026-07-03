@@ -1,0 +1,238 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Static — disabled sites</title>
+    <link rel="icon" href="icons/icon-128.png" />
+    <style>
+      :root {
+        --bg: #fafafa;
+        --surface: #ffffff;
+        --border: #ececec;
+        --border-strong: #dadada;
+        --text: #1a1a1a;
+        --text-muted: #666;
+        --text-subtle: #999;
+        --accent: #c93131;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        font:
+          14px/1.5 "Inter",
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        color: var(--text);
+        background-color: var(--bg);
+        min-height: 100vh;
+      }
+      header {
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .brand-stripe {
+        display: flex;
+        height: 3px;
+      }
+      .brand-stripe span {
+        flex: 1;
+      }
+      .brand-stripe span:nth-child(1) {
+        background: #c0c0c0;
+      }
+      .brand-stripe span:nth-child(2) {
+        background: #c0c01f;
+      }
+      .brand-stripe span:nth-child(3) {
+        background: #1fc0c0;
+      }
+      .brand-stripe span:nth-child(4) {
+        background: #1fc01f;
+      }
+      .brand-stripe span:nth-child(5) {
+        background: #c01fc0;
+      }
+      .brand-stripe span:nth-child(6) {
+        background: #c01f1f;
+      }
+      .brand-stripe span:nth-child(7) {
+        background: #1f1fc0;
+      }
+      .container {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      .header-inner {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 22px 0 18px;
+      }
+      .header-inner img {
+        width: 36px;
+        height: 36px;
+      }
+      .header-inner h1 {
+        font-size: 18px;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: -0.3px;
+      }
+      .header-inner .subtitle {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-left: auto;
+      }
+      main {
+        padding: 24px 0 60px;
+      }
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      input[type="search"] {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        font: inherit;
+        font-size: 13px;
+        background: var(--surface);
+      }
+      input[type="search"]:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .btn {
+        padding: 8px 14px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .btn:hover {
+        background: #f4f4f4;
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .summary {
+        color: var(--text-muted);
+        font-size: 12px;
+        margin: 14px 0 8px;
+        font-variant-numeric: tabular-nums;
+      }
+      .disabled-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .disabled-table th,
+      .disabled-table td {
+        text-align: left;
+        padding: 10px 14px;
+        font-variant-numeric: tabular-nums;
+      }
+      .disabled-table thead th {
+        background: #f6f6f6;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        border-bottom: 1px solid var(--border);
+      }
+      .disabled-table tbody tr {
+        border-top: 1px solid var(--border);
+      }
+      .disabled-table tbody tr:hover {
+        background: #fafafa;
+      }
+      .disabled-table td.origin-cell {
+        font-weight: 500;
+      }
+      .disabled-table td.action-cell {
+        text-align: right;
+      }
+      .btn-reenable {
+        padding: 5px 10px;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--accent);
+        background: #fff;
+        border: 1px solid #ead0d0;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .btn-reenable:hover {
+        background: #fff5f5;
+      }
+      .btn-reenable:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .empty-state {
+        text-align: center;
+        padding: 60px 24px;
+        color: var(--text-muted);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      .empty-state p {
+        margin: 8px 0;
+      }
+      .empty-state .big {
+        font-size: 15px;
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand-stripe" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <div class="container">
+        <div class="header-inner">
+          <img src="icons/icon-128.png" alt="" />
+          <h1>Disabled sites</h1>
+          <div class="subtitle">Sites where Static is paused.</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="container">
+        <div class="toolbar">
+          <input type="search" id="search" placeholder="Filter by origin…" />
+          <button class="btn" id="reenable-all">Enable all</button>
+        </div>
+        <div class="summary" id="summary"></div>
+        <div id="content"></div>
+      </div>
+    </main>
+
+    <script src="disabled.js"></script>
+  </body>
+</html>
