@@ -517,6 +517,68 @@ test("uses TrustedScriptURL-compatible script decoys on Trusted Types pages", as
   }
 });
 
+test("uses TrustedHTML-compatible HTML sinks on Trusted Types pages", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  const messages = [];
+  const onConsole = (msg) => messages.push({ type: msg.type(), text: msg.text() });
+  page.on("console", onConsole);
+
+  try {
+    await page.goto(server.url("/trusted-types.html"));
+    await page.waitForTimeout(100);
+
+    const result = await page.evaluate(() => {
+      const outcomes = {};
+
+      // Test innerHTML with safe content
+      try {
+        const div = document.createElement("div");
+        div.innerHTML = '<span class="test">hello</span>';
+        outcomes.innerHTML = { ok: true, html: div.innerHTML };
+      } catch (error) {
+        outcomes.innerHTML = { message: error.message, name: error.name, ok: false };
+      }
+
+      // Test innerHTML with iframe markup (sanitization should still work)
+      try {
+        const div2 = document.createElement("div");
+        div2.innerHTML =
+          '<iframe src="https://example.com" sandbox="allow-scripts allow-same-origin unknown-token"></iframe>';
+        outcomes.iframeSanitized = { ok: true, html: div2.innerHTML };
+      } catch (error) {
+        outcomes.iframeSanitized = { message: error.message, name: error.name, ok: false };
+      }
+
+      // Test insertAdjacentHTML
+      try {
+        const div3 = document.createElement("div");
+        div3.insertAdjacentHTML("beforeend", "<p>inserted</p>");
+        outcomes.insertAdjacentHTML = { ok: true, html: div3.innerHTML };
+      } catch (error) {
+        outcomes.insertAdjacentHTML = { message: error.message, name: error.name, ok: false };
+      }
+
+      return outcomes;
+    });
+
+    expect(result.innerHTML).toEqual({ ok: true, html: '<span class="test">hello</span>' });
+    expect(result.insertAdjacentHTML).toEqual({ ok: true, html: "<p>inserted</p>" });
+    expect(result.iframeSanitized.ok).toBe(true);
+    expect(messages.filter((message) => /TrustedHTML assignment/i.test(message.text))).toEqual([]);
+    expect(
+      messages.filter((message) => /Failed to set the 'innerHTML'/i.test(message.text))
+    ).toEqual([]);
+    expect(
+      messages.filter((message) => /Failed to execute 'insertAdjacentHTML'/i.test(message.text))
+    ).toEqual([]);
+  } finally {
+    page.off("console", onConsole);
+  }
+});
+
 test("suppresses unsafe-header console errors while preserving exposed XHR headers", async ({
   extension,
   server,

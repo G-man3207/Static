@@ -32,6 +32,7 @@
   let sandboxTokenList = null;
   let nativeRemoveAttribute = null;
   let disabled = false;
+  let trustedHtmlPolicy = undefined;
 
   const applyConfigUpdate = (data) => {
     if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
@@ -92,6 +93,59 @@
     normalizedTokensFor(tokens.map((token) => String(token)).join(" "), sandboxSupports);
 
   const normalizeSandboxValue = (value) => normalizeTokenList(value, sandboxSupports);
+
+  const cspTrustedTypesAllowsPolicy = (policyName) => {
+    try {
+      for (const meta of document.querySelectorAll("meta[http-equiv]")) {
+        if (String(meta.httpEquiv || "").toLowerCase() !== "content-security-policy") continue;
+        const directives = String(meta.content || "").split(";");
+        for (const directive of directives) {
+          const parts = directive.trim().split(/\s+/).filter(Boolean);
+          if (String(parts.shift() || "").toLowerCase() !== "trusted-types") continue;
+          const tokens = parts.map((part) => part.replace(/^'|'$/g, ""));
+          if (tokens.includes("none")) return false;
+          if (!tokens.includes("*") && !tokens.includes(policyName)) return false;
+        }
+      }
+    } catch {}
+    return true;
+  };
+
+  const trustedTypesRequireScript = () => {
+    try {
+      for (const meta of document.querySelectorAll("meta[http-equiv]")) {
+        if (String(meta.httpEquiv || "").toLowerCase() !== "content-security-policy") continue;
+        const directives = String(meta.content || "").split(";");
+        for (const directive of directives) {
+          const parts = directive.trim().split(/\s+/).filter(Boolean);
+          if (String(parts.shift() || "").toLowerCase() !== "require-trusted-types-for") continue;
+          const tokens = parts.map((part) => part.replace(/^'|'$/g, ""));
+          if (tokens.includes("script")) return true;
+        }
+      }
+    } catch {}
+    return false;
+  };
+
+  const trustedHtmlPolicyForSink = () => {
+    if (trustedHtmlPolicy !== undefined) return trustedHtmlPolicy;
+    if (!globalThis.trustedTypes || typeof globalThis.trustedTypes.createPolicy !== "function") {
+      trustedHtmlPolicy = null;
+      return null;
+    }
+    if (!cspTrustedTypesAllowsPolicy("staticBlockIframeAttrs")) {
+      trustedHtmlPolicy = null;
+      return null;
+    }
+    try {
+      trustedHtmlPolicy = globalThis.trustedTypes.createPolicy("staticBlockIframeAttrs", {
+        createHTML: (html) => sanitizeIframeMarkup(html),
+      });
+    } catch {
+      trustedHtmlPolicy = null;
+    }
+    return trustedHtmlPolicy;
+  };
 
   const normalizeAllowValue = (value) => {
     const raw = value == null ? "" : String(value);
@@ -243,13 +297,26 @@
   const patchHtmlSink = (proto, prop) => {
     const desc = Object.getOwnPropertyDescriptor(proto, prop);
     if (!desc || !desc.set) return;
+
+    // If Trusted Types is enforced (at document_start this is from HTTP headers,
+    // not meta tags) but we cannot create a compatible policy, skip patching
+    // to avoid TrustedHTML assignment violations.
+    if (trustedHtmlPolicy === null && trustedTypesRequireScript()) {
+      return;
+    }
+
     const setterHolder = {
       set [prop](value) {
         if (disabled) {
           desc.set.call(this, value);
           return;
         }
-        desc.set.call(this, sanitizeIframeMarkup(value));
+        const html = sanitizeIframeMarkup(value);
+        if (trustedHtmlPolicy) {
+          desc.set.call(this, trustedHtmlPolicy.createHTML(html));
+        } else {
+          desc.set.call(this, html);
+        }
       },
     };
     const wrappedSet = Object.getOwnPropertyDescriptor(setterHolder, prop).set;
@@ -268,10 +335,21 @@
     const desc = Object.getOwnPropertyDescriptor(Element.prototype, "insertAdjacentHTML");
     const orig = desc && desc.value;
     if (typeof orig !== "function") return;
+
+    // If Trusted Types is enforced but we cannot create a compatible policy,
+    // skip patching to avoid TrustedHTML assignment violations.
+    if (trustedHtmlPolicy === null && trustedTypesRequireScript()) {
+      return;
+    }
+
     const wrapped = {
       insertAdjacentHTML(position, html) {
         if (disabled) return orig.call(this, position, html);
-        return orig.call(this, position, sanitizeIframeMarkup(html));
+        const sanitized = sanitizeIframeMarkup(html);
+        if (trustedHtmlPolicy) {
+          return orig.call(this, position, trustedHtmlPolicy.createHTML(sanitized));
+        }
+        return orig.call(this, position, sanitized);
       },
     }.insertAdjacentHTML;
     Object.defineProperty(Element.prototype, "insertAdjacentHTML", {
@@ -397,6 +475,11 @@
     patchDomTokenListToggle(DOMTokenList.prototype);
     patchDomTokenListReplace(DOMTokenList.prototype);
   };
+
+  // Initialize Trusted Types policy eagerly so it is ready before any HTML
+  // sink patch is exercised. At document_start the meta-tag CSP may not be
+  // parsed yet, but trustedTypes.createPolicy works from HTTP-header CSP.
+  trustedHtmlPolicyForSink();
 
   if (typeof Element !== "undefined" && Element.prototype) {
     patchAttributeSetters();
