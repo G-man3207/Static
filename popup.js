@@ -720,6 +720,18 @@ const renderNoiseSection = (resp) => {
   }
 };
 
+const renderDisabledSitesLink = async () => {
+  const { disabled_origins = {} } = await chrome.storage.local.get({ disabled_origins: {} });
+  const disabledCount = Object.keys(disabled_origins).filter((o) => disabled_origins[o]).length;
+  const viewBtn = document.getElementById("view-disabled");
+  const stats = document.getElementById("disabled-stats");
+  stats.textContent = `${fmt(disabledCount)} site${disabledCount === 1 ? "" : "s"}`;
+  viewBtn.addEventListener("click", () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL("disabled.html") });
+    window.close();
+  });
+};
+
 const renderDiagnosticsSection = (resp) => {
   const toggle = document.getElementById("diagnostics-toggle");
   toggle.checked = !!(resp && resp.diagnosticsMode);
@@ -945,5 +957,6 @@ const renderRulesets = (enabledArr, counts) => {
   renderReplaySection(details);
   renderRulesets(enabledArr, counts);
   await renderExposedProfile(details);
+  renderDisabledSitesLink();
   setupHelpTips();
 })();

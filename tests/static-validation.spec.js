@@ -238,7 +238,7 @@ const collectManifestFiles = (manifest) => {
 };
 
 const collectExtensionPageFiles = () => {
-  const referencedFiles = new Set(["log.html", "popup.html"]);
+  const referencedFiles = new Set(["disabled.html", "log.html", "popup.html"]);
   for (const page of [...referencedFiles].filter((filePath) => filePath.endsWith(".html"))) {
     addHtmlScriptFiles(page, referencedFiles);
   }
@@ -304,6 +304,7 @@ test("extension runtime code stays local-only", () => {
   const runtimeFiles = [
     ...collectManifestFiles(readJson("manifest.json")),
     ...collectExtensionPageFiles(),
+    "disabled.js",
     "log_diagnostics.js",
     "popup.js",
     "log.js",
