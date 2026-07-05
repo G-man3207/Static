@@ -29,6 +29,17 @@ Static is intentionally narrow. It is built to run alongside uBlock Origin or Pr
 <!-- TODO: add demo.gif here -->
 <!-- ![Static popup showing 4,217 probes blocked on LinkedIn](docs/demo.gif) -->
 
+## Permissions
+
+Static asks for these permissions in `manifest.json`:
+
+- **`declarativeNetRequest`** — needed to load the static fingerprinting/CAPTCHA vendor rulesets under `rules/`.
+- **`declarativeNetRequestWithHostAccess`** — needed for Dynamic Declarative Net Request rules that modify outgoing request headers (User-Agent and `Sec-CH-UA`) when Device signal poisoning is active. Static does not use this to broadly block or redirect traffic; it is scoped to the header-spoofing path.
+- **`storage`** — local settings, probe logs, playbook summaries, and disabled-site list. Nothing leaves the device unless you explicitly export it.
+- **`host_permissions: *://*/*`** — required so content scripts can run on all sites and block extension-enumeration probes. Host access is also used by the narrow DNR rulesets so they can match requests to the listed fingerprinting/CAPTCHA domains.
+
+You can inspect every ruleset in `rules/` and toggle the fingerprinting/CAPTCHA ones from the popup or `manifest.json`.
+
 ## Install
 
 **From source (today):**
@@ -50,6 +61,9 @@ Static is intentionally narrow. It is built to run alongside uBlock Origin or Pr
 4. **Fingerprint network checks (togglable).** Narrow Declarative-Net-Request rulesets block known:
    - **Fingerprinting / anti-bot vendors**: Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
    - **CAPTCHA / device-check vendors** (off by default, breaks logins): Arkose Labs / FunCAPTCHA, DataDome response pages, and Cloudflare Turnstile / Challenge Platform.
+
+   When Device signal poisoning is active, Static also adds dynamic DNR rules that rewrite the outgoing `User-Agent` and strip `Sec-CH-UA` / `Sec-CH-UA-Mobile` / `Sec-CH-UA-Platform` request headers so the network layer sees the same persona as the JavaScript layer.
+
 5. **Device signal poisoning (opt-in).** Static can return a stable per-site machine persona for high-entropy browser signals: OS/user-agent platform, CPU/RAM buckets, language, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, offline-audio render output, storage quota, battery, and network hints.
 6. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` that maps wrapped functions to native-looking strings, so the blocker's API overrides look like real native functions under `toString` checks.
 7. **Replay poisoning (opt-in).** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
@@ -58,7 +72,7 @@ The toolbar badge and popup show a live count of extension-enumeration probes bl
 
 ## Compatibility warning
 
-Static also watches for one high-confidence breakage signal: a Static-blocked extension-probe `fetch()` that becomes an unhandled page error. When that happens, the popup shows a local compatibility warning with a **Pause here and reload** escape hatch. Static does not auto-disable itself, and the warning evidence stays local.
+Static also watches for one high-confidence breakage signal: a Static-blocked extension-probe `fetch()` that becomes an unhandled page error. When that happens, the popup shows a local compatibility warning with a **Pause here and reload** escape hatch. The popup also links to a **Disabled sites** page where you can see every paused origin, re-enable individual sites, or enable them all at once. Static does not auto-disable itself, and the warning evidence stays local.
 
 ## Playbook drift detection
 
@@ -135,7 +149,7 @@ BrowserGate documents fingerprint collection beyond extension scans: user-agent 
 
 - **Stable per origin.** The persona is deterministic from `hash(user_secret + origin)`, so a site does not see a different computer every pageview.
 - **Different across origins.** Two unrelated sites get different personas, reducing cross-site correlation.
-- **Plausible, not random.** Values are internally aligned: the user-agent OS segment matches `navigator.platform`, Client Hints platform, desktop touch profile, screen bucket, and generic WebGL renderer.
+- **Plausible, not random.** Values are internally aligned: the user-agent OS segment matches `navigator.platform`, Client Hints platform, desktop touch profile, screen bucket, and generic WebGL renderer. When the feature is on, the same persona is pushed to the network layer via dynamic DNR rules that rewrite `User-Agent` and strip `Sec-CH-UA` headers, so a server cannot infer the real OS from request headers.
 - **Weakening instead of blocking.** Reads still complete, but high-entropy values are decoyed or subtly perturbed so collectors cannot rely on the raw machine profile as confidently.
 - **Opt-in.** It is off by default because some sites use these APIs for legitimate compatibility decisions.
 
@@ -163,13 +177,6 @@ Hotjar. Script/source labels are treated as replay signals so the listener-scope
 PostHog. For first-party reverse-proxy and bundled SDK deployments, Static treats replay bundle names such as `lazy-recorder`, `posthog-recorder`, and `recorder-v2`, plus documented `posthog.init(...)` default recording starts and `posthog.startSessionRecording()` calls, as replay signals.
 
 OpenReplay. First-party or bundled deployments are detected through `openreplay` script/source labels and documented `window.OpenReplay.start()` recording starts.
-
-## Install
-
-1. Clone this repository.
-2. Open `chrome://extensions`.
-3. Toggle **Developer mode** (top-right).
-4. Click **Load unpacked** and select the repo folder.
 
 ## Toggle fingerprint rulesets
 
@@ -269,21 +276,27 @@ npm run check
 
 ## Layout
 
-```
+```text
 static/
 ├── manifest.json
-├── lists.js              # DOM pattern + Noise persona config
-├── block_adaptive.js     # MAIN-world observe-only adaptive behavior logging
-├── block.js              # MAIN-world fetch/XHR blocker + Noise decoys
-├── block_vectors.js      # MAIN-world element / worker / beacon / EventSource blockers
-├── block_replay.js       # MAIN-world Replay poisoning
-├── block_globals.js      # MAIN-world extension-global stripping
-├── dom_scrubber.js       # ISOLATED-world DOM MutationObserver
-├── bridge.js             # MessageChannel → service-worker relay
-├── service_worker.js     # per-tab badge, storage, and message routing
+├── lists.js                # DOM pattern + Noise persona config
+├── block_utils.js          # Shared MAIN/ISOLATED utility helpers
+├── block_adaptive.js       # MAIN-world observe-only adaptive behavior logging
+├── block.js                # MAIN-world fetch/XHR blocker + Noise decoys
+├── block_vectors.js        # MAIN-world element / worker / beacon / EventSource blockers
+├── block_style_vectors.js  # MAIN-world style / CSSOM vector blocking
+├── block_iframe_attrs.js  # MAIN-world iframe attribute blocker
+├── block_fingerprint.js   # MAIN-world device signal poisoning
+├── block_element_decoys.js # MAIN-world Noise passive element decoys
+├── block_replay.js        # MAIN-world Replay poisoning
+├── block_globals.js       # MAIN-world extension-global stripping
+├── dom_scrubber.js        # ISOLATED-world DOM MutationObserver
+├── bridge.js              # MessageChannel → service-worker relay
+├── service_worker.js      # per-tab badge, storage, and message routing
 ├── service_worker_utils.js # service-worker caps, playbook drift, and utility helpers
-├── popup.html, popup.js  # popup showing count + ruleset toggles
-├── icons/                # 16/32/48/128 px icon set + original
+├── popup.html, popup.js   # popup showing count + ruleset toggles
+├── disabled.html          # manage paused origins
+├── icons/                 # 16/32/48/128 px icon set + original
 └── rules/
     ├── META.json
     ├── fingerprint_vendors.json
