@@ -6,9 +6,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-07-05
+
 ### Added
 
 - Popup diagnostics now include an **Exposed browser profile** view showing JavaScript-visible user agent, platform, locale/language, timezone, screen, hardware buckets, WebGL, network, storage, and battery signals; when Device signal poisoning is active, the view shows Static's stable per-site persona.
+- Network-layer User-Agent and Sec-CH-UA header spoofing via DNR dynamic rules when Device signal poisoning is active, so sites cannot infer the real OS from request headers.
+- Disabled-sites page (`disabled.html`) listing all paused origins with search, per-origin enable, and Enable All; accessible from the popup. The toolbar badge now shows `OFF` with a grey badge when Static is paused on the current site.
+- Playwright test coverage for real-site breakage, compatibility regression, and network header spoofing.
+
+### Changed
+
+- Refactored shared config helpers (`knownPersonaIds`, conflict-slot iteration, ID validation, path-kind and count-priority helpers) into `lists.js` for reuse across the service worker and bridge.
+- DNR dynamic header rules are now persisted and reconciled in `chrome.storage.local` with a 150-rule LRU cap, eviction cleanup, and anchored regex filters for IP/localhost origins.
+- CI workflows (`validate.yml`, `format.yml`) now run on pull requests and pushes to `main` in addition to version tags.
+- Release zip now excludes tests, docs, `gate.sh`, `package*.json`, and other non-runtime files, and a validation step checks that `manifest.json` and every referenced runtime file are present.
+- Removed the `__static_block_utils__` global from the MAIN world after scripts capture their reference, reducing page-visible extension markers.
+- Replaced silent empty `catch` blocks with labeled, diagnostics-gated `safeLog` helpers in bridge, service worker, and MAIN-world utilities.
+
+### Fixed
+
+- Popup site-toggle no longer disappears for disabled/paused sites after a reload.
+- `block_iframe_attrs.js` now works on pages with Trusted Types `require-trusted-types-for 'script'` CSP by creating a dedicated policy.
+- Replay detection no longer races against the initial config update, preventing false positives when `disabled_origins` is already set before the bridge config arrives.
+- Noise-mode element decoys now coerce non-string values to strings when parsing HTML sinks.
+- Quality gate now passes after removing obsolete `/* eslint-env node */` comments, unused imports/variables, and formatting with Prettier.
 
 ## [2.2.0] — 2026-06-19
 
@@ -302,7 +324,8 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/G-man3207/Static/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/G-man3207/Static/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/G-man3207/Static/compare/v2.0.10...v2.1.0
 [2.0.10]: https://github.com/G-man3207/Static/compare/v2.0.4...v2.0.10
