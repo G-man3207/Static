@@ -86,9 +86,9 @@ If this policy changes, the updated version will be published at the same URL an
 ## Source code and audit
 
 Static is open source under the MIT license. Every behavior described in this policy is verifiable by reading the source code:  
-https://github.com/G-man3207/Static
+[https://github.com/G-man3207/Static](https://github.com/G-man3207/Static)
 
 ## Contact
 
 For privacy or security questions, please open an issue on GitHub:  
-https://github.com/G-man3207/Static/issues
+[https://github.com/G-man3207/Static/issues](https://github.com/G-man3207/Static/issues)
