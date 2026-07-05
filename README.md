@@ -11,6 +11,7 @@
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/static/lljfncchalimoimbencbbblpdbhmeiil"><img src="https://img.shields.io/chrome-web-store/v/lljfncchalimoimbencbbblpdbhmeiil?label=Chrome%20Web%20Store&color=blue&logo=googlechrome&logoColor=white" alt="Chrome Web Store"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/G-man3207/Static?color=blue" alt="MIT License"></a>
+  <a href="PRIVACY.md"><img src="https://img.shields.io/badge/Privacy%20Policy-Read%20here-blue" alt="Privacy Policy"></a>
   <img src="https://img.shields.io/badge/manifest-v3-brightgreen" alt="Manifest V3">
   <img src="https://img.shields.io/github/v/release/G-man3207/Static" alt="Latest release">
   <img src="https://img.shields.io/badge/tests-Playwright-45ba4b" alt="Playwright tests">
@@ -67,6 +68,9 @@ You can inspect every ruleset in `rules/` and toggle the fingerprinting/CAPTCHA 
 5. **Device signal poisoning (opt-in).** Static can return a stable per-site machine persona for high-entropy browser signals: OS/user-agent platform, CPU/RAM buckets, language, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, offline-audio render output, storage quota, battery, and network hints.
 6. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` that maps wrapped functions to native-looking strings, so the blocker's API overrides look like real native functions under `toString` checks.
 7. **Replay poisoning (opt-in).** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
+8. **Iframe attribute hardening.** Extension probes and fingerprinting scripts can infer browser capabilities from the shape of `<iframe allow>` / `sandbox` / `allowfullscreen` / `allowpaymentrequest>` attributes. Static normalizes these attributes: it drops unsupported `allow` tokens, keeps only valid `sandbox` tokens, coerces legacy `allowfullscreen` / `allowpaymentrequest` into modern `allow` syntax, and works on pages with Trusted Types `require-trusted-types-for 'script'` CSP by creating a dedicated policy.
+9. **Style / CSSOM vector blocking.** Extension URLs can be smuggled into `<style>` text nodes, inline `style` attributes, `CSSStyleSheet.cssText`, `CSSStyleDeclaration.setProperty` / `cssText`, and `insertRule` / `replace` / `replaceSync` / `addRule` calls. Static scrubs these sources before the browser can issue a request, and does it synchronously so the URL cannot be read back.
+10. **Per-site disable.** You can turn Static off for individual sites from the popup. When a site is disabled, all extension-probe blocking, DOM scrubbing, global stripping, and opt-in poisoning modes are bypassed for that origin. The disabled state persists in `chrome.storage.local` and updates instantly on the current page. The **Disabled sites** page lists every paused origin with search, per-origin enable, and **Enable All**.
 
 The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds. The popup's diagnostics also include an **Exposed browser profile** view showing the JavaScript-visible user agent, platform, locale/language, timezone, screen, hardware buckets, WebGL, network, storage, and battery signals the current site can read; when Device signal poisoning is active, this view shows Static's stable per-site persona.
 
@@ -272,7 +276,9 @@ npm run check
 - **DOM markers to strip**: edit the regex arrays in `lists.js`.
 - **`window` globals to strip**: edit the `STRIP_GLOBALS` array in `block_globals.js`.
 - **Fingerprinting endpoints to block at the network layer**: add rules to an existing file under `rules/`, or create a new `rules/<category>.json` and register it in `manifest.json`'s `rule_resources` (and add an entry in `rules/META.json` + `popup.js`'s `RULESET_META`). Avoid general tracker or ad-tech lists; those belong in uBlock Origin / Privacy Badger.
-- **A new script-layer probe vector (some new Web API that takes a URL)**: add a wrapper in `block_vectors.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns. Fetch/XHR Noise-mode decoys live in `block.js`.
+- **A new script-layer probe vector (some new Web API that takes a URL)**: add a wrapper in `block_vectors.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns. Fetch/XHR Noise-mode decoys live in `block.js`; passive element decoys live in `block_element_decoys.js`.
+- **Style / CSSOM vectors**: add a scrubber in `block_style_vectors.js`.
+- **Iframe attribute normalization**: adjust the token allowlists in `block_iframe_attrs.js`.
 
 ## Layout
 

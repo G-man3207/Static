@@ -1,6 +1,6 @@
 # Static — Privacy Policy
 
-**Last updated:** April 26, 2026
+**Last updated:** July 5, 2026
 
 Static is a Chrome extension that blocks websites from fingerprinting which browser extensions you have installed, and blocks known client-side fingerprinting / anti-bot vendor endpoints at the network layer.
 
@@ -45,14 +45,15 @@ When Replay poisoning is enabled, Static also proxies event objects delivered to
 
 Static has no backend. It makes no outbound network requests of its own. It contains no third-party SDKs, analytics frameworks, advertising integrations, crash-reporting services, or telemetry of any kind.
 
-Static's only network-related action is **blocking** narrow fingerprinting or device-check requests initiated by the websites you visit, via Chrome's [`declarativeNetRequest`](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest) API and via interception of `fetch` / `XMLHttpRequest` calls to extension-scheme URLs. It intentionally does not ship broad ad-tech, analytics, social pixel, or general session-replay network lists. Replay poisoning and adaptive behavior logging are page-local and do not send fake replay data or adaptive telemetry over the network. Static never **originates** network requests itself.
+Static's only network-related actions are **blocking** narrow fingerprinting or device-check requests initiated by the websites you visit, and, when Device signal poisoning is enabled, **rewriting** the outgoing `User-Agent` and stripping `Sec-CH-UA` / `Sec-CH-UA-Mobile` / `Sec-CH-UA-Platform` request headers so the network-layer persona matches the JavaScript-layer persona. Both actions happen through Chrome's [`declarativeNetRequest`](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest) API and through interception of `fetch` / `XMLHttpRequest` calls to extension-scheme URLs. Static does not inspect request bodies, does not ship broad ad-tech / analytics / social-pixel / session-replay network lists, and never originates network requests itself. Replay poisoning and adaptive behavior logging are page-local and do not send fake replay data or adaptive telemetry over the network.
 
 ## Permissions Static requests, and why
 
 - **`declarativeNetRequest`** — to block fingerprinting and device-check vendor endpoints at the browser's network layer. Blocking is declarative; Static does not inspect the contents of these requests.
+- **`declarativeNetRequestWithHostAccess`** — to install dynamic DNR rules that rewrite outgoing `User-Agent` and strip `Sec-CH-UA` / `Sec-CH-UA-Mobile` / `Sec-CH-UA-Platform` headers when Device signal poisoning is active. This permission is used only for that header-spoofing path; Static does not use it to broadly redirect or inspect traffic.
 - **`storage`** — to persist the items listed under "What Static stores locally" above. Uses `chrome.storage.local` only; never `chrome.storage.sync`.
 - **Content-script `matches: ["<all_urls>"]`** — to register the API interception on every page, because fingerprinting can happen on any site. Static does not read page content in any origin it runs on.
-- No `host_permissions` are additionally requested; the content-script match patterns are the only host access.
+- **`host_permissions: *://*/*`** — required for the narrow DNR rulesets to match requests to the listed fingerprinting and device-check domains, and for dynamic header rules to attach to outgoing requests. It is the same scope as the content-script match patterns above.
 
 ## User-initiated data export
 
