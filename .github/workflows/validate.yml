@@ -100,6 +100,27 @@ jobs:
       - name: ESLint
         run: npm run lint:strict
 
+      # ── Firefox validation ────────────────────────────────────────────
+      - name: Build Firefox package and run web-ext lint
+        run: |
+          node build-firefox.js static-firefox-ci.zip
+          TMP_DIR="$(mktemp -d)"
+          unzip -q static-firefox-ci.zip -d "$TMP_DIR"
+          npx web-ext lint --source-dir "$TMP_DIR"
+          rm -rf "$TMP_DIR" static-firefox-ci.zip
+
+      - name: Install Firefox and geckodriver for smoke test
+        run: |
+          wget -q "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US" -O /tmp/firefox.tar.xz
+          sudo tar xJf /tmp/firefox.tar.xz -C /opt/
+          GECKO_VERSION="0.37.0"
+          wget -q "https://github.com/mozilla/geckodriver/releases/download/v${GECKO_VERSION}/geckodriver-v${GECKO_VERSION}-linux64.tar.gz" -O /tmp/geckodriver.tar.gz
+          sudo tar -xzf /tmp/geckodriver.tar.gz -C /usr/local/bin/
+
+      - name: Firefox smoke test
+        run: xvfb-run -a node tests/firefox-smoke.js
+
+      # ── Chromium e2e ──────────────────────────────────────────────────
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
