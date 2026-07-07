@@ -42,6 +42,8 @@
     "eslint": "^10.2.1",
     "globals": "^17.5.0",
     "husky": "^9.1.7",
-    "prettier": "^3.8.3"
+    "prettier": "^3.8.3",
+    "selenium-webdriver": "^4.45.0",
+    "web-ext": "^10.4.0"
   }
 }

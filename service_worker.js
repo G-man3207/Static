@@ -15,7 +15,12 @@
 //      `static_set_noise`, `static_set_replay`, `static_set_fingerprint`,
 //      `static_set_diagnostics`) and bridge queries (`static_get_persona`).
 
-importScripts("lists.js", "service_worker_utils.js");
+// In the event-page fallback path (Firefox background.scripts), the deps
+// are loaded as sequential <script> tags before this file, so importScripts
+// is unnecessary — and undefined.  Guard so both paths work cleanly.
+if (typeof importScripts === "function") {
+  importScripts("lists.js", "service_worker_utils.js");
+}
 const CFG = globalThis.__static_config__ || {};
 const {
   enforceCaps,

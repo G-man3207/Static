@@ -137,6 +137,20 @@ export default [
     },
   },
   {
+    files: ["build-firefox.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "commonjs",
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      "no-console": "off",
+      strict: "off",
+    },
+  },
+  {
     files: ["**/*.json"],
     ignores: ["package-lock.json"],
     language: "json/json",

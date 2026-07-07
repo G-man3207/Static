@@ -1,14 +1,13 @@
 name: Release
 
 # Triggered when you push a new tag matching v*.*.*  (e.g., v2.0.0, v2.1.0-beta).
-# Packages the extension as a zip excluding repo-infra files, creates a GitHub
-# Release with auto-generated notes, and attaches the zip as a release asset.
+# Packages the extension as Chrome and Firefox zips, validates both, creates a
+# GitHub Release with auto-generated notes, and attaches both zips as release
+# assets.
 #
 # Typical flow:
 #   git tag v2.0.0
 #   git push origin v2.0.0
-# The release artifact is ready to upload to Chrome Web Store via the developer
-# console (or to automate later with the CWS API and repo secrets).
 
 on:
   push:
@@ -24,7 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build release zip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # ── Chrome build ──────────────────────────────────────────────────
+      - name: Build Chrome release zip
         run: |
           ZIP_NAME="static-${GITHUB_REF_NAME}.zip"
           # Exclude repo-infra and dev-only files so the zip contains only
@@ -34,6 +42,7 @@ jobs:
             -x ".github/*" \
             -x ".husky/*" \
             -x "_metadata/*" \
+            -x ".pi/*" \
             -x "node_modules/*" \
             -x "tests/*" \
             -x "docs/*" \
@@ -42,27 +51,26 @@ jobs:
             -x ".prettierrc" \
             -x ".prettierignore" \
             -x ".gitignore" \
+            -x ".markdownlint.json" \
             -x "eslint.config.mjs" \
             -x "playwright.config.js" \
             -x "gate.sh" \
             -x "package.json" \
             -x "package-lock.json" \
+            -x "build-firefox.js" \
             -x "IMPROVEMENTS.md" \
             -x "*.diag" \
             -x "*.zip" \
             -x ".DS_Store" \
             -x "Thumbs.db"
-          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-          echo "--- zip contents ---"
+          echo "CHROME_ZIP=$ZIP_NAME" >> "$GITHUB_ENV"
+          echo "--- Chrome zip contents ---"
           unzip -l "$ZIP_NAME"
 
-      - name: Validate release package
+      - name: Validate Chrome release package
         run: |
-          # Confirm manifest.json is well-formed and that every content
-          # script, background worker, ruleset and popup referenced by the
-          # manifest is actually present in the zip.
           TMP_DIR="$(mktemp -d)"
-          unzip -q "$ZIP_NAME" -d "$TMP_DIR"
+          unzip -q "$CHROME_ZIP" -d "$TMP_DIR"
           node -e '
             const fs = require("fs");
             const path = require("path");
@@ -86,18 +94,43 @@ jobs:
               console.error("Missing runtime files in release zip:", missing);
               process.exit(1);
             }
-            console.log("Release package OK:", [...required].length, "runtime files present.");
+            console.log("Chrome release package OK:", [...required].length, "runtime files present.");
           ' "$TMP_DIR"
 
+      # ── Firefox build ─────────────────────────────────────────────────
+      - name: Build Firefox release zip
+        run: |
+          FIREFOX_ZIP="static-${GITHUB_REF_NAME}-firefox.zip"
+          node build-firefox.js "$FIREFOX_ZIP"
+          echo "FIREFOX_ZIP=$FIREFOX_ZIP" >> "$GITHUB_ENV"
+
+      - name: Validate Firefox package with web-ext lint
+        run: |
+          TMP_DIR="$(mktemp -d)"
+          unzip -q "$FIREFOX_ZIP" -d "$TMP_DIR"
+          npx web-ext lint --source-dir "$TMP_DIR"
+          rm -rf "$TMP_DIR"
+
+      # ── Release ───────────────────────────────────────────────────────
       - uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ZIP_NAME }}
+          files: |
+            ${{ env.CHROME_ZIP }}
+            ${{ env.FIREFOX_ZIP }}
           generate_release_notes: true
           body: |
             ## Install
 
-            1. Download `${{ env.ZIP_NAME }}` below and extract it to a folder.
+            ### Chrome / Chromium
+            1. Download `${{ env.CHROME_ZIP }}` below and extract it to a folder.
             2. Open `chrome://extensions`, enable **Developer mode** (top right).
             3. Click **Load unpacked** and select the extracted folder.
+
+            ### Firefox
+            1. Download `${{ env.FIREFOX_ZIP }}` below and extract it to a folder.
+            2. Open `about:debugging#/runtime/this-firefox`.
+            3. Click **Load Temporary Add-on…** and select any file in the extracted folder.
+
+            For permanent installation, submit the Firefox zip to [addons.mozilla.org](https://addons.mozilla.org).
 
             See [CHANGELOG.md](https://github.com/G-man3207/Static/blob/main/CHANGELOG.md) for the full release notes.

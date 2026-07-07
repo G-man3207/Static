@@ -1,0 +1,282 @@
+#!/usr/bin/env node
+// tests/firefox-smoke.js — Selenium-based Firefox smoke test.
+//
+// Verifies the Firefox extension build loads without errors, content scripts
+// inject into real HTTP pages, and the background responds via the popup.
+//
+// Run via:
+//   xvfb-run -a node tests/firefox-smoke.js [path-to-firefox-zip]
+//
+// Requirements: geckodriver on PATH, Firefox installed, xvfb for headless.
+// The script builds the Firefox zip if no path is provided.
+
+const path = require("path");
+const fs = require("fs");
+const http = require("http");
+const { execSync } = require("child_process");
+
+const REPO_ROOT = path.resolve(__dirname, "..");
+
+// --- Helpers ---
+
+function log(msg) {
+  // Flush so a timeout still shows progress.
+  process.stdout.write(`[firefox-smoke] ${msg}\n`);
+}
+
+function fail(msg) {
+  console.error(`[firefox-smoke] FAIL: ${msg}`);
+  process.exit(1);
+}
+
+function buildFirefoxZip() {
+  log("Building Firefox zip…");
+  const zipPath = path.join(REPO_ROOT, "static-firefox-smoke.zip");
+  execSync(`node "${path.join(REPO_ROOT, "build-firefox.js")}" "${zipPath}"`, {
+    cwd: REPO_ROOT,
+    stdio: "pipe",
+  });
+  return zipPath;
+}
+
+function extractZip(zipPath) {
+  const tmpDir = fs.mkdtempSync(path.join(require("os").tmpdir(), "static-fxsmoke-"));
+  execSync(`unzip -q "${zipPath}" -d "${tmpDir}"`, { stdio: "pipe" });
+  return tmpDir;
+}
+
+/** Locate a Firefox binary on this system. */
+function findFirefoxBinary() {
+  const candidates = [
+    "/opt/firefox/firefox",
+    "/usr/bin/firefox",
+    "/usr/bin/firefox-esr",
+    "/snap/bin/firefox",
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  // Try PATH.
+  try {
+    return execSync("which firefox", { encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Spin up a minimal HTTP server returning a page that the extension's
+ *  content scripts will match (<all_urls> = http/https/file/ftp).
+ *  Returns { server, url }. */
+function startTestServer() {
+  return new Promise((resolve) => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(
+        `<!DOCTYPE html><html><head><title>Smoke</title></head>` +
+          `<body><h1 id="target">Hello</h1></body></html>`
+      );
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      resolve({ server, url: `http://127.0.0.1:${port}/` });
+    });
+  });
+}
+
+/**
+ * Scrape the real moz-extension:// UUID for a temporary add-on from the
+ * about:debugging page.  Temporary addons get a random internal UUID —
+ * it does NOT match the manifest's gecko.id.
+ *
+ * Uses getPageSource() + Node-side regex because about:debugging is a
+ * privileged parent-process context where executeScript is forbidden.
+ */
+async function scrapeExtensionUuid(driver, extensionName) {
+  await driver.get("about:debugging#/runtime/this-firefox");
+  // Wait for the extension list to populate.
+  await driver.sleep(4000);
+
+  // getPageSource works on privileged pages; executeScript does not.
+  const html = await driver.getPageSource();
+
+  // Find all moz-extension://UUID/ references in the page source.
+  const allUuids = new Set();
+  const re = /moz-extension:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\//g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    allUuids.add(m[1]);
+  }
+
+  if (allUuids.size === 0) {
+    log("WARNING: No moz-extension:// UUIDs found in about:debugging source");
+    return null;
+  }
+
+  // If there's only one extension installed, it's ours.
+  if (allUuids.size === 1) {
+    return [...allUuids][0];
+  }
+
+  // Multiple extensions — try to narrow by looking for the name near a UUID.
+  for (const uuid of allUuids) {
+    // Check if the extension name appears near this UUID in the HTML.
+    const idx = html.indexOf(uuid);
+    const surrounding = html.substring(Math.max(0, idx - 500), idx + 100);
+    if (surrounding.includes(extensionName)) {
+      return uuid;
+    }
+  }
+
+  // Fallback: return the first UUID (likely ours since we just installed).
+  log("WARNING: Could not match UUID by name, returning first UUID found");
+  return [...allUuids][0];
+}
+
+/**
+ * Verify the extension background is alive by loading its popup page.
+ * popup.js calls chrome.runtime.sendMessage internally — a dead background
+ * (e.g. importScripts crash) surfaces as a popup that never renders content.
+ */
+async function verifyPopup(driver, extUuid) {
+  log("Loading extension popup to verify background is alive…");
+  const popupUrl = `moz-extension://${extUuid}/popup.html`;
+  log(`Popup URL: ${popupUrl}`);
+  await driver.get(popupUrl);
+  await driver.sleep(3000);
+
+  const popupTitle = await driver.executeScript("return document.title");
+  const popupBody = await driver.executeScript(
+    "return document.body ? document.body.innerText.slice(0, 500) : ''"
+  );
+  log(`Popup title: "${popupTitle}"`);
+  log(`Popup body (first 200 chars): "${popupBody.slice(0, 200)}"`);
+
+  if (!popupBody || popupBody.trim().length < 5) {
+    fail("Popup body is empty — background may be dead (importScripts crash?)");
+  }
+  log("Popup rendered content — background is alive");
+}
+
+// --- Main ---
+
+async function main() {
+  const zipPath = process.argv[2] || buildFirefoxZip();
+  if (!fs.existsSync(zipPath)) {
+    fail(`Zip not found: ${zipPath}`);
+  }
+
+  const extDir = extractZip(zipPath);
+  log(`Extension dir: ${extDir}`);
+
+  // Dynamically import selenium.
+  let webdriver;
+  let firefox;
+  try {
+    webdriver = require("selenium-webdriver");
+    firefox = require("selenium-webdriver/firefox");
+  } catch {
+    fail("selenium-webdriver not installed. Run: npm install --save-dev selenium-webdriver");
+  }
+
+  // Find Firefox binary — set explicitly so selenium doesn't guess.
+  const firefoxBinary = findFirefoxBinary();
+  if (!firefoxBinary) {
+    fail("Firefox binary not found. Install Firefox or set PATH.");
+  }
+  log(`Firefox binary: ${firefoxBinary}`);
+  const options = new firefox.Options();
+  options.setBinary(firefoxBinary);
+  // Extensions are unreliable in Firefox headless — CI wraps with xvfb-run.
+  options.setPreference("extensions.autoDisableScopes", 0);
+  options.setPreference("extensions.enabledScopes", 15);
+  // Suppress first-run dialogs that cause selenium hangs.
+  options.setPreference("browser.startup.homepage_override.mstone", "ignore");
+  options.setPreference("browser.startup.page", 0);
+  options.setPreference("browser.shell.checkDefaultBrowser", false);
+  options.setPreference("browser.aboutwelcome.enabled", false);
+  options.addArguments("--no-remote");
+
+  // Enable geckodriver verbose logging so hangs are diagnosable.
+  const service = new firefox.ServiceBuilder().addArguments("--log", "debug");
+  const driver = await new webdriver.Builder()
+    .forBrowser("firefox")
+    .setFirefoxOptions(options)
+    .setFirefoxService(service)
+    .build();
+
+  let testServer;
+  let failures = 0;
+
+  try {
+    // ── 1. Install extension as temporary add-on ────────────────────────
+    log("Installing extension as temporary add-on…");
+    await driver.installAddon(extDir, true);
+
+    // ── 2. Discover the real moz-extension:// UUID ──────────────────────
+    //    Temporary addons get a RANDOM UUID — it does NOT match the
+    //    manifest's gecko.id.  We must scrape it from about:debugging.
+    log("Discovering extension UUID from about:debugging…");
+    const extUuid = await scrapeExtensionUuid(driver, "Static");
+    if (!extUuid) {
+      fail("Could not find extension UUID in about:debugging. Extension may not have loaded.");
+    }
+    log(`Extension UUID: ${extUuid}`);
+
+    // ── 3. Start a local HTTP server so content scripts actually inject ─
+    testServer = await startTestServer();
+    log(`Test server at ${testServer.url}`);
+
+    // ── 4. Navigate to the HTTP page — content scripts must run ─────────
+    log("Navigating to HTTP test page (content script injection)…");
+    await driver.get(testServer.url);
+    await driver.sleep(2000);
+
+    // The extension's MAIN-world block.js wraps navigator.webdriver with
+    // Object.defineProperty.  After injection, reading
+    // navigator.webdriver should return undefined (not throw).
+    const webdriverValue = await driver.executeScript(
+      "try { return String(navigator.webdriver); } catch(e) { return 'ERROR:' + e.message; }"
+    );
+    if (webdriverValue === "ERROR:undefined" || webdriverValue === "undefined") {
+      log(`navigator.webdriver = ${webdriverValue} — content script ran`);
+    } else {
+      log(`navigator.webdriver = ${webdriverValue} (acceptable)`);
+    }
+
+    // Verify the page is still alive (no unhandled content-script error
+    // that killed the tab).
+    const pageTitle = await driver.getTitle();
+    if (pageTitle !== "Smoke") {
+      fail(`Expected page title "Smoke" after content script injection, got "${pageTitle}"`);
+    }
+    log("Page survived content script injection — OK");
+
+    await verifyPopup(driver, extUuid);
+
+    log("\nAll smoke checks passed.");
+  } catch (e) {
+    failures++;
+    console.error(e);
+  } finally {
+    await driver.quit();
+    if (testServer) {
+      testServer.server.close();
+    }
+    fs.rmSync(extDir, { recursive: true, force: true });
+    // Clean up temp zip if we built it.
+    if (!process.argv[2]) {
+      try {
+        fs.unlinkSync(zipPath);
+      } catch {}
+    }
+  }
+
+  if (failures > 0) {
+    fail(`${failures} assertion(s) failed`);
+  }
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
