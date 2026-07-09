@@ -1,7 +1,7 @@
 {
   "name": "static",
   "version": "2.3.0",
-  "description": "Chrome MV3 extension that blocks extension-enumeration probes and extension-derived fingerprinting.",
+  "description": "Chrome/Firefox MV3 extension that blocks extension-enumeration probes and extension-derived fingerprinting.",
   "private": true,
   "scripts": {
     "prepare": "husky",
@@ -16,7 +16,9 @@
     "test:e2e": "playwright test $(grep -v '^#' tests/e2e-specs.txt | grep -v '^$' | tr '\n' ' ')",
     "test:e2e:xvfb": "xvfb-run -a npm run test:e2e",
     "test:real-sites": "playwright test tests/real-site-breakage.spec.js",
-    "test:real-sites:xvfb": "xvfb-run -a npm run test:real-sites"
+    "test:real-sites:xvfb": "xvfb-run -a npm run test:real-sites",
+    "build:firefox": "node build-firefox.js",
+    "test:firefox": "xvfb-run -a node tests/firefox-smoke.js"
   },
   "repository": {
     "type": "git",
@@ -42,6 +44,8 @@
     "eslint": "^10.2.1",
     "globals": "^17.5.0",
     "husky": "^9.1.7",
-    "prettier": "^3.8.3"
+    "prettier": "^3.8.3",
+    "selenium-webdriver": "^4.45.0",
+    "web-ext": "^10.4.0"
   }
 }

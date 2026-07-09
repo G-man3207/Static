@@ -300,6 +300,72 @@ test("manifest keeps privacy-sensitive exposure and permissions minimal", () => 
   expect(manifest.externally_connectable).toBeUndefined();
 });
 
+test("manifest declares Firefox gecko settings for AMO signing", () => {
+  const manifest = readJson("manifest.json");
+  const gecko = manifest.browser_specific_settings && manifest.browser_specific_settings.gecko;
+  expect(gecko, "browser_specific_settings.gecko is required for Firefox MV3").toBeTruthy();
+  expect(typeof gecko.id).toBe("string");
+  expect(gecko.id.length).toBeGreaterThan(3);
+  // data_collection_permissions requires Firefox 140+; MAIN-world scripts need 128+.
+  expect(gecko.strict_min_version).toBe("140.0");
+  // Required for new AMO submissions (built-in data collection consent).
+  expect(gecko.data_collection_permissions).toEqual({ required: ["none"] });
+});
+
+test("Firefox build strips unsupported DNR types and adds event-page scripts", () => {
+  const { execFileSync } = require("child_process");
+  const os = require("os");
+  const zipPath = path.join(os.tmpdir(), `static-fx-static-test-${process.pid}.zip`);
+  const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "static-fx-static-extract-"));
+
+  try {
+    execFileSync(process.execPath, [path.join(repoRoot, "build-firefox.js"), zipPath], {
+      cwd: repoRoot,
+      stdio: "pipe",
+    });
+    execFileSync("unzip", ["-q", zipPath, "-d", extractDir], { stdio: "pipe" });
+
+    const fxManifest = JSON.parse(fs.readFileSync(path.join(extractDir, "manifest.json"), "utf8"));
+    expect(fxManifest.background.service_worker).toBe("service_worker.js");
+    expect(fxManifest.background.scripts).toEqual([
+      "lists.js",
+      "service_worker_utils.js",
+      "service_worker.js",
+    ]);
+    expect(fxManifest.browser_specific_settings.gecko.data_collection_permissions).toEqual({
+      required: ["none"],
+    });
+
+    const unsupported = ["webtransport", "webbundle"];
+    for (const rulesFile of ["fingerprint_vendors.json", "captcha_vendors.json"]) {
+      const rules = JSON.parse(fs.readFileSync(path.join(extractDir, "rules", rulesFile), "utf8"));
+      for (const rule of rules) {
+        const types = (rule.condition && rule.condition.resourceTypes) || [];
+        for (const banned of unsupported) {
+          expect(types, `${rulesFile} rule ${rule.id}`).not.toContain(banned);
+        }
+      }
+    }
+
+    const swSource = fs.readFileSync(path.join(extractDir, "service_worker.js"), "utf8");
+    for (const banned of unsupported) {
+      expect(swSource, `service_worker.js must not reference ${banned}`).not.toMatch(
+        new RegExp(`"${banned}"`)
+      );
+    }
+
+    // Source tree must keep Chrome-only types; stripping is build-time only.
+    const sourceSw = readText("service_worker.js");
+    expect(sourceSw).toMatch(/"webtransport"/);
+    expect(sourceSw).toMatch(/"webbundle"/);
+  } finally {
+    fs.rmSync(extractDir, { recursive: true, force: true });
+    try {
+      fs.unlinkSync(zipPath);
+    } catch {}
+  }
+});
+
 test("extension runtime code stays local-only", () => {
   const runtimeFiles = [
     ...collectManifestFiles(readJson("manifest.json")),

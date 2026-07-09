@@ -2,7 +2,7 @@
 
 **Last updated:** July 5, 2026
 
-Static is a Chrome extension that blocks websites from fingerprinting which browser extensions you have installed, and blocks known client-side fingerprinting / anti-bot vendor endpoints at the network layer.
+Static is a Chrome and Firefox extension that blocks websites from fingerprinting which browser extensions you have installed, and blocks known client-side fingerprinting / anti-bot vendor endpoints at the network layer.
 
 This policy describes exactly what information Static processes on your machine, what it does **not** access, and how any data you choose to export is handled.
 
