@@ -5,7 +5,7 @@
 <h1 align="center">Static</h1>
 
 <p align="center">
-  <strong>Anti-fingerprinting Chrome extension that blocks extension enumeration and extension-derived browser fingerprints. Optionally poisons probe logs with plausible decoys.</strong>
+  <strong>Anti-fingerprinting Chrome and Firefox extension that blocks extension enumeration and extension-derived browser fingerprints. Optionally poisons probe logs with plausible decoys.</strong>
 </p>
 
 <p align="center">
@@ -43,7 +43,9 @@ You can inspect every ruleset in `rules/` and toggle the fingerprinting/CAPTCHA 
 
 ## Install
 
-**From source (today):**
+### Chrome / Chromium
+
+**From source:**
 
 1. Clone this repository
 2. Open `chrome://extensions`
@@ -51,6 +53,19 @@ You can inspect every ruleset in `rules/` and toggle the fingerprinting/CAPTCHA 
 4. Click **Load unpacked** and select the repo folder
 
 **From the [Chrome Web Store](https://chromewebstore.google.com/detail/static/lljfncchalimoimbencbbblpdbhmeiil):** install Static directly with one click.
+
+### Firefox
+
+**From source (temporary load):**
+
+1. Clone this repository
+2. Build a Firefox package: `npm run build:firefox` (writes a zip after stripping DNR types Firefox does not support and adding the event-page background scripts)
+3. Open `about:debugging#/runtime/this-firefox`
+4. Click **Load Temporary Add-on…** and select any file inside the extracted package folder (or the built zip after extracting)
+
+Temporary add-ons unload when Firefox restarts. For a permanent install, submit the Firefox zip produced by `npm run build:firefox` to [addons.mozilla.org](https://addons.mozilla.org).
+
+Firefox needs MAIN-world content scripts (128+) and built-in data-collection consent keys (140+). The package declares `strict_min_version: 140.0` and states that Static collects no remote data (`data_collection_permissions.required: ["none"]`).
 
 ---
 
