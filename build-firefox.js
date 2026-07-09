@@ -141,29 +141,63 @@ execSync(
 );
 // 6. Cleanup.
 fs.rmSync(tmpDir, { recursive: true, force: true });
-// 7. Quick self-check: re-read the zip and verify manifest has gecko settings.
+// 7. Quick self-check: re-read the zip and verify Firefox-critical fields.
 console.log(`\nFirefox zip: ${absZip}`);
 
 const checkDir = fs.mkdtempSync(path.join(require("os").tmpdir(), "static-fxck-"));
 execSync(`unzip -q "${absZip}" -d "${checkDir}"`, { stdio: "pipe" });
 const checkManifest = JSON.parse(fs.readFileSync(path.join(checkDir, "manifest.json"), "utf8"));
-if (!checkManifest.browser_specific_settings?.gecko?.id) {
+const gecko = checkManifest.browser_specific_settings?.gecko;
+if (!gecko?.id) {
   console.error("FAIL: browser_specific_settings.gecko.id missing from built manifest");
+  process.exit(1);
+}
+if (!gecko.data_collection_permissions?.required?.includes("none")) {
+  console.error(
+    "FAIL: gecko.data_collection_permissions.required must include 'none' (AMO requirement)"
+  );
   process.exit(1);
 }
 if (!Array.isArray(checkManifest.background?.scripts)) {
   console.error("FAIL: background.scripts missing from built manifest");
   process.exit(1);
 }
-const checkRules = JSON.parse(
-  fs.readFileSync(path.join(checkDir, "rules/fingerprint_vendors.json"), "utf8")
-);
-const hasUnsupported = checkRules.some((r) =>
-  r.condition?.resourceTypes?.some((t) => UNSUPPORTED_RESOURCE_TYPES.includes(t))
-);
-if (hasUnsupported) {
-  console.error("FAIL: unsupported resource types still present in built rules");
+const expectedScripts = ["lists.js", "service_worker_utils.js", "service_worker.js"];
+if (JSON.stringify(checkManifest.background.scripts) !== JSON.stringify(expectedScripts)) {
+  console.error(
+    "FAIL: background.scripts must be",
+    expectedScripts.join(", "),
+    "got",
+    checkManifest.background.scripts
+  );
   process.exit(1);
+}
+// Firefox ignores background.service_worker; scripts is the real event-page path.
+// Keep service_worker in the zip for dual-browser packaging documentation / tooling.
+if (checkManifest.background.service_worker !== "service_worker.js") {
+  console.error(
+    "FAIL: background.service_worker should remain service_worker.js for Chrome parity"
+  );
+  process.exit(1);
+}
+
+for (const rulesFile of ["fingerprint_vendors.json", "captcha_vendors.json"]) {
+  const checkRules = JSON.parse(fs.readFileSync(path.join(checkDir, "rules", rulesFile), "utf8"));
+  const hasUnsupported = checkRules.some((r) =>
+    r.condition?.resourceTypes?.some((t) => UNSUPPORTED_RESOURCE_TYPES.includes(t))
+  );
+  if (hasUnsupported) {
+    console.error(`FAIL: unsupported resource types still present in built rules/${rulesFile}`);
+    process.exit(1);
+  }
+}
+
+const builtSw = fs.readFileSync(path.join(checkDir, "service_worker.js"), "utf8");
+for (const typeName of UNSUPPORTED_RESOURCE_TYPES) {
+  if (new RegExp(`"${typeName}"`).test(builtSw)) {
+    console.error(`FAIL: service_worker.js still references unsupported type "${typeName}"`);
+    process.exit(1);
+  }
 }
 fs.rmSync(checkDir, { recursive: true, force: true });
 

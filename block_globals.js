@@ -42,7 +42,34 @@
 
   const isProtectedKey = (prop) => typeof prop === "string" && STRIP_SET.has(prop);
 
-  const isProtectedTarget = (target) => SCRUB_TARGETS.includes(target);
+  // Firefox MAIN-world content scripts can still surface distinct Window wrapper
+  // identities for the same global (Xray / compartment boundaries). A strict
+  // `includes(window)` check then misses page-side defineProperty targets and
+  // lets extension-marker globals stick. Treat any Window instance and the live
+  // Window.prototype as protected.
+  const isProtectedTarget = (target) => {
+    if (!target) return false;
+    if (SCRUB_TARGETS.includes(target)) return true;
+    try {
+      if (typeof Window === "function" && target instanceof Window) return true;
+    } catch {}
+    try {
+      if (WINDOW_PROTO && target === Object.getPrototypeOf(window)) return true;
+    } catch {}
+    return false;
+  };
+
+  const scrubTargets = () => {
+    const targets = new Set(SCRUB_TARGETS);
+    try {
+      targets.add(window);
+    } catch {}
+    try {
+      const proto = Object.getPrototypeOf(window);
+      if (proto) targets.add(proto);
+    } catch {}
+    return targets;
+  };
 
   const scrubOwnProp = (target, key) => {
     if (!target || !isProtectedKey(key)) return;
@@ -61,7 +88,7 @@
 
   const scrubGlobals = () => {
     if (disabled) return;
-    for (const target of SCRUB_TARGETS) {
+    for (const target of scrubTargets()) {
       for (const key of STRIP_GLOBALS) scrubOwnProp(target, key);
     }
   };

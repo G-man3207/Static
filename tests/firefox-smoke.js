@@ -154,7 +154,162 @@ async function verifyPopup(driver, extUuid) {
   if (!popupBody || popupBody.trim().length < 5) {
     fail("Popup body is empty — background may be dead (importScripts crash?)");
   }
+  // popup.js fills the UI via chrome.runtime.sendMessage to the background.
+  // A dead event page still serves popup.html static shell but leaves counters empty.
+  if (!/probes blocked/i.test(popupBody)) {
+    fail(
+      "Popup did not render live status text — background messaging may have failed. " +
+        `Body: ${popupBody.slice(0, 200)}`
+    );
+  }
   log("Popup rendered content — background is alive");
+}
+
+/**
+ * Assert MAIN-world scripts injected (globals scrub + fetch probe block).
+ *
+ * Globals probe runs inside a classic <script> tag so it executes in the page's
+ * true MAIN world. Firefox WebDriver's executeScript uses Xray wrappers that can
+ * call the pristine Object.defineProperty and falsely look like a miss.
+ */
+async function verifyContentScripts(driver) {
+  const globalsProbe = await driver.executeScript(`
+    const script = document.createElement("script");
+    script.textContent = [
+      "(function () {",
+      "  try {",
+      '    Object.defineProperty(window, "__REACT_DEVTOOLS_GLOBAL_HOOK__", {',
+      "      value: { __static_smoke: true },",
+      "      configurable: true,",
+      "      writable: true,",
+      "      enumerable: false",
+      "    });",
+      '    window.__static_smoke_globals = {',
+      "      ok: true,",
+      "      typeofHook: typeof window.__REACT_DEVTOOLS_GLOBAL_HOOK__,",
+      "      definePropertyLooksNative: Function.prototype.toString",
+      "        .call(Object.defineProperty)",
+      '        .indexOf("[native code]") !== -1',
+      "    };",
+      "  } catch (e) {",
+      '    window.__static_smoke_globals = {',
+      "      ok: false,",
+      "      error: String(e && e.message ? e.message : e)",
+      "    };",
+      "  }",
+      "})();",
+    ].join("\\n");
+    document.documentElement.appendChild(script);
+    script.remove();
+    const result = window.__static_smoke_globals;
+    try {
+      delete window.__static_smoke_globals;
+    } catch (_) {}
+    return result;
+  `);
+  log(`Globals probe: ${JSON.stringify(globalsProbe)}`);
+  if (!globalsProbe || !globalsProbe.ok) {
+    fail(`Content-script globals probe failed: ${JSON.stringify(globalsProbe)}`);
+  }
+  if (globalsProbe.typeofHook !== "undefined") {
+    fail(
+      "MAIN-world content scripts did not inject: " +
+        `__REACT_DEVTOOLS_GLOBAL_HOOK__ is ${globalsProbe.typeofHook} (expected undefined). ` +
+        "block_globals.js should have scrubbed the assignment."
+    );
+  }
+  if (!globalsProbe.definePropertyLooksNative) {
+    fail("Object.defineProperty toString lost native stealth appearance");
+  }
+  log("MAIN-world content scripts injected — OK");
+
+  // fetch is looked up on the page global, so WebDriver sees Static's patch.
+  const fetchProbe = await driver.executeScript(`
+    return fetch("chrome-extension://nngceckbapebfimnlniiiahkandclblb/manifest.json").then(
+      () => ({ status: "resolved" }),
+      (e) => ({ status: "rejected", name: e && e.name, message: e && e.message })
+    );
+  `);
+  log(`Fetch probe: ${JSON.stringify(fetchProbe)}`);
+  if (fetchProbe.status !== "rejected") {
+    fail(`Expected chrome-extension fetch to be rejected, got: ${JSON.stringify(fetchProbe)}`);
+  }
+  if (fetchProbe.name !== "TypeError") {
+    fail(`Expected TypeError from blocked fetch, got ${fetchProbe.name}: ${fetchProbe.message}`);
+  }
+  if (!/failed to fetch/i.test(fetchProbe.message || "")) {
+    fail(`Expected "Failed to fetch" message, got: ${fetchProbe.message}`);
+  }
+  log("Extension-scheme fetch probe blocked — OK");
+}
+
+function createFirefoxDriver() {
+  let webdriver;
+  let firefox;
+  try {
+    webdriver = require("selenium-webdriver");
+    firefox = require("selenium-webdriver/firefox");
+  } catch {
+    fail("selenium-webdriver not installed. Run: npm install --save-dev selenium-webdriver");
+  }
+
+  const firefoxBinary = findFirefoxBinary();
+  if (!firefoxBinary) {
+    fail("Firefox binary not found. Install Firefox or set PATH.");
+  }
+  log(`Firefox binary: ${firefoxBinary}`);
+
+  const options = new firefox.Options();
+  options.setBinary(firefoxBinary);
+  // Extensions are unreliable in Firefox headless — CI wraps with xvfb-run.
+  options.setPreference("extensions.autoDisableScopes", 0);
+  options.setPreference("extensions.enabledScopes", 15);
+  options.setPreference("browser.startup.homepage_override.mstone", "ignore");
+  options.setPreference("browser.startup.page", 0);
+  options.setPreference("browser.shell.checkDefaultBrowser", false);
+  options.setPreference("browser.aboutwelcome.enabled", false);
+  options.addArguments("--no-remote");
+
+  const service = new firefox.ServiceBuilder().addArguments("--log", "debug");
+  return new webdriver.Builder()
+    .forBrowser("firefox")
+    .setFirefoxOptions(options)
+    .setFirefoxService(service)
+    .build();
+}
+
+async function runSmokeSession(driver, extDir) {
+  log("Installing extension as temporary add-on…");
+  await driver.installAddon(extDir, true);
+
+  // Temporary addons get a random UUID — not the manifest gecko.id.
+  log("Discovering extension UUID from about:debugging…");
+  const extUuid = await scrapeExtensionUuid(driver, "Static");
+  if (!extUuid) {
+    fail("Could not find extension UUID in about:debugging. Extension may not have loaded.");
+  }
+  log(`Extension UUID: ${extUuid}`);
+
+  const testServer = await startTestServer();
+  log(`Test server at ${testServer.url}`);
+
+  try {
+    log("Navigating to HTTP test page (content script injection)…");
+    await driver.get(testServer.url);
+    await driver.sleep(2000);
+
+    const pageTitle = await driver.getTitle();
+    if (pageTitle !== "Smoke") {
+      fail(`Expected page title "Smoke" after content script injection, got "${pageTitle}"`);
+    }
+    log("Page survived navigation — OK");
+
+    await verifyContentScripts(driver);
+    await verifyPopup(driver, extUuid);
+    log("\nAll smoke checks passed.");
+  } finally {
+    testServer.server.close();
+  }
 }
 
 // --- Main ---
@@ -168,102 +323,17 @@ async function main() {
   const extDir = extractZip(zipPath);
   log(`Extension dir: ${extDir}`);
 
-  // Dynamically import selenium.
-  let webdriver;
-  let firefox;
-  try {
-    webdriver = require("selenium-webdriver");
-    firefox = require("selenium-webdriver/firefox");
-  } catch {
-    fail("selenium-webdriver not installed. Run: npm install --save-dev selenium-webdriver");
-  }
-
-  // Find Firefox binary — set explicitly so selenium doesn't guess.
-  const firefoxBinary = findFirefoxBinary();
-  if (!firefoxBinary) {
-    fail("Firefox binary not found. Install Firefox or set PATH.");
-  }
-  log(`Firefox binary: ${firefoxBinary}`);
-  const options = new firefox.Options();
-  options.setBinary(firefoxBinary);
-  // Extensions are unreliable in Firefox headless — CI wraps with xvfb-run.
-  options.setPreference("extensions.autoDisableScopes", 0);
-  options.setPreference("extensions.enabledScopes", 15);
-  // Suppress first-run dialogs that cause selenium hangs.
-  options.setPreference("browser.startup.homepage_override.mstone", "ignore");
-  options.setPreference("browser.startup.page", 0);
-  options.setPreference("browser.shell.checkDefaultBrowser", false);
-  options.setPreference("browser.aboutwelcome.enabled", false);
-  options.addArguments("--no-remote");
-
-  // Enable geckodriver verbose logging so hangs are diagnosable.
-  const service = new firefox.ServiceBuilder().addArguments("--log", "debug");
-  const driver = await new webdriver.Builder()
-    .forBrowser("firefox")
-    .setFirefoxOptions(options)
-    .setFirefoxService(service)
-    .build();
-
-  let testServer;
+  const driver = await createFirefoxDriver();
   let failures = 0;
 
   try {
-    // ── 1. Install extension as temporary add-on ────────────────────────
-    log("Installing extension as temporary add-on…");
-    await driver.installAddon(extDir, true);
-
-    // ── 2. Discover the real moz-extension:// UUID ──────────────────────
-    //    Temporary addons get a RANDOM UUID — it does NOT match the
-    //    manifest's gecko.id.  We must scrape it from about:debugging.
-    log("Discovering extension UUID from about:debugging…");
-    const extUuid = await scrapeExtensionUuid(driver, "Static");
-    if (!extUuid) {
-      fail("Could not find extension UUID in about:debugging. Extension may not have loaded.");
-    }
-    log(`Extension UUID: ${extUuid}`);
-
-    // ── 3. Start a local HTTP server so content scripts actually inject ─
-    testServer = await startTestServer();
-    log(`Test server at ${testServer.url}`);
-
-    // ── 4. Navigate to the HTTP page — content scripts must run ─────────
-    log("Navigating to HTTP test page (content script injection)…");
-    await driver.get(testServer.url);
-    await driver.sleep(2000);
-
-    // The extension's MAIN-world block.js wraps navigator.webdriver with
-    // Object.defineProperty.  After injection, reading
-    // navigator.webdriver should return undefined (not throw).
-    const webdriverValue = await driver.executeScript(
-      "try { return String(navigator.webdriver); } catch(e) { return 'ERROR:' + e.message; }"
-    );
-    if (webdriverValue === "ERROR:undefined" || webdriverValue === "undefined") {
-      log(`navigator.webdriver = ${webdriverValue} — content script ran`);
-    } else {
-      log(`navigator.webdriver = ${webdriverValue} (acceptable)`);
-    }
-
-    // Verify the page is still alive (no unhandled content-script error
-    // that killed the tab).
-    const pageTitle = await driver.getTitle();
-    if (pageTitle !== "Smoke") {
-      fail(`Expected page title "Smoke" after content script injection, got "${pageTitle}"`);
-    }
-    log("Page survived content script injection — OK");
-
-    await verifyPopup(driver, extUuid);
-
-    log("\nAll smoke checks passed.");
+    await runSmokeSession(driver, extDir);
   } catch (e) {
     failures++;
     console.error(e);
   } finally {
     await driver.quit();
-    if (testServer) {
-      testServer.server.close();
-    }
     fs.rmSync(extDir, { recursive: true, force: true });
-    // Clean up temp zip if we built it.
     if (!process.argv[2]) {
       try {
         fs.unlinkSync(zipPath);
