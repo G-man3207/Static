@@ -121,6 +121,27 @@ if $RUN_FAST; then
 fi
 
 # ---------------------------------------------------------------------------
+# Gate 4b — Firefox package build + web-ext lint (no browser)
+# ---------------------------------------------------------------------------
+if $RUN_FAST; then
+  header "Firefox package validation"
+  # mktemp creates an empty file; zip refuses to overwrite a non-zip. Use a
+  # directory + explicit zip path instead.
+  FX_DIR="$(mktemp -d /tmp/static-fx-gate-XXXXXX)"
+  FX_ZIP="$FX_DIR/package.zip"
+  FX_SRC="$FX_DIR/src"
+  mkdir -p "$FX_SRC"
+  if node build-firefox.js "$FX_ZIP" 2>&1 \
+    && unzip -q "$FX_ZIP" -d "$FX_SRC" \
+    && npx web-ext lint --source-dir "$FX_SRC" 2>&1; then
+    pass "Firefox package (build + web-ext lint)"
+  else
+    fail "Firefox package (build + web-ext lint)"
+  fi
+  rm -rf "$FX_DIR"
+fi
+
+# ---------------------------------------------------------------------------
 # Gate 5 — Browser E2E tests
 if $RUN_E2E; then
   header "Browser E2E tests"

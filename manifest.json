@@ -6,7 +6,10 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "{f8c3a2b1-d5e6-4789-abcd-ef0123456789}",
-      "strict_min_version": "128.0"
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   },
   "permissions": ["declarativeNetRequest", "declarativeNetRequestWithHostAccess", "storage"],
