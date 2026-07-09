@@ -6,12 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-07-09
+
 ### Added
 
 - **Firefox MV3 support** for AMO submission: `browser_specific_settings.gecko` (stable extension ID, `strict_min_version` 140.0 for data-collection consent + MAIN-world content scripts, and `data_collection_permissions: none`).
 - `build-firefox.js` packages a Firefox zip that strips DNR resource types Firefox rejects (`webtransport`, `webbundle`), adds `background.scripts` event-page fallback (Firefox ignores `service_worker`), and self-validates the output.
 - CI: `web-ext lint` on the Firefox package, Selenium Firefox smoke test, and dual Chrome/Firefox release artifacts.
 - Static validation coverage for gecko manifest fields and the Firefox build transform; `gate.sh` validates the Firefox package on every full/static run.
+
+### Fixed
+
+- MAIN-world global scrubbing on Firefox now treats Window wrapper identities correctly so protected extension-marker globals cannot stick via `Object.defineProperty`.
 
 ## [2.3.0] — 2026-07-05
 
