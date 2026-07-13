@@ -122,15 +122,21 @@ jobs:
             ## Install
 
             ### Chrome / Chromium
+            **From the [Chrome Web Store](https://chromewebstore.google.com/detail/static/lljfncchalimoimbencbbblpdbhmeiil):** install Static with one click.
+
+            Or load from the release zip:
             1. Download `${{ env.CHROME_ZIP }}` below and extract it to a folder.
             2. Open `chrome://extensions`, enable **Developer mode** (top right).
             3. Click **Load unpacked** and select the extracted folder.
 
             ### Firefox
+            **From [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/privacystatic/):** install Static with one click.
+
+            Or load temporarily from the release zip:
             1. Download `${{ env.FIREFOX_ZIP }}` below and extract it to a folder.
             2. Open `about:debugging#/runtime/this-firefox`.
             3. Click **Load Temporary Add-on…** and select any file in the extracted folder.
 
-            For permanent installation, submit the Firefox zip to [addons.mozilla.org](https://addons.mozilla.org).
+            Temporary add-ons unload when Firefox restarts; prefer the Firefox Add-ons listing for a permanent install.
 
             See [CHANGELOG.md](https://github.com/G-man3207/Static/blob/main/CHANGELOG.md) for the full release notes.

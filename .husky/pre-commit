@@ -1,3 +1,5 @@
 #!/bin/sh
 
-npm run check
+# Fast local gates only. Full test:ci (static + e2e) and Firefox package
+# builds (need system zip) run in GitHub Actions — see validate.yml.
+npm run format:check && npm run lint:strict

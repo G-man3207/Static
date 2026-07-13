@@ -313,6 +313,11 @@ test("manifest declares Firefox gecko settings for AMO signing", () => {
 });
 
 test("Firefox build strips unsupported DNR types and adds event-page scripts", () => {
+  // Needs system zip/unzip; validate.yml already builds the Firefox package and
+  // runs web-ext lint. Keep this transform assertion in CI only so husky and
+  // local static runs do not require the zip CLI.
+  test.skip(!process.env.CI, "Firefox package build is validated in GitHub Actions (validate.yml)");
+
   const { execFileSync } = require("child_process");
   const os = require("os");
   const zipPath = path.join(os.tmpdir(), `static-fx-static-test-${process.pid}.zip`);
