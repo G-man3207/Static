@@ -875,13 +875,16 @@ test("Noise mode decoys eligible fetch, XHR, and passive element probes", async 
   expect(decoys.fetchLastModified).toBeTruthy();
   expect(decoys.manifest).toMatchObject({
     manifest_version: 3,
-    name: "Browser Extension",
-    version: "1.0.0",
+    name: "Bitwarden - Free Password Manager",
   });
+  expect(decoys.manifest.version).toMatch(/^\d+\.\d+\.\d+$/);
   expect(decoys.xhr.status).toBe(200);
   expect(decoys.xhr.contentType).toContain("application/json");
   expect(decoys.xhr.lastModified).toBeTruthy();
-  expect(JSON.parse(decoys.xhr.body)).toMatchObject({ name: "Browser Extension" });
+  expect(JSON.parse(decoys.xhr.body)).toMatchObject({
+    name: "Bitwarden - Free Password Manager",
+    version: decoys.manifest.version,
+  });
   expect(decoys.blockedImageSrc).toBe(probedUrl(PROBED_ID, "/icon.png"));
   expect(decoys.resolvedImageSrc).toBe(probedUrl(PROBED_ID, "/icon.png"));
 });

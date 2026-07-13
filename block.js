@@ -73,19 +73,140 @@
   const PNG_1X1_B64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
   const PNG_1X1 = Uint8Array.from(atob(PNG_1X1_B64), (char) => char.charCodeAt(0));
-  const FAKE_MANIFEST = {
-    manifest_version: 3,
-    name: "Browser Extension",
-    version: "1.0.0",
-    description: "",
-    icons: { 16: "icon.png", 48: "icon.png", 128: "icon.png" },
+  // Minimal valid 1x1 GIF / JPEG so path extension, Content-Type, and magic
+  // bytes stay consistent. A universal PNG body for every image path is a
+  // cheap Noise tell (manifest probes already use path-aware types).
+  const GIF_1X1 = Uint8Array.from(
+    atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"),
+    (char) => char.charCodeAt(0)
+  );
+  const JPEG_1X1 = Uint8Array.from(
+    atob(
+      "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCwAA//2Q=="
+    ),
+    (char) => char.charCodeAt(0)
+  );
+  // Known store IDs get real-looking names so multi-ID probe dumps do not all
+  // collapse to the same "Browser Extension" string. Unknown IDs get a stable
+  // per-ID seeded name so personas still look diverse.
+  const KNOWN_MANIFEST_NAMES = {
+    nngceckbapebfimnlniiiahkandclblb: "Bitwarden - Free Password Manager",
+    aeblfdkhhhdcdjpifhhbdiojplfjncoa: "1Password – Password Manager",
+    hdokiejnpimakedhajhdlcegeplioahd: "LastPass: Free Password Manager",
+    fdjamakpfbbddfjaooikfcpapjohcfmg: "Dashlane — Password Manager",
+    ohigdmefobenhgkmpihnlmkphdoagcpe: "Keeper® Password Manager & Digital Vault",
+    pnlccmojcmeohlpggmfnbbiapkmbliob: "RoboForm Password Manager",
+    fooolghllnmhmmndgjiamiiodkpenpbb: "RoboForm Password Manager",
+    bmikpgodpkclnkgmnpphehdgcimmided: "NordPass® Password Manager & Digital Vault",
+    cjnlpnbkjbnmdieljmighbdoljmgfibk: "Proton Pass: Free Password Manager",
+    dhdgffkkebhmkfjojejmpbldmpobfkfo: "Tampermonkey",
+    clngdbkpkpeebahjckkjfobafhncgmne: "Stylus",
+    bkdgflcldnnnapblkhphbgpggdiikppg: "DuckDuckGo Privacy Essentials",
+    cjpalhdlnbpafiamejdnhcphjbkeiagm: "uBlock Origin",
+    gighmmpiobklfepjocnamgkkbiglidom: "AdBlock — block ads across the web",
+    cfhdojbkjhnklbpkdaibdccddilifddb: "Adblock Plus - free ad blocker",
+    bgnkhhnnamicmpeenaelnjfhikgbkllg: "AdGuard AdBlocker",
+    pkehgijcmpdhfbdbbnkijodmdjhbjlgp: "Privacy Badger",
+    ddkjiahejlhfcafbddmgiahcphecmpfh: "uBlock Origin Lite",
+    mlomiejdfkolichcflejclcbmpeaniij: "Ghostery Tracker & Ad Blocker",
+    kbfnbcaeplbcioakkpcpgfkobkghlhen: "Grammarly: AI Writing Assistant",
+    oldceeleldhonbafppcapldpdifcinji: "LanguageTool - Grammar and Spell Checker",
+    nkbihfbeogaeaoehlefnkodbefgpgknn: "MetaMask",
+    hnfanknocfeofbddgcijnmhnfnkdnaad: "Coinbase Wallet extension",
+    bfnaelmomeimhlpmgjnjophhpkkoljpa: "Phantom",
+    ibnejdfjmmkpcnlpebklmnkoeoihofec: "TronLink",
+    bhhhlkgekbhbdjncpdbjkmjnnapolepf: "Solflare Wallet",
+    acmacodkjbdgmoleebolmdjonilkdbch: "Rabby Wallet",
+    egjidjbpglichdcongccjofoobgmfgei: "Trust Wallet",
+    fmkadmapgofadopljbjfkapdkoienihi: "React Developer Tools",
+    lmhkpmbekcpmknklioeibfkpmmfibljd: "Redux DevTools",
+    nhdogjmejiglipccpnnnanhbledajbpd: "Vue.js devtools",
+    aapbdbdomjkkjkaonfhkkikfgjllcleb: "Google Translate",
+    cofdbpoegempjloogbagkncekinflcnj: "DeepL: translate and write with AI",
+    npggkinfhjadegenkdjokdacdkopdfdb: "Proton VPN: Fast & Secure",
+    eimadpbcbfnmbkopoojfekhnkhdbieeh: "Dark Reader",
+    bfogiajgogklnfndlkggihnhakgkbjgg: "Rakuten: Get Cash Back For Shopping",
+    lmelmgmclklieheidfjlabcjljeojmho: "Capital One Shopping: Save Now",
+    bmnlcjabgnpnenekpadlanbbkooimhnj: "Honey: Automatic Coupons & Cash Back",
   };
+  const GENERIC_MANIFEST_ADJECTIVES = [
+    "Quick",
+    "Smart",
+    "Simple",
+    "Secure",
+    "Fast",
+    "Easy",
+    "Pro",
+    "Lite",
+  ];
+  const GENERIC_MANIFEST_NOUNS = [
+    "Helper",
+    "Tools",
+    "Assistant",
+    "Shield",
+    "Manager",
+    "Boost",
+    "Guard",
+    "Kit",
+  ];
   const IMAGE_DECOY_PATHS = U.IMAGE_DECOY_PATHS;
   const SCRIPT_DECOY_PATHS = U.SCRIPT_DECOY_PATHS;
   const HTML_DECOY_PATHS = U.HTML_DECOY_PATHS;
   const STYLE_DECOY_PATHS = U.STYLE_DECOY_PATHS;
   const fakeXhrResponses = new WeakMap();
   const fakeFetchResponses = new WeakMap();
+
+  const hashExtensionId = (id) => {
+    let h = 2166136261;
+    const s = String(id || "");
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  };
+
+  const buildFakeManifest = (url) => {
+    const id = U.extractExtId(url) || "00000000000000000000000000000000";
+    const h = hashExtensionId(id);
+    const known = KNOWN_MANIFEST_NAMES[id];
+    const name =
+      known ||
+      `${GENERIC_MANIFEST_ADJECTIVES[h % GENERIC_MANIFEST_ADJECTIVES.length]} ${
+        GENERIC_MANIFEST_NOUNS[(h >>> 3) % GENERIC_MANIFEST_NOUNS.length]
+      }`;
+    const major = 1 + (h % 5);
+    const minor = (h >>> 8) % 12;
+    const patch = (h >>> 16) % 20;
+    return {
+      manifest_version: 3,
+      name,
+      version: `${major}.${minor}.${patch}`,
+      description: "",
+      icons: { 16: "icon.png", 48: "icon.png", 128: "icon.png" },
+    };
+  };
+
+  const imageDecoyForPath = (pathname) => {
+    if (pathname.endsWith(".svg")) {
+      return {
+        body: '<svg xmlns="http://www.w3.org/2000/svg"/>',
+        contentType: "image/svg+xml; charset=utf-8",
+      };
+    }
+    if (pathname.endsWith(".gif")) {
+      return { body: GIF_1X1, contentType: "image/gif" };
+    }
+    if (pathname.endsWith(".jpg") || pathname.endsWith(".jpeg")) {
+      return { body: JPEG_1X1, contentType: "image/jpeg" };
+    }
+    if (pathname.endsWith(".png")) {
+      return { body: PNG_1X1, contentType: "image/png" };
+    }
+    // ico/bmp/webp and other allowlisted suffixes without matching magic stay
+    // fail-closed — wrong bytes + Content-Type is worse than a clean block.
+    return null;
+  };
 
   const patchFakeResponseMetadata = () => {
     if (typeof Response === "undefined" || !Response.prototype) return;
@@ -176,7 +297,9 @@
     if (!pathname) return null;
     if (pathname.endsWith("/manifest.json")) return "manifest";
     if (/\.(png|jpe?g|gif|webp|ico|bmp|svg)$/i.test(pathname)) {
-      return matchesPathPattern(pathname, IMAGE_DECOY_PATHS) ? "image" : null;
+      if (!matchesPathPattern(pathname, IMAGE_DECOY_PATHS)) return null;
+      // Only claim image kinds we can answer with matching magic bytes.
+      return imageDecoyForPath(pathname) ? "image" : null;
     }
     if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) {
       return matchesPathPattern(pathname, SCRIPT_DECOY_PATHS) ? "script" : null;
@@ -195,19 +318,11 @@
     const kind = decoyKindForPath(url);
     if (kind === "manifest") {
       return {
-        body: JSON.stringify(FAKE_MANIFEST),
+        body: JSON.stringify(buildFakeManifest(url)),
         contentType: "application/json; charset=utf-8",
       };
     }
-    if (kind === "image") {
-      if (pathname.endsWith(".svg")) {
-        return {
-          body: '<svg xmlns="http://www.w3.org/2000/svg"/>',
-          contentType: "image/svg+xml; charset=utf-8",
-        };
-      }
-      return { body: PNG_1X1, contentType: "image/png" };
-    }
+    if (kind === "image") return imageDecoyForPath(pathname);
     if (kind === "script") {
       return { body: "", contentType: "application/javascript; charset=utf-8" };
     }

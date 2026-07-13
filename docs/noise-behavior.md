@@ -9,6 +9,12 @@ Known plausible extension IDs can enter an origin persona after 2 probes. Unknow
 IDs need stronger repeated evidence before they are eligible, so a site cannot cheaply seed Static's
 persona with fake two-hit canaries.
 
+Decoy `manifest.json` bodies are **ID-seeded**: known store IDs return real-looking extension names,
+and unknown IDs get a stable per-ID name/version so multi-ID probe dumps do not all collapse to the
+same generic `"Browser Extension"` string. Image fetch decoys only answer formats Static can serve
+with matching magic bytes and `Content-Type` (PNG, GIF, JPEG, SVG); other image suffixes stay
+fail-closed.
+
 | Probe vector                                           | Eligible Noise persona ID                                                                                                                                    | Non-persona or invalid ID       |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- |
 | `fetch(.../manifest.json)`                             | Allowlisted static `GET` / `HEAD` paths receive path-matched decoys                                                                                          | Native-like `TypeError` failure |

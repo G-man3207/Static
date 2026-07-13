@@ -19,6 +19,7 @@ tests/worklet-vectors.spec.js
 tests/svg-href.spec.js
 tests/noise-xhr-consistency.spec.js
 tests/noise-canary.spec.js
+tests/noise-decoy-stealth.spec.js
 tests/adversarial-consistency.spec.js
 tests/stealth-hardness.spec.js
 tests/decoy-serialization.spec.js

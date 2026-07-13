@@ -692,6 +692,10 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||maxmind.com^",
     "||shieldsquare.com^",
     "||deviceatlas.com^",
+    "||whiteops.com^",
+    "||sift.com^",
+    "||accertify.com^",
+    "||group-ib.com^",
   ]) {
     expect(fingerprintFilters.has(filter), `fingerprint_vendors missing ${filter}`).toBe(true);
   }
