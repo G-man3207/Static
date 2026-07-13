@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/static/lljfncchalimoimbencbbblpdbhmeiil"><img src="https://img.shields.io/chrome-web-store/v/lljfncchalimoimbencbbblpdbhmeiil?label=Chrome%20Web%20Store&color=blue&logo=googlechrome&logoColor=white" alt="Chrome Web Store"></a>
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/privacystatic/"><img src="https://img.shields.io/amo/v/privacystatic?label=Firefox%20Add-ons&color=orange&logo=firefoxbrowser&logoColor=white" alt="Firefox Add-ons"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/G-man3207/Static?color=blue" alt="MIT License"></a>
   <a href="PRIVACY.md"><img src="https://img.shields.io/badge/Privacy%20Policy-Read%20here-blue" alt="Privacy Policy"></a>
   <img src="https://img.shields.io/badge/manifest-v3-brightgreen" alt="Manifest V3">
@@ -26,9 +27,6 @@ Websites probe your browser to figure out **which extensions you have installed*
 Static is intentionally narrow. It is built to run alongside uBlock Origin or Privacy Badger, which are better suited for broad ad-tech, analytics, and third-party tracker blocking.
 
 > On LinkedIn, Static blocks ~4,500 extension-enumeration probes per page load. The popup shows the live count.
-
-<!-- TODO: add demo.gif here -->
-<!-- ![Static popup showing 4,217 probes blocked on LinkedIn](docs/demo.gif) -->
 
 ## Permissions
 
@@ -56,6 +54,8 @@ You can inspect every ruleset in `rules/` and toggle the fingerprinting/CAPTCHA 
 
 ### Firefox
 
+**From [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/privacystatic/):** install Static directly with one click.
+
 **From source (temporary load):**
 
 1. Clone this repository
@@ -63,7 +63,7 @@ You can inspect every ruleset in `rules/` and toggle the fingerprinting/CAPTCHA 
 3. Open `about:debugging#/runtime/this-firefox`
 4. Click **Load Temporary Add-on…** and select any file inside the extracted package folder (or the built zip after extracting)
 
-Temporary add-ons unload when Firefox restarts. For a permanent install, submit the Firefox zip produced by `npm run build:firefox` to [addons.mozilla.org](https://addons.mozilla.org).
+Temporary add-ons unload when Firefox restarts. Prefer the [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/privacystatic/) listing for a permanent install.
 
 Firefox needs MAIN-world content scripts (128+) and built-in data-collection consent keys (140+). The package declares `strict_min_version: 140.0` and states that Static collects no remote data (`data_collection_permissions.required: ["none"]`).
 

@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Changed
+
+- Documented that Static is now published on [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/privacystatic/) (badge + install instructions in the README).
+- Pre-commit (husky) now runs format + lint only; full `test:ci` and Firefox package builds (system `zip`) stay in GitHub Actions (`validate.yml`).
+
 ## [2.4.0] — 2026-07-09
 
 ### Added
