@@ -6,10 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added
+
+- Noise-mode decoy `manifest.json` bodies are now **ID-seeded**: known store IDs return real-looking extension names (e.g. Bitwarden, uBlock Origin), and unknown IDs get a stable per-ID name/version so multi-ID probe dumps no longer collapse to one generic `"Browser Extension"` string.
+- Noise fetch/XHR image decoys now serve format-matched bodies and `Content-Type` for PNG, GIF, JPEG, and SVG (path extension, headers, and magic bytes stay aligned). Formats Static cannot synthesize correctly (e.g. WebP) stay fail-closed.
+- DNR fingerprint vendor rules for HUMAN legacy `whiteops.com`, Sift root `sift.com`, Accertify (`accertify.com`), and Group-IB (`group-ib.com`) (rule IDs 73–76).
+- Playwright coverage for ID-seeded Noise manifests, cross-vector manifest stability, and image magic-byte / Content-Type alignment (`tests/noise-decoy-stealth.spec.js`).
+
 ### Changed
 
 - Documented that Static is now published on [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/privacystatic/) (badge + install instructions in the README).
 - Pre-commit (husky) now runs format + lint only; full `test:ci` and Firefox package builds (system `zip`) stay in GitHub Actions (`validate.yml`).
+- `rules/META.json` fingerprint_vendors bumped to 1.7.0 (`last_verified` 2026-07-13).
+- `docs/noise-behavior.md` documents the ID-seeded manifest contract and image magic-byte fail-closed policy.
 
 ## [2.4.0] — 2026-07-09
 

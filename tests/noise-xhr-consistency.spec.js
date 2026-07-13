@@ -160,8 +160,7 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
     instance: true,
     manifest: {
       manifest_version: 3,
-      name: "Browser Extension",
-      version: "1.0.0",
+      name: "Bitwarden - Free Password Manager",
     },
     ownType: false,
     ownUrl: false,
@@ -169,7 +168,10 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
     type: "default",
     url: manifestUrl(),
   });
-  expect(JSON.parse(result.fetch.responseText)).toMatchObject({ name: "Browser Extension" });
+  expect(result.fetch.manifest.version).toMatch(/^\d+\.\d+\.\d+$/);
+  expect(JSON.parse(result.fetch.responseText)).toMatchObject({
+    name: "Bitwarden - Free Password Manager",
+  });
   expect(result.headContentLength).toBe(result.fetch.contentLength);
   expect(result.headText).toBe("");
   expect(result.xhrText).toMatchObject({
@@ -191,7 +193,9 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
   expect(result.xhrText.allHeaders).toContain(`content-length: ${result.fetch.contentLength}`);
   expect(result.xhrText.allHeaders).toContain(`cache-control: ${result.fetch.cacheControl}`);
   expect(result.xhrText.allHeaders).toContain(`etag: ${result.fetch.etag}`);
-  expect(JSON.parse(result.xhrText.responseText)).toMatchObject({ name: "Browser Extension" });
+  expect(JSON.parse(result.xhrText.responseText)).toMatchObject({
+    name: "Bitwarden - Free Password Manager",
+  });
   expectHeadXhr(result.xhrHead, result.fetch);
   expectHeadXhr(result.xhrSyncHead, result.fetch);
   expect(result.xhrJson).toMatchObject({
@@ -200,12 +204,13 @@ test("Noise decoys expose coherent fetch and XHR response details", async ({
     ownStatus: false,
     response: {
       manifest_version: 3,
-      name: "Browser Extension",
-      version: "1.0.0",
+      name: "Bitwarden - Free Password Manager",
     },
     responseTextAccess: "InvalidStateError",
     status: 200,
   });
+  expect(result.xhrJson.response.version).toMatch(/^\d+\.\d+\.\d+$/);
+  expect(result.xhrJson.response.version).toBe(result.fetch.manifest.version);
 });
 
 test("Noise setting changes refresh existing pages without reload", async ({
