@@ -49,10 +49,11 @@
     "blur",
   ]);
   const DOM_MARKER_ATTR_RE =
-    /^(?:data-(?:1password(?:-|$)|1p(?:-|$)|onepassword(?:-|$)|op(?:-|$)|lastpass(?:-|$)|lp-(?:ignore|id|tab)|dashlane(?:-|$)|dashlanecreated|grammarly(?:-|$)|gramm(?:-|$)|gr-c-s-(?:loaded|check-loaded)$|honey(?:-|$)|honeyextension(?:-|$)|keeper(?:-|$)|roboform(?:-|$)|nordpass(?:-|$)|bitwarden(?:-|$)|protonpass(?:-|$))|__lpform_)/i;
-  const DOM_MARKER_TAG_RE = /^(?:grammarly-|lastpass-|dashlane-|honey-|onepassword-|protonpass-)/i;
+    /^(?:data-(?:1password(?:-|$)|1p(?:-|$)|onepassword(?:-|$)|op(?:-|$)|lastpass(?:-|$)|lp-(?:ignore|id|tab)|dashlane(?:-|$)|dashlanecreated|grammarly(?:-|$)|gramm(?:-|$)|gr-c-s-(?:loaded|check-loaded)$|honey(?:-|$)|honeyextension(?:-|$)|keeper(?:-|$)|roboform(?:-|$)|nordpass(?:-|$)|bitwarden(?:-|$)|protonpass(?:-|$)|keepassxc(?:-|$)|darkreader(?:-|$)|bw(?:-|$)|lt(?:-|$)|languagetool(?:-|$))|__lpform_)/i;
+  const DOM_MARKER_TAG_RE =
+    /^(?:grammarly-|lastpass-|dashlane-|honey-|onepassword-|protonpass-|keepassxc-|darkreader-|bitwarden-)/i;
   const DOM_MARKER_CLASS_RE =
-    /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-)|protonpass(?:$|-))/i;
+    /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-)|protonpass(?:$|-)|keepassxc(?:$|-)|darkreader(?:$|-)|bitwarden(?:$|-))/i;
   const adaptiveWindows = new Map();
   const reportedVendorSignals = new Set();
   const instrumentedFingerprintGlobals = new WeakSet();

@@ -890,6 +890,9 @@ test("shareable export hashes origin and extension ID labels", async ({ extensio
               [ids[1]]: 7,
               [ids[2]]: 25,
             },
+            idPaths: {
+              [ids[0]]: { "/inpage.js": 4, "/src/css/content.css": 2 },
+            },
             lastUpdated: Date.now(),
           },
         },
@@ -916,6 +919,8 @@ test("shareable export hashes origin and extension ID labels", async ({ extensio
   expect(firstIdHashes.every((idHash) => /^[0-9a-f]{64}$/.test(idHash))).toBe(true);
   expect(serialized).not.toContain(origin);
   for (const id of ids) expect(serialized).not.toContain(id);
+  expect(serialized).not.toContain("/inpage.js");
+  expect(serialized).not.toContain("idPaths");
   expect(Object.values(first.origins[firstOriginHash].idBuckets).sort()).toEqual([
     "2-5",
     "21-100",
