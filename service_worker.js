@@ -323,7 +323,7 @@ const addDynamicRule = async (rule) => {
   } catch {
     const types = (rule.condition && rule.condition.resourceTypes) || [];
     const filtered = types.filter(
-      (typeName) => typeName !== "webtransport" && typeName !== "webbundle"
+      (typeName) => typeName === "websocket" || !typeName.startsWith("web")
     );
     if (filtered.length === types.length) return false;
     try {
