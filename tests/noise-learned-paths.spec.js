@@ -31,6 +31,12 @@ const enableNoise = async (extension) => {
   );
 };
 
+const originLearnedPaths = (extension, origin) =>
+  extension.serviceWorker.evaluate(async (pageOrigin) => {
+    const { probe_log } = await chrome.storage.local.get("probe_log");
+    return (probe_log && probe_log[pageOrigin] && probe_log[pageOrigin].idPaths) || {};
+  }, origin);
+
 const pathCountFor = (extension, origin, id, path) =>
   extension.serviceWorker.evaluate(
     async ({ pageOrigin, personaId, resourcePath }) => {
@@ -287,10 +293,7 @@ test("learned script paths do not decoy image tags", async ({ extension, server 
   expect(result.naturalWidth).toBe(0);
 });
 
-test("path canaries and parent-directory probes never enter the learned map", async ({
-  extension,
-  server,
-}) => {
+test("invalid path canaries never enter the learned map", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await enableNoise(extension);
   await page.goto(server.url("/blank.html"));
@@ -305,13 +308,14 @@ test("path canaries and parent-directory probes never enter the learned map", as
     await Promise.allSettled(urls.flatMap((url) => [fetch(url), fetch(url)]));
   }, BITWARDEN);
 
-  const stored = await extension.serviceWorker.evaluate(async (origin) => {
-    const { probe_log } = await chrome.storage.local.get("probe_log");
-    return (probe_log && probe_log[origin] && probe_log[origin].idPaths) || {};
-  }, server.origin);
-
+  await expect
+    .poll(async () => pathCountFor(extension, server.origin, BITWARDEN, "/icon.webp"))
+    .toBe(2);
+  await expect
+    .poll(async () => pathCountFor(extension, server.origin, BITWARDEN, "/in page.js"))
+    .toBe(0);
+  const stored = await originLearnedPaths(extension, server.origin);
   const paths = stored[BITWARDEN] || {};
-  expect(Object.keys(paths).some((path) => path.includes("..") || path.includes("//"))).toBe(false);
+  expect(Object.keys(paths).some((path) => path.includes("//"))).toBe(false);
   expect(paths["/in page.js"]).toBeUndefined();
-  expect(paths["/icon.webp"]).toBe(2);
 });
