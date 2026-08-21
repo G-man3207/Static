@@ -2562,6 +2562,38 @@ test("scrubs extension DOM markers on initial parse and later mutations", async 
   expect(later.classes).toEqual(["keep"]);
 });
 
+test("scrubs KeePassXC, Dark Reader, Bitwarden, and LanguageTool DOM markers", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(async () => {
+    const node = document.createElement("div");
+    node.className = "keep keepassxc-field darkreader bitwarden-notification";
+    node.setAttribute("data-keepassxc", "1");
+    node.setAttribute("data-darkreader-mode", "dynamic");
+    node.setAttribute("data-bw-theme", "light");
+    node.setAttribute("data-lt-active", "true");
+    document.body.appendChild(node);
+    const tag = document.createElement("keepassxc-notification");
+    document.body.appendChild(tag);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    return {
+      attrs: [...node.attributes].map((attr) => attr.name),
+      classes: [...node.classList],
+      keepassTagCount: document.querySelectorAll("keepassxc-notification").length,
+    };
+  });
+
+  expect(result.attrs).toEqual(["class"]);
+  expect(result.classes).toEqual(["keep"]);
+  expect(result.keepassTagCount).toBe(0);
+});
+
 test("scrubs extension DOM markers from open shadow roots attached after host insertion", async ({
   extension,
   server,

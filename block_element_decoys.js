@@ -17,6 +17,7 @@
   const MAX_QUEUED_PROBES = 1000;
   let noiseEnabled = false;
   let persona = new Set();
+  let personaPaths = new Map();
   let disabled = false;
   let nativeAttrValueGetter = null;
   let nativeAttrValueSetter = null;
@@ -28,6 +29,21 @@
     if (!data || data.type !== "config_update") return;
     if (Array.isArray(data.persona)) {
       persona = new Set(data.persona.filter((id) => typeof id === "string"));
+    }
+    if (data.personaPaths && typeof data.personaPaths === "object") {
+      const next = new Map();
+      for (const [id, paths] of Object.entries(data.personaPaths)) {
+        if (typeof id !== "string" || !Array.isArray(paths)) continue;
+        next.set(
+          id.toLowerCase(),
+          new Set(
+            paths.filter((path) => typeof path === "string").map((path) => path.toLowerCase())
+          )
+        );
+      }
+      personaPaths = next;
+    } else if (Array.isArray(data.persona)) {
+      personaPaths = new Map();
     }
     if (typeof data.noiseEnabled === "boolean") noiseEnabled = data.noiseEnabled;
     if (typeof data.disabled === "boolean") disabled = data.disabled;
@@ -195,6 +211,18 @@
 
   const matchesPathPattern = U.matchesPathPattern;
 
+  const isLearnedPersonaPath = (url) => {
+    const id = U.extractExtId(url);
+    if (!id) return false;
+    const learned = personaPaths.get(id);
+    if (!learned) return false;
+    const pathname = U.sanitizeExtensionPath(pathFor(url));
+    return pathname ? learned.has(pathname) : false;
+  };
+
+  const learnedKindFor = (url) =>
+    isLearnedPersonaPath(url) ? U.learnedDecoyKindForPath(pathFor(url)) : null;
+
   const imageDecoyPath = (pathname) => matchesPathPattern(pathname, IMAGE_DECOY_PATHS);
   const scriptDecoyPath = (pathname) => matchesPathPattern(pathname, SCRIPT_DECOY_PATHS);
   const htmlDecoyPath = (pathname) => matchesPathPattern(pathname, HTML_DECOY_PATHS);
@@ -238,19 +266,36 @@
     return String((elOrTag && elOrTag.tagName) || "").toLowerCase();
   };
 
+  const learnedHrefKind = (tag, learned) => {
+    if (tag === "link" && ["style", "image", "script", "html"].includes(learned)) return learned;
+    if ((tag === "use" || tag === "image") && learned === "image") return "image";
+    return null;
+  };
+
+  const learnedSrcKind = (tag, learned) => {
+    if (tag === "script" && learned === "script") return "script";
+    if (["img", "input", "source", "embed"].includes(tag) && learned === "image") return "image";
+    return null;
+  };
+
   const passiveDecoyKindFor = (url, prop, elOrTag) => {
     const pathname = pathFor(url);
     const tag = tagFrom(elOrTag);
     if (!pathname) return null;
+    const learned = learnedKindFor(url);
 
-    if (prop === "srcset" || prop === "poster") return imageDecoyPath(pathname) ? "image" : null;
-
-    if (prop === "data" && tag === "object") return htmlDecoyPath(pathname) ? "html" : null;
-
-    if (prop === "href") return passiveHrefDecoyKind(tag, pathname);
-
-    if (prop === "src") return passiveSrcDecoyKind(tag, pathname);
-
+    if (prop === "srcset" || prop === "poster") {
+      return imageDecoyPath(pathname) || learned === "image" ? "image" : null;
+    }
+    if (prop === "data" && tag === "object") {
+      return htmlDecoyPath(pathname) || learned === "html" ? "html" : null;
+    }
+    if (prop === "href") {
+      return passiveHrefDecoyKind(tag, pathname) || learnedHrefKind(tag, learned);
+    }
+    if (prop === "src") {
+      return passiveSrcDecoyKind(tag, pathname) || learnedSrcKind(tag, learned);
+    }
     return null;
   };
 

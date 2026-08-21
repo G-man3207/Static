@@ -30,7 +30,9 @@
   const pendingIdCounts = new Map();
   const pendingVectorCounts = new Map();
   const pendingPathKindCounts = new Map();
+  const pendingIdPaths = new Map();
   const knownExtensionIds = H.knownPersonaIds ? H.knownPersonaIds(CFG) : new Set();
+  const MAX_PATHS_PER_ID = CFG.maxPathsPerId || 8;
 
   const bumpMap = (map, key, amount = 1) => {
     const safeKey = key || "unknown";
@@ -75,6 +77,43 @@
     }
   };
 
+  const bumpCappedPathMap = (id, path) => {
+    if (!id || !path) return;
+    let paths = pendingIdPaths.get(id);
+    if (!paths) {
+      paths = new Map();
+      pendingIdPaths.set(id, paths);
+    }
+    if (paths.has(path)) {
+      paths.set(path, paths.get(path) + 1);
+      return;
+    }
+    if (paths.size < MAX_PATHS_PER_ID) {
+      paths.set(path, 1);
+      return;
+    }
+    let lowestPath = null;
+    let lowestCount = Infinity;
+    for (const [existingPath, count] of paths) {
+      if (count < lowestCount || (count === lowestCount && existingPath > lowestPath)) {
+        lowestPath = existingPath;
+        lowestCount = count;
+      }
+    }
+    if (lowestPath) {
+      paths.delete(lowestPath);
+      paths.set(path, 1);
+    }
+  };
+
+  const idPathsToObject = (map) => {
+    const out = {};
+    for (const [id, paths] of map) {
+      out[id] = mapToObject(paths);
+    }
+    return out;
+  };
+
   const mapToObject = (map) => {
     const out = {};
     for (const [key, value] of map) out[key] = value;
@@ -114,10 +153,12 @@
     const deltaSnapshot = mapToObject(pendingIdCounts);
     const vectorSnapshot = mapToObject(pendingVectorCounts);
     const pathKindSnapshot = mapToObject(pendingPathKindCounts);
+    const idPathsSnapshot = idPathsToObject(pendingIdPaths);
     const diagnosticSnapshot = pendingDiagnosticEvents.splice(0);
     pendingIdCounts.clear();
     pendingVectorCounts.clear();
     pendingPathKindCounts.clear();
+    pendingIdPaths.clear();
     try {
       const message = {
         type: "static_probe_blocked",
@@ -127,6 +168,7 @@
         deltaIdCounts: deltaSnapshot,
         deltaVectorCounts: vectorSnapshot,
         deltaPathKindCounts: pathKindSnapshot,
+        deltaIdPaths: idPathsSnapshot,
       };
       if (diagnosticSnapshot.length > 0) message.diagnosticEvents = diagnosticSnapshot;
       chrome.runtime.sendMessage(message);
@@ -147,6 +189,7 @@
     pendingDiagnosticEvents.length = 0;
     pendingVectorCounts.clear();
     pendingPathKindCounts.clear();
+    pendingIdPaths.clear();
   };
 
   const flushOnHidden = () => {
@@ -163,6 +206,8 @@
     if (id) {
       bumpCappedIdMap(idCounts, id);
       bumpCappedIdMap(pendingIdCounts, id);
+      const path = H.extensionPathnameFor ? H.extensionPathnameFor(data.url) : "";
+      if (path) bumpCappedPathMap(id, path);
     }
     if (!flushTimer) flushTimer = setTimeout(flush, 150);
   };
@@ -247,6 +292,10 @@
       port.postMessage({
         type: "config_update",
         persona: Array.isArray(response.ids) ? response.ids : [],
+        personaPaths:
+          response.paths && typeof response.paths === "object" && !Array.isArray(response.paths)
+            ? response.paths
+            : {},
         disabled: !!response.disabled,
         fingerprintMode:
           typeof response.fingerprintMode === "string" ? response.fingerprintMode : "off",
@@ -280,6 +329,7 @@
           type: "config_update",
           disabled: nowDisabled,
           persona: [],
+          personaPaths: {},
           fingerprintMode: "off",
           fingerprintPersona: null,
           diagnosticsMode: false,
@@ -361,6 +411,7 @@
           type: "config_update",
           disabled,
           persona: [],
+          personaPaths: {},
           fingerprintMode: "off",
           fingerprintPersona: null,
           diagnosticsMode: false,
@@ -399,6 +450,7 @@
           type: "config_update",
           disabled: nowDisabled,
           persona: [],
+          personaPaths: {},
           fingerprintMode: "off",
           fingerprintPersona: null,
           diagnosticsMode: false,
