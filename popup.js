@@ -197,6 +197,17 @@ const renderAdaptiveNotice = (resp) => {
   adaptiveEl.hidden = false;
 };
 
+const isHttpOrigin = (origin) => typeof origin === "string" && /^https?:/i.test(origin);
+
+const tabIdFromQuery = () => {
+  try {
+    const value = Number(new URLSearchParams(window.location.search).get("tabId"));
+    return Number.isInteger(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+};
+
 const isHttpUrl = (url) => typeof url === "string" && /^https?:/i.test(url);
 const isExtensionUrl = (url) =>
   typeof url === "string" && /^(chrome|moz|safari-web|ms-browser|edge)-extension:/i.test(url);
@@ -256,7 +267,7 @@ const renderRecoveryCard = (resp) => {
   const titleEl = document.getElementById("recovery-title");
   const detailEl = document.getElementById("recovery-detail");
   const actionButton = document.getElementById("recovery-action");
-  if (!resp || !resp.origin) {
+  if (!resp || !isHttpOrigin(resp.origin)) {
     card.hidden = true;
     actionButton.onclick = null;
     return;
@@ -704,7 +715,7 @@ const renderSiteSection = (resp) => {
   };
   updateUI();
 
-  if (!resp || !resp.origin) {
+  if (!resp || !isHttpOrigin(resp.origin)) {
     section.hidden = true;
     return;
   }
@@ -993,7 +1004,8 @@ const renderRulesets = (enabledArr, counts) => {
 };
 
 (async () => {
-  const tab = await resolvePopupTab();
+  const queriedTabId = tabIdFromQuery();
+  const tab = queriedTabId != null ? { id: queriedTabId } : await resolvePopupTab();
   const detailsPromise = tab
     ? chrome.runtime.sendMessage({ type: "static_get_details", tabId: tab.id }).catch(() => null)
     : Promise.resolve(null);

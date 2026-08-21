@@ -8,6 +8,19 @@ const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const OTHER_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const probedUrl = (id = PROBED_ID, path = "/manifest.json") => `chrome-extension://${id}${path}`;
 
+const activeHttpTabId = (serviceWorker) =>
+  serviceWorker.evaluate(async () => {
+    const tabs = await chrome.tabs.query({});
+    const httpTab = tabs.find((tab) => /^https?:/.test(tab.url || ""));
+    return httpTab && httpTab.id;
+  });
+
+const openPopupForTab = async (extension, tabId) => {
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html?tabId=${tabId}`);
+  return popupPage;
+};
+
 async function startHeaderFixtureServer({ body = "ok", headers = {}, status = 200 } = {}) {
   const server = http.createServer((req, res) => {
     res.writeHead(status, {
@@ -231,9 +244,10 @@ test("popup shows a plain-language recovery card on a regular site", async ({
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
   await page.bringToFront();
+  const tabId = await activeHttpTabId(extension.serviceWorker);
+  expect(typeof tabId).toBe("number");
 
-  const popupPage = await extension.context.newPage();
-  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  const popupPage = await openPopupForTab(extension, tabId);
 
   await expect(popupPage.locator("#recovery")).toBeVisible();
   await expect(popupPage.locator("#recovery")).toHaveAttribute("data-state", "help");
@@ -267,9 +281,10 @@ test("popup recovery card upgrades when a compatibility warning is stored", asyn
     server.origin
   );
   await page.bringToFront();
+  const tabId = await activeHttpTabId(extension.serviceWorker);
+  expect(typeof tabId).toBe("number");
 
-  const popupPage = await extension.context.newPage();
-  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  const popupPage = await openPopupForTab(extension, tabId);
 
   await expect(popupPage.locator("#recovery")).toHaveAttribute("data-state", "warning");
   await expect(popupPage.locator("#recovery-title")).toHaveText(
@@ -286,9 +301,10 @@ test("popup recovery card offers resume when the site is paused", async ({ exten
     server.origin
   );
   await page.bringToFront();
+  const tabId = await activeHttpTabId(extension.serviceWorker);
+  expect(typeof tabId).toBe("number");
 
-  const popupPage = await extension.context.newPage();
-  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+  const popupPage = await openPopupForTab(extension, tabId);
 
   await expect(popupPage.locator("#recovery")).toHaveAttribute("data-state", "paused");
   await expect(popupPage.locator("#recovery-title")).toHaveText("Static is paused here");
@@ -305,12 +321,7 @@ test("pausing a site installs a DNR allow rule for that initiator and resume rem
   const hostname = "shop.example";
 
   await extension.serviceWorker.evaluate(
-    async (targetOrigin) =>
-      chrome.runtime.sendMessage({
-        disabled: true,
-        origin: targetOrigin,
-        type: "static_set_site_disabled",
-      }),
+    (targetOrigin) => chrome.storage.local.set({ disabled_origins: { [targetOrigin]: true } }),
     origin
   );
 
@@ -333,15 +344,7 @@ test("pausing a site installs a DNR allow rule for that initiator and resume rem
       ])
     );
 
-  await extension.serviceWorker.evaluate(
-    async (targetOrigin) =>
-      chrome.runtime.sendMessage({
-        disabled: false,
-        origin: targetOrigin,
-        type: "static_set_site_disabled",
-      }),
-    origin
-  );
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ disabled_origins: {} }));
 
   await expect
     .poll(async () => {
