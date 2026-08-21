@@ -103,12 +103,32 @@ globalThis.__static_sw_utils__ = (() => {
     }
   };
 
+  const maxPathsPerIdForCaps = () =>
+    (globalThis.__static_config__ && globalThis.__static_config__.maxPathsPerId) || 8;
+
+  const enforceIdPathsCaps = (entry, retainedIds) => {
+    if (!entry.idPaths || typeof entry.idPaths !== "object") {
+      delete entry.idPaths;
+      return;
+    }
+    const maxPaths = maxPathsPerIdForCaps();
+    const next = {};
+    for (const [id, paths] of Object.entries(entry.idPaths)) {
+      if (!retainedIds.has(id) || !paths || typeof paths !== "object") continue;
+      const trimmed = trimCountMap(paths, maxPaths);
+      if (Object.keys(trimmed).length) next[id] = trimmed;
+    }
+    if (Object.keys(next).length) entry.idPaths = next;
+    else delete entry.idPaths;
+  };
+
   const enforceCaps = (probeLog) => {
     const priorityIds = knownPersonaIdsForCaps();
     for (const origin of Object.keys(probeLog)) {
       const entry = probeLog[origin];
       entry.idCounts ||= {};
       entry.idCounts = trimCountMap(entry.idCounts, 2000, priorityIds);
+      enforceIdPathsCaps(entry, new Set(Object.keys(entry.idCounts)));
       enforcePlaybookCaps(entry, priorityIds);
     }
     const origins = Object.keys(probeLog);
@@ -340,5 +360,6 @@ globalThis.__static_sw_utils__ = (() => {
     playbookDriftForEntry,
     sumCounts,
     trimCountMap,
+    enforceIdPathsCaps,
   };
 })();

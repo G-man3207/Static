@@ -1,6 +1,6 @@
 # Static — Privacy Policy
 
-**Last updated:** July 5, 2026
+**Last updated:** August 21, 2026
 
 Static is a Chrome and Firefox extension that blocks websites from fingerprinting which browser extensions you have installed, and blocks known client-side fingerprinting / anti-bot vendor endpoints at the network layer.
 
@@ -19,7 +19,7 @@ This policy describes exactly what information Static processes on your machine,
 
 Static stores this local state in your browser profile and never writes to `chrome.storage.sync`, so nothing is synced off your device through Chrome's sync service:
 
-1. **Probe log** — a per-origin map of extension IDs that each site has probed you for, with counts. Capped at 100 origins × 2,000 IDs per origin; older entries are evicted beyond that cap.
+1. **Probe log** — a per-origin map of extension IDs that each site has probed you for, with counts, plus a capped map of the extension-resource pathnames those probes used (for Noise-mode learned-path decoys). Pathnames are extension WAR paths such as `/inpage.js`, never website URLs. Capped at 100 origins × 2,000 IDs per origin × 8 paths per ID; older entries are evicted beyond that cap.
 2. **Since-install probe counter** — the total number of extension-enumeration probes blocked since you installed Static.
 3. **User secret** — a random 256-bit value generated once, at install time, via `crypto.getRandomValues`. Used only to seed the per-origin decoy personas for Noise mode so that different Static users produce different decoys on the same site. Never displayed anywhere in the UI, never transmitted.
 4. **Preferences** — whether Noise mode is enabled, which Replay poisoning mode is selected (`off`, `mask`, `noise`, or `chaos`), and which DNR rulesets (fingerprinting vendors, CAPTCHA vendors) you have turned on. Noise and Replay poisoning preferences are stored in `chrome.storage.local`; DNR ruleset choices are persisted locally by Chrome's extension ruleset API.
@@ -33,7 +33,7 @@ You can erase the probe log, playbook summaries, replay detection log, adaptive 
 ## What Static does NOT store or access
 
 - Page content, form inputs, passwords, cookies, or local storage of any website.
-- Full URLs or your browsing history. The probe log aggregates at the **origin** level (e.g. `https://example.com`), never the URL / path level.
+- Full website URLs or your browsing history. The probe log aggregates at the **origin** level (e.g. `https://example.com`). Extension-resource pathnames stored for Noise learning are WAR paths inside `chrome-extension://` IDs (for example `/inpage.js`), never the page URL you visited.
 - Your IP address, device fingerprint, or any identifier tied to you personally.
 - Any personally identifiable information.
 
@@ -60,7 +60,7 @@ Static's only network-related actions are **blocking** narrow fingerprinting or 
 The log viewer offers two export options and one clipboard copy option. Downloads are saved to your computer via the browser's native download mechanism; clipboard copies stay local until you paste them somewhere. Nothing is transmitted by Static.
 
 - **Export raw log** — full fidelity, including per-origin `lastUpdated` timestamps, exact per-ID probe counts, weekly playbook summaries, replay detection summaries, adaptive behavior summaries, and the since-install cumulative counter. Intended for private archival. If you choose to share this file, be aware that timestamps plus exact counts can be correlated with similar dumps from other users to partially re-identify individual browsing patterns.
-- **Export for research** — anonymized. Replaces the precise `exportedAt` timestamp with a coarse `exportMonth` (`"YYYY-MM"`), drops per-origin `lastUpdated` timestamps, drops the since-install cumulative counter, coarsens per-ID counts into log-scale buckets (`2-5`, `6-20`, `21-100`, `101-1000`, `1000+`), drops IDs probed fewer than 2 times (canary filter), drops origins with fewer than 3 surviving IDs (low-signal noise filter), and replaces origin/extension-ID labels with per-export salted hashes. The salt is not retained in the file, so labels are not stable across exports.
+- **Export for research** — anonymized. Replaces the precise `exportedAt` timestamp with a coarse `exportMonth` (`"YYYY-MM"`), drops per-origin `lastUpdated` timestamps, drops the since-install cumulative counter, coarsens per-ID counts into log-scale buckets (`2-5`, `6-20`, `21-100`, `101-1000`, `1000+`), drops IDs probed fewer than 2 times (canary filter), drops origins with fewer than 3 surviving IDs (low-signal noise filter), replaces origin/extension-ID labels with per-export salted hashes, and omits learned WAR pathnames. The salt is not retained in the file, so labels are not stable across exports.
 - **Copy issue report** — anonymized and bounded for GitHub issues. Replaces site origins, extension IDs, and replay-signal labels with per-copy salted hashes, keeps coarse probe vectors/path kinds and recent diagnostic event types, omits local timestamps, omits full site URLs, and does not retain the salt.
 
 Static does not retain a copy of any export or copied issue report. Once the file is downloaded or text is copied, only you have it.

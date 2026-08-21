@@ -696,6 +696,12 @@ test("fingerprint DNR lists cover current official client-side collection hosts"
     "||sift.com^",
     "||accertify.com^",
     "||group-ib.com^",
+    "||lexisnexisrisk.com^",
+    "||telemetry.stytch.com^",
+    "||group-ib.ru^",
+    "||ipfingerprint.com^",
+    "||socure.io^",
+    "||nethone.com^",
   ]) {
     expect(fingerprintFilters.has(filter), `fingerprint_vendors missing ${filter}`).toBe(true);
   }
@@ -755,6 +761,13 @@ test("conflictSlots cover key extension categories without cross-slot ID duplica
   expect(uniqueIds.size, "no extension ID should appear in multiple slots").toBe(allIds.length);
 });
 
+test("conflictSlots include KeePassXC-Browser in the password_manager slot", () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  const slots = context.__static_config__.conflictSlots;
+  expect(slots.password_manager).toContain("oboonakemofpalcgghocfoadofidjkkk");
+});
+
 test("conflictSlots include Proton Pass in the password_manager slot", () => {
   const context = vm.createContext({});
   vm.runInContext(readText("lists.js"), context);
@@ -795,6 +808,24 @@ test("conflictSlots include Honey in the shopping slot", () => {
   vm.runInContext(readText("lists.js"), context);
   const slots = context.__static_config__.conflictSlots;
   expect(slots.shopping).toContain("bmnlcjabgnpnenekpadlanbbkooimhnj");
+});
+
+test("every conflictSlots ID has an ID-seeded Noise manifest name", () => {
+  const context = vm.createContext({});
+  vm.runInContext(readText("lists.js"), context);
+  const slots = context.__static_config__.conflictSlots;
+  const source = readText("block.js");
+  const names = {};
+  const block = source.match(/KNOWN_MANIFEST_NAMES = \{([\s\S]*?)\};/);
+  expect(block, "KNOWN_MANIFEST_NAMES must exist in block.js").toBeTruthy();
+  for (const match of block[1].matchAll(/([a-p]{32}):\s*"([^"]+)"/g)) {
+    names[match[1]] = match[2];
+  }
+  for (const [slot, ids] of Object.entries(slots)) {
+    for (const id of ids) {
+      expect(names[id], `${slot} ID ${id} needs a KNOWN_MANIFEST_NAMES entry`).toBeTruthy();
+    }
+  }
 });
 
 // =========================================================================
@@ -1073,4 +1104,97 @@ test("log_diagnostics noiseReadinessFor handles mixed Chrome and UUID ID pools",
   expect(result.eligibleIds).toContain(chromeKnown);
   expect(result.eligibleIds).toContain(chromeUnknown);
   expect(result.eligibleIds).toHaveLength(3);
+});
+
+test("path helpers agree between lists.js and block_utils.js", () => {
+  const listsContext = vm.createContext({ URL });
+  vm.runInContext(readText("lists.js"), listsContext);
+  const helpers = listsContext.__static_config__.helpers;
+  const { U } = loadBlockUtils();
+  const samples = [
+    "/inpage.js",
+    "/src/css/content.css",
+    "/phishing.html",
+    "/rules.json",
+    "/icon.webp",
+    "/../secret.js",
+    "//inpage.js",
+    "/in page.js",
+    "/inpage.js?cache=1",
+    "INPAGE.JS",
+  ];
+  for (const sample of samples) {
+    expect(U.sanitizeExtensionPath(sample), sample).toBe(helpers.sanitizeExtensionPath(sample));
+    expect(U.learnedDecoyKindForPath(sample), sample).toBe(helpers.learnedDecoyKindForPath(sample));
+  }
+  expect(helpers.sanitizeExtensionPath("/inpage.js?x=1#y")).toBe("/inpage.js");
+  expect(helpers.learnedDecoyKindForPath("/inpage.js")).toBe("script");
+  expect(helpers.learnedDecoyKindForPath("/icon.webp")).toBe(null);
+  expect(helpers.eligiblePathsForId({ "/inpage.js": 2, "/canary.webp": 9, "/x.js": 1 })).toEqual([
+    "/inpage.js",
+  ]);
+});
+
+test("service worker path caps drop canary floods and evicted IDs", () => {
+  const { enforceCaps } = loadServiceWorkerUtils();
+  const knownId = "nngceckbapebfimnlniiiahkandclblb";
+  const unknownId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const tooManyPaths = {};
+  for (let i = 0; i < 12; i++) tooManyPaths[`/file-${i}.js`] = i + 1;
+  const highCardinalityIds = {};
+  for (let index = 0; Object.keys(highCardinalityIds).length < 2000; index++) {
+    const id = extensionIdFor(index);
+    if (id !== knownId) highCardinalityIds[id] = 1000 + index;
+  }
+
+  const probeLog = {
+    "https://path-caps.test": {
+      idCounts: {
+        ...highCardinalityIds,
+        [knownId]: 2,
+      },
+      idPaths: {
+        [knownId]: tooManyPaths,
+        [unknownId]: { "/gone.js": 9 },
+      },
+      lastUpdated: Date.now(),
+    },
+  };
+
+  enforceCaps(probeLog);
+  const retained = probeLog["https://path-caps.test"];
+  expect(Object.keys(retained.idCounts)).toHaveLength(2000);
+  expect(retained.idCounts[knownId]).toBe(2);
+  expect(retained.idPaths[unknownId]).toBeUndefined();
+  expect(Object.keys(retained.idPaths[knownId])).toHaveLength(8);
+  expect(retained.idPaths[knownId]["/file-11.js"]).toBe(12);
+  expect(retained.idPaths[knownId]["/file-0.js"]).toBeUndefined();
+});
+
+test("bridge flush includes sanitized learned WAR paths", () => {
+  const harness = loadBridgeHarness();
+  const port = harness.portsByEvent.__perf_noise_bi__;
+  expect(port).toBeTruthy();
+  const knownId = "nngceckbapebfimnlniiiahkandclblb";
+  port.postMessage({
+    type: "probe_blocked",
+    url: `chrome-extension://${knownId}/inpage.js?secret=1`,
+    where: "fetch",
+  });
+  port.postMessage({
+    type: "probe_blocked",
+    url: `chrome-extension://${knownId}/inpage.js#frag`,
+    where: "fetch",
+  });
+  port.postMessage({
+    type: "probe_blocked",
+    url: `chrome-extension://${knownId}/../escape.js`,
+    where: "fetch",
+  });
+  harness.dispatchWindow("pagehide");
+  harness.runTimers();
+  const message = harness.messages.find((msg) => msg.type === "static_probe_blocked");
+  expect(message.deltaIdPaths[knownId]["/inpage.js"]).toBe(2);
+  expect(message.deltaIdPaths[knownId]["/inpage.js?secret=1"]).toBeUndefined();
+  expect(JSON.stringify(message.deltaIdPaths)).not.toContain("..");
 });

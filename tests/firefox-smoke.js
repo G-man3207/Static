@@ -261,6 +261,10 @@ function createFirefoxDriver() {
 
   const options = new firefox.Options();
   options.setBinary(firefoxBinary);
+  // Firefox 153+ restricts WebDriver navigation to http(s)/file/blob/about:blank
+  // unless system access is enabled. about:debugging and moz-extension:// popup
+  // checks need this flag (see Mozilla bug 1579790).
+  options.addArguments("--remote-allow-system-access");
   // Extensions are unreliable in Firefox headless — CI wraps with xvfb-run.
   options.setPreference("extensions.autoDisableScopes", 0);
   options.setPreference("extensions.enabledScopes", 15);

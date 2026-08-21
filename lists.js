@@ -32,6 +32,11 @@
       /^data-nordpass(-|$)/i,
       /^data-bitwarden(-|$)/i,
       /^data-protonpass(-|$)/i,
+      /^data-keepassxc(-|$)/i,
+      /^data-darkreader(-|$)/i,
+      /^data-bw(-|$)/i,
+      /^data-lt(-|$)/i,
+      /^data-languagetool(-|$)/i,
       /^__lpform_/i,
     ],
 
@@ -44,6 +49,9 @@
       /^honey-/i,
       /^onepassword-/i,
       /^protonpass-/i,
+      /^keepassxc-/i,
+      /^darkreader-/i,
+      /^bitwarden-/i,
     ],
 
     // CSS class names to strip (element stays; just the class).
@@ -56,6 +64,9 @@
       /^honey($|-)/i,
       /^onepassword($|-)/i,
       /^protonpass($|-)/i,
+      /^keepassxc($|-)/i,
+      /^darkreader($|-)/i,
+      /^bitwarden($|-)/i,
     ],
 
     // Known-extension ID groups used by Noise-mode persona generation.
@@ -74,6 +85,7 @@
         "fooolghllnmhmmndgjiamiiodkpenpbb", // RoboForm (legacy)
         "bmikpgodpkclnkgmnpphehdgcimmided", // NordPass
         "cjnlpnbkjbnmdieljmighbdoljmgfibk", // Proton Pass
+        "oboonakemofpalcgghocfoadofidjkkk", // KeePassXC-Browser
       ],
       userscript_manager: [
         "dhdgffkkebhmkfjojejmpbldmpobfkfo", // Tampermonkey
@@ -144,6 +156,17 @@
 
     // Weeks before a persona rotates.
     personaRotationWeeks: 1,
+
+    // A resource path must be seen this many times for a persona ID before
+    // Noise will answer that exact path. Stops one-shot path canaries on an
+    // already-eligible ID (LinkedIn-style `{id, file}` probes are repeated
+    // across visits, so real WAR files pass; random `*.png` names do not).
+    personaMinPathCount: 2,
+
+    // Cap learned WAR paths stored per extension ID. LinkedIn-style playbooks
+    // use one file per ID; extra slots absorb icon + script variants without
+    // letting a canary flood unbounded path maps.
+    maxPathsPerId: 8,
   };
 
   // ========================================================================
@@ -199,6 +222,58 @@
       } catch {
         return "";
       }
+    },
+
+    // Local-only WAR pathname for Noise learning. Lowercased, query-stripped,
+    // charset-limited, and length-capped so probe storage never keeps website
+    // URLs or unbounded canary strings.
+    sanitizeExtensionPath(path) {
+      if (typeof path !== "string" || !path) return "";
+      let value = path.split("?")[0].split("#")[0].trim().toLowerCase();
+      if (!value) return "";
+      if (!value.startsWith("/")) value = `/${value}`;
+      if (value.includes("\\") || value.includes("://") || value.includes("//")) return "";
+      if (value.includes("/../") || value.endsWith("/..") || value.includes("/./")) return "";
+      if (value.length > 96) value = value.slice(0, 96);
+      if (!/^\/[a-z0-9._\-/]+$/.test(value)) return "";
+      return value;
+    },
+
+    extensionPathnameFor(url) {
+      return this.sanitizeExtensionPath(this.pathnameFor(url) || this.extensionPathFor(url));
+    },
+
+    // Suffix-based decoy kind for learned WAR paths that miss the conservative
+    // allowlist. Formats Static cannot synthesize with matching bytes stay
+    // fail-closed (webp/ico/bmp and unknown suffixes).
+    learnedDecoyKindForPath(pathname) {
+      const path = this.sanitizeExtensionPath(pathname);
+      if (!path) return null;
+      if (path.endsWith("/manifest.json") || path === "/manifest.json") return "manifest";
+      if (/\.(png|gif|jpe?g|svg)$/.test(path)) return "image";
+      if (path.endsWith(".js") || path.endsWith(".mjs")) return "script";
+      if (path.endsWith(".html") || path.endsWith(".htm")) return "html";
+      if (path.endsWith(".css")) return "style";
+      if (path.endsWith(".json")) return "json";
+      if (path.endsWith(".txt") || path.endsWith(".md")) return "text";
+      if (path.endsWith(".xml")) return "xml";
+      return null;
+    },
+
+    eligiblePathsForId(pathCounts, minCount = 2) {
+      const eligible = [];
+      for (const [path, count] of Object.entries(pathCounts || {})) {
+        const safePath = this.sanitizeExtensionPath(path);
+        if (
+          safePath &&
+          typeof count === "number" &&
+          count >= minCount &&
+          this.learnedDecoyKindForPath(safePath)
+        ) {
+          eligible.push(safePath);
+        }
+      }
+      return eligible.sort();
     },
 
     // Set of every known extension ID across all conflictSlots, lowercased.
