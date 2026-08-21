@@ -545,11 +545,56 @@ const sanitizeExtensionIdCounts = (counts) => {
   return trimCountMap(sanitized, MAX_CAPTURED_IDS, knownPersonaIds());
 };
 
+const sanitizeExtensionIdPaths = (idPaths) => {
+  const maxPaths = CFG.maxPathsPerId || 8;
+  const out = {};
+  const sanitizePath = SW_HELPERS.sanitizeExtensionPath
+    ? (path) => SW_HELPERS.sanitizeExtensionPath(path)
+    : () => "";
+  for (const [id, paths] of Object.entries(idPaths || {})) {
+    const safeId = id.toLowerCase();
+    if (!isValidExtensionId(safeId) || !paths || typeof paths !== "object") continue;
+    const sanitized = {};
+    for (const [path, count] of Object.entries(paths)) {
+      const safePath = sanitizePath(path);
+      if (!safePath || typeof count !== "number" || count <= 0) continue;
+      sanitized[safePath] = (sanitized[safePath] || 0) + count;
+    }
+    if (Object.keys(sanitized).length) out[safeId] = trimCountMap(sanitized, maxPaths);
+  }
+  return out;
+};
+
+const mergeIdPaths = (target, source) => {
+  let changed = false;
+  const maxPaths = CFG.maxPathsPerId || 8;
+  for (const [id, paths] of Object.entries(source || {})) {
+    target[id] ||= {};
+    if (mergeCounts(target[id], paths)) changed = true;
+    target[id] = trimCountMap(target[id], maxPaths);
+  }
+  return changed;
+};
+
+const personaPathsFor = (entry, ids) => {
+  const minCount = CFG.personaMinPathCount || 2;
+  const out = {};
+  if (!entry || !entry.idPaths) return out;
+  for (const id of ids) {
+    const eligible = SW_HELPERS.eligiblePathsForId
+      ? SW_HELPERS.eligiblePathsForId(entry.idPaths[id], minCount)
+      : [];
+    if (eligible.length) out[id] = eligible;
+  }
+  return out;
+};
+
 const normalizedProbeBatch = (batch) => {
   const deltaVectorCounts = batch && batch.deltaVectorCounts ? batch.deltaVectorCounts : {};
   return {
     deltaIdCounts:
       batch && batch.deltaIdCounts ? sanitizeExtensionIdCounts(batch.deltaIdCounts) : {},
+    deltaIdPaths: batch && batch.deltaIdPaths ? sanitizeExtensionIdPaths(batch.deltaIdPaths) : {},
     deltaPathKindCounts: batch && batch.deltaPathKindCounts ? batch.deltaPathKindCounts : {},
     deltaTotal:
       batch && typeof batch.delta === "number" && batch.delta > 0
@@ -579,11 +624,13 @@ const recordProbes = async (origin, batch) => {
   const { probe_log = {} } = await chrome.storage.local.get({ probe_log: {} });
   const entry = probe_log[origin] || { idCounts: {}, lastUpdated: 0 };
   entry.idCounts ||= {};
+  entry.idPaths ||= {};
   const now = Date.now();
   const normalized = normalizedProbeBatch(batch);
   const countChanged = mergeCounts(entry.idCounts, normalized.deltaIdCounts);
+  const pathChanged = mergeIdPaths(entry.idPaths, normalized.deltaIdPaths);
   const weekChanged = mergeProbeWeek(entry, normalized, now);
-  const changed = countChanged || weekChanged;
+  const changed = countChanged || pathChanged || weekChanged;
   if (!changed) return;
   entry.lastUpdated = now;
   probe_log[origin] = entry;
@@ -1050,6 +1097,7 @@ const handleProbeBlocked = (msg, sender) => {
         delta,
         deltaIdCounts: msg.deltaIdCounts || {},
         deltaPathKindCounts: msg.deltaPathKindCounts || {},
+        deltaIdPaths: msg.deltaIdPaths || {},
         deltaVectorCounts: msg.deltaVectorCounts || {},
       })
     );
@@ -1256,6 +1304,7 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
         fingerprintMode,
         fingerprintPersona,
         ids: [],
+        paths: {},
         noiseEnabled: noise_enabled,
         origin,
         replayMode: replay_mode,
@@ -1263,12 +1312,14 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
       return;
     }
     const ids = await personaFor(origin);
+    const { probe_log = {} } = await chrome.storage.local.get({ probe_log: {} });
     sendResponse({
       diagnosticsMode: diagnostics_mode,
       disabled,
       fingerprintMode,
       fingerprintPersona,
       ids,
+      paths: personaPathsFor(probe_log[origin], ids),
       noiseEnabled: true,
       origin,
       replayMode: replay_mode,

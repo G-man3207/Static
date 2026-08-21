@@ -199,6 +199,32 @@
 
   U.matchesPathPattern = (pathname, patterns) => patterns.some((pattern) => pattern.test(pathname));
 
+  U.sanitizeExtensionPath = (path) => {
+    if (typeof path !== "string" || !path) return "";
+    let value = path.split("?")[0].split("#")[0].trim().toLowerCase();
+    if (!value) return "";
+    if (!value.startsWith("/")) value = `/${value}`;
+    if (value.includes("\\") || value.includes("://") || value.includes("//")) return "";
+    if (value.includes("/../") || value.endsWith("/..") || value.includes("/./")) return "";
+    if (value.length > 96) value = value.slice(0, 96);
+    if (!/^\/[a-z0-9._\-/]+$/.test(value)) return "";
+    return value;
+  };
+
+  U.learnedDecoyKindForPath = (pathname) => {
+    const path = U.sanitizeExtensionPath(pathname);
+    if (!path) return null;
+    if (path.endsWith("/manifest.json") || path === "/manifest.json") return "manifest";
+    if (/\.(png|gif|jpe?g|svg)$/.test(path)) return "image";
+    if (path.endsWith(".js") || path.endsWith(".mjs")) return "script";
+    if (path.endsWith(".html") || path.endsWith(".htm")) return "html";
+    if (path.endsWith(".css")) return "style";
+    if (path.endsWith(".json")) return "json";
+    if (path.endsWith(".txt") || path.endsWith(".md")) return "text";
+    if (path.endsWith(".xml")) return "xml";
+    return null;
+  };
+
   // ======================================================================
   // DOM / attribute utilities
   // ======================================================================

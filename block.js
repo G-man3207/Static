@@ -7,6 +7,7 @@
   const COMPAT_SIGNAL_THROTTLE_MS = 15000;
   const blockedFetchPromises = new WeakMap();
   let persona = new Set();
+  let personaPaths = new Map();
   let noiseEnabled = false;
   let disabled = false;
   let lastCompatSignalAt = 0;
@@ -15,6 +16,21 @@
     if (!data || data.type !== "config_update") return;
     if (Array.isArray(data.persona)) {
       persona = new Set(data.persona.filter((id) => typeof id === "string"));
+    }
+    if (data.personaPaths && typeof data.personaPaths === "object") {
+      const next = new Map();
+      for (const [id, paths] of Object.entries(data.personaPaths)) {
+        if (typeof id !== "string" || !Array.isArray(paths)) continue;
+        next.set(
+          id.toLowerCase(),
+          new Set(
+            paths.filter((path) => typeof path === "string").map((path) => path.toLowerCase())
+          )
+        );
+      }
+      personaPaths = next;
+    } else if (Array.isArray(data.persona)) {
+      personaPaths = new Map();
     }
     if (typeof data.noiseEnabled === "boolean") {
       noiseEnabled = data.noiseEnabled;
@@ -99,6 +115,7 @@
     fooolghllnmhmmndgjiamiiodkpenpbb: "RoboForm Password Manager",
     bmikpgodpkclnkgmnpphehdgcimmided: "NordPass® Password Manager & Digital Vault",
     cjnlpnbkjbnmdieljmighbdoljmgfibk: "Proton Pass: Free Password Manager",
+    oboonakemofpalcgghocfoadofidjkkk: "KeePassXC-Browser",
     dhdgffkkebhmkfjojejmpbldmpobfkfo: "Tampermonkey",
     clngdbkpkpeebahjckkjfobafhncgmne: "Stylus",
     bkdgflcldnnnapblkhphbgpggdiikppg: "DuckDuckGo Privacy Essentials",
@@ -292,25 +309,38 @@
 
   const matchesPathPattern = U.matchesPathPattern;
 
+  const isLearnedPersonaPath = (url) => {
+    const id = U.extractExtId(url);
+    if (!id) return false;
+    const learned = personaPaths.get(id);
+    if (!learned) return false;
+    const pathname = U.sanitizeExtensionPath(pathForDecoy(url));
+    return pathname ? learned.has(pathname) : false;
+  };
+
+  const allowlistedOrLearnedKind = (url, pathname, patterns, kind) => {
+    if (matchesPathPattern(pathname, patterns) || isLearnedPersonaPath(url)) return kind;
+    return null;
+  };
+
   const decoyKindForPath = (url) => {
     const pathname = pathForDecoy(url);
     if (!pathname) return null;
     if (pathname.endsWith("/manifest.json")) return "manifest";
     if (/\.(png|jpe?g|gif|webp|ico|bmp|svg)$/i.test(pathname)) {
-      if (!matchesPathPattern(pathname, IMAGE_DECOY_PATHS)) return null;
-      // Only claim image kinds we can answer with matching magic bytes.
-      return imageDecoyForPath(pathname) ? "image" : null;
+      const kind = allowlistedOrLearnedKind(url, pathname, IMAGE_DECOY_PATHS, "image");
+      return kind && imageDecoyForPath(pathname) ? "image" : null;
     }
     if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) {
-      return matchesPathPattern(pathname, SCRIPT_DECOY_PATHS) ? "script" : null;
+      return allowlistedOrLearnedKind(url, pathname, SCRIPT_DECOY_PATHS, "script");
     }
     if (pathname.endsWith(".html") || pathname.endsWith(".htm")) {
-      return matchesPathPattern(pathname, HTML_DECOY_PATHS) ? "html" : null;
+      return allowlistedOrLearnedKind(url, pathname, HTML_DECOY_PATHS, "html");
     }
     if (pathname.endsWith(".css")) {
-      return matchesPathPattern(pathname, STYLE_DECOY_PATHS) ? "style" : null;
+      return allowlistedOrLearnedKind(url, pathname, STYLE_DECOY_PATHS, "style");
     }
-    return null;
+    return isLearnedPersonaPath(url) ? U.learnedDecoyKindForPath(pathname) : null;
   };
 
   const buildDecoyBody = (url) => {
@@ -333,6 +363,16 @@
       };
     }
     if (kind === "style") return { body: "", contentType: "text/css; charset=utf-8" };
+    if (kind === "json") {
+      return { body: "{}", contentType: "application/json; charset=utf-8" };
+    }
+    if (kind === "text") return { body: "", contentType: "text/plain; charset=utf-8" };
+    if (kind === "xml") {
+      return {
+        body: '<?xml version="1.0" encoding="UTF-8"?><root/>',
+        contentType: "application/xml; charset=utf-8",
+      };
+    }
     return null;
   };
 

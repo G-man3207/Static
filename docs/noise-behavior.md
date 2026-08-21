@@ -15,10 +15,18 @@ same generic `"Browser Extension"` string. Image fetch decoys only answer format
 with matching magic bytes and `Content-Type` (PNG, GIF, JPEG, SVG); other image suffixes stay
 fail-closed.
 
+Learned WAR paths are first-class. LinkedIn-style AED probes `{id, file}` pairs against real
+web-accessible resources (`inpage.js`, `src/css/*.css`, `phishing.html`), not a generic
+`manifest.json`. After a path is seen at least twice for an eligible persona ID, Noise answers that
+exact path on later visits. Unseen path canaries stay blocked even for persona IDs. Learned paths
+are stored locally, query-stripped, charset-limited, and capped at 8 paths per ID. Research exports
+omit them.
+
 | Probe vector                                           | Eligible Noise persona ID                                                                                                                                    | Non-persona or invalid ID       |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- |
 | `fetch(.../manifest.json)`                             | Allowlisted static `GET` / `HEAD` paths receive path-matched decoys                                                                                          | Native-like `TypeError` failure |
 | `XMLHttpRequest` to `manifest.json`                    | Allowlisted static `GET` / `HEAD` paths receive path-matched decoys                                                                                          | Native-like network error       |
+| `fetch` / XHR to a learned WAR path                    | After ≥2 probes of that exact path for the persona ID, path-matched decoy (same body rules as allowlisted kinds)                                             | Native-like failure             |
 | `Image.src` / `img.setAttribute("src")`                | Loads a 1x1 transparent PNG; page-visible getters return the original extension URL                                                                          | Blocked                         |
 | `Image.srcset` / `source.srcset`                       | Loads a 1x1 transparent PNG candidate; page-visible getters return the original extension URL                                                                | Blocked                         |
 | `input.src` for image inputs                           | Loads a 1x1 transparent PNG; page-visible getters return the original extension URL                                                                          | Blocked                         |
@@ -54,9 +62,10 @@ cheap way to distinguish Noise from a browser-managed resource load.
 
 Suspicious paths stay blocked too, even when the suffix looks decoyable. Returning generic `200 OK`
 bodies for arbitrary `*.png`, `*.js`, `*.css`, or `*.html` canaries would let a probing script seed
-random path names and then distinguish Static from a normal extension resource lookup. Noise only
-answers a conservative allowlist of plausible extension resource paths such as `manifest.json`,
-common icon names, and common page / script / stylesheet entrypoints.
+random path names and then distinguish Static from a normal extension resource lookup. Noise answers
+a conservative allowlist of plausible extension resource paths **or** a path that origin has already
+probed at least twice for that persona ID. The learned-path set is how Static poisons LinkedIn-style
+AED dictionaries without answering first-visit canaries.
 
 ## Test Requirements
 
