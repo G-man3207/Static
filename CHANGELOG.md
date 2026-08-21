@@ -25,6 +25,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Pre-commit (husky) now runs format + lint only; full `test:ci` and Firefox package builds (system `zip`) stay in GitHub Actions (`validate.yml`).
 - `rules/META.json` fingerprint_vendors bumped to 1.8.0 (`last_verified` 2026-08-21).
 - `docs/noise-behavior.md` documents the ID-seeded manifest contract, image magic-byte fail-closed policy, and learned WAR-path Noise contract.
+- Firefox smoke CI starts the browser with `--remote-allow-system-access` so WebDriver can still open `about:debugging` and `moz-extension://` pages on Firefox 153+.
 
 ## [2.4.0] — 2026-07-09
 
