@@ -1,6 +1,6 @@
 {
   "name": "static",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Chrome/Firefox MV3 extension that blocks extension-enumeration probes and extension-derived fingerprinting.",
   "private": true,
   "scripts": {
