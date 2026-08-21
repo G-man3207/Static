@@ -35,34 +35,60 @@ const JPEG_MAGIC = [0xff, 0xd8, 0xff];
 
 const magicPrefix = (bytes, n) => Array.from(bytes.slice(0, n));
 
+const waitForDecoy = async (page, url) => {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async (resourceUrl) => {
+          try {
+            const response = await fetch(resourceUrl);
+            return !!(response && response.ok);
+          } catch {
+            return false;
+          }
+        }, url),
+      { timeout: 15_000 }
+    )
+    .toBe(true);
+};
+
+const openSeededPage = async (extension, server, ids, options) => {
+  await seedPersona(extension, server.origin, ids, options);
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await waitForDecoy(page, probedUrl(ids[0]));
+  return page;
+};
+
 test("Noise manifests are ID-seeded and stable across fetch and XHR", async ({
   extension,
   server,
 }) => {
-  const page = await extension.context.newPage();
-  await seedPersona(extension, server.origin, [BITWARDEN, UBLOCK, UNKNOWN_A, UNKNOWN_B], {
+  const page = await openSeededPage(extension, server, [BITWARDEN, UBLOCK, UNKNOWN_A, UNKNOWN_B], {
     unknownIds: [UNKNOWN_A, UNKNOWN_B],
   });
-  await page.goto(server.url("/blank.html"));
-  await page.waitForTimeout(300);
 
   const result = await page.evaluate(
     async (urls) => {
       const loadManifest = async (url) => {
-        const response = await fetch(url);
-        const text = await response.text();
-        const xhrBody = await new Promise((resolve) => {
-          const xhr = new XMLHttpRequest();
-          xhr.addEventListener("loadend", () => resolve(xhr.responseText));
-          xhr.open("GET", url);
-          xhr.send();
-        });
-        return {
-          fetch: JSON.parse(text),
-          xhr: JSON.parse(xhrBody),
-          status: response.status,
-          ok: response.ok,
-        };
+        try {
+          const response = await fetch(url);
+          const text = await response.text();
+          const xhrBody = await new Promise((resolve) => {
+            const xhr = new XMLHttpRequest();
+            xhr.addEventListener("loadend", () => resolve(xhr.responseText));
+            xhr.open("GET", url);
+            xhr.send();
+          });
+          return {
+            fetch: JSON.parse(text),
+            xhr: JSON.parse(xhrBody),
+            status: response.status,
+            ok: response.ok,
+          };
+        } catch {
+          return { fetch: null, xhr: null, status: 0, ok: false };
+        }
       };
       return {
         bitwarden: await loadManifest(urls.bitwarden),
@@ -116,10 +142,7 @@ test("Noise image fetch decoys match path extension magic bytes and Content-Type
   extension,
   server,
 }) => {
-  const page = await extension.context.newPage();
-  await seedPersona(extension, server.origin, [BITWARDEN]);
-  await page.goto(server.url("/blank.html"));
-  await page.waitForTimeout(300);
+  const page = await openSeededPage(extension, server, [BITWARDEN]);
 
   const result = await page.evaluate(
     async (urls) => {
@@ -173,10 +196,7 @@ test("Noise does not reuse one manifest body for every persona ID", async ({
   extension,
   server,
 }) => {
-  const page = await extension.context.newPage();
-  await seedPersona(extension, server.origin, [BITWARDEN, UBLOCK]);
-  await page.goto(server.url("/blank.html"));
-  await page.waitForTimeout(300);
+  const page = await openSeededPage(extension, server, [BITWARDEN, UBLOCK]);
 
   const bodies = await page.evaluate(
     async (urls) => {
