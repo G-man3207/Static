@@ -136,42 +136,73 @@
       .adaptive[hidden] {
         display: none;
       }
-      .compat {
+      .recovery {
         margin-top: 10px;
         padding: 8px;
-        border: 1px solid #efd4a8;
+        border: 1px solid var(--border-strong);
         border-radius: 7px;
-        color: #744100;
-        background: #fff7e8;
+        color: var(--text);
+        background: #f6f6f6;
         font-size: 10px;
         line-height: 1.35;
       }
-      .compat[hidden] {
+      .recovery[hidden] {
         display: none;
       }
-      .compat-title {
+      .recovery.is-warning {
+        color: #744100;
+        background: #fff7e8;
+        border-color: #efd4a8;
+      }
+      .recovery.is-paused {
+        color: var(--accent);
+        background: #fff5f5;
+        border-color: #ead0d0;
+      }
+      .recovery-title {
         font-weight: 700;
       }
-      .compat-detail {
+      .recovery-detail {
         margin-top: 2px;
+        color: var(--text-muted);
+      }
+      .recovery.is-warning .recovery-detail {
         color: #8a4b00;
       }
-      .compat-actions {
+      .recovery.is-paused .recovery-detail {
+        color: var(--accent);
+      }
+      .recovery-actions {
         margin-top: 7px;
       }
-      .compat-button {
-        padding: 5px 7px;
-        color: #744100;
+      .recovery-button {
+        padding: 6px 8px;
+        color: var(--text);
         background: #fff;
-        border: 1px solid #efd4a8;
+        border: 1px solid var(--border-strong);
         border-radius: 6px;
         font: inherit;
         font-size: 10px;
         font-weight: 700;
         cursor: pointer;
       }
-      .compat-button:hover {
+      .recovery-button:hover {
+        border-color: var(--text-muted);
+      }
+      .recovery.is-warning .recovery-button {
+        color: #744100;
+        border-color: #efd4a8;
+      }
+      .recovery.is-warning .recovery-button:hover {
         border-color: #d88030;
+      }
+      .recovery.is-paused .recovery-button {
+        color: var(--accent);
+        border-color: #ead0d0;
+      }
+      .recovery.is-paused .recovery-button:hover {
+        background: #fff;
+        border-color: var(--accent);
       }
       .site-section {
         padding: 12px 16px;
@@ -756,12 +787,15 @@
       <div class="cumulative" id="cumulative"></div>
       <div class="drift" id="drift" hidden></div>
       <div class="adaptive" id="adaptive" hidden></div>
-      <div class="compat" id="compat" hidden>
-        <div class="compat-title">Static may be interfering with this site</div>
-        <div class="compat-detail" id="compat-detail"></div>
-        <div class="compat-actions">
-          <button class="compat-button" id="compat-pause" type="button">
-            Pause here and reload
+      <div class="recovery" id="recovery" hidden aria-live="polite">
+        <div class="recovery-title" id="recovery-title">Page not working?</div>
+        <div class="recovery-detail" id="recovery-detail">
+          Static can stop logins, checkouts, or extra features on some sites. Pause it here to
+          check.
+        </div>
+        <div class="recovery-actions">
+          <button class="recovery-button" id="recovery-action" type="button">
+            Pause this site and reload
           </button>
         </div>
       </div>
@@ -771,10 +805,10 @@
       <div class="toggle-row">
         <div class="col">
           <div class="ttl" id="site-title">
-            <span id="site-title-text">Site status</span>
+            <span id="site-title-text">Protect this site</span>
           </div>
           <div class="desc" id="site-desc">
-            <span id="site-status-text">Protecting this site</span>
+            <span id="site-status-text">On. Pause it if the page looks broken.</span>
           </div>
         </div>
         <label class="switch">
