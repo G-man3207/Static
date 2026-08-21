@@ -14,6 +14,8 @@
 //   8. Answer popup queries (`static_get_details`, `static_export_log`,
 //      `static_set_noise`, `static_set_replay`, `static_set_fingerprint`,
 //      `static_set_diagnostics`) and bridge queries (`static_get_persona`).
+//   9. When a site is paused, install initiator-scoped DNR allow rules so
+//      global fingerprint/CAPTCHA lists do not keep blocking that origin.
 
 // In the event-page fallback path (Firefox background.scripts), the deps
 // are loaded as sequential <script> tags before this file, so importScripts
@@ -43,6 +45,11 @@ const safeLog = (err, label) => {
 
 // ─── DNR header-rule management for network-layer fingerprint spoofing ────
 const UA_RULE_ID_BASE = 10_000;
+const PAUSE_ALLOW_RULE_ID_BASE = 30_000;
+const PAUSE_ALLOW_RULE_ID_MAX = 39_999;
+const HEADER_RULE_ID_MAX = PAUSE_ALLOW_RULE_ID_BASE - 1;
+const isHeaderRuleId = (id) => id >= UA_RULE_ID_BASE && id <= HEADER_RULE_ID_MAX;
+const isPauseAllowRuleId = (id) => id >= PAUSE_ALLOW_RULE_ID_BASE && id <= PAUSE_ALLOW_RULE_ID_MAX;
 const SEC_CH_UA_HEADERS = [
   "Sec-CH-UA",
   "Sec-CH-UA-Arch",
@@ -107,7 +114,9 @@ const ensureOriginHeaderRule = async (origin, fingerprintMode, persona) => {
     requestHeaders.push({ header, operation: "remove" });
   }
 
+  if (dnrNextRuleId > HEADER_RULE_ID_MAX) dnrNextRuleId = UA_RULE_ID_BASE;
   const ruleId = dnrNextRuleId++;
+  if (dnrNextRuleId > HEADER_RULE_ID_MAX) dnrNextRuleId = UA_RULE_ID_BASE;
   // requestDomains matches normal domain names. For bare IP addresses and
   // localhost, requestDomains does not apply, so use a regexFilter anchored to
   // scheme+host with a separator boundary. (A bare `*host*` urlFilter would
@@ -205,7 +214,7 @@ const clearAllHeaderRules = async () => {
   // session, even if the in-memory map was already empty.
   try {
     const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
-    const staleIds = existingRules.filter((r) => r.id >= UA_RULE_ID_BASE).map((r) => r.id);
+    const staleIds = existingRules.filter((r) => isHeaderRuleId(r.id)).map((r) => r.id);
     for (const id of staleIds) {
       if (!ruleIds.includes(id)) ruleIds.push(id);
     }
@@ -233,7 +242,7 @@ const cleanupStaleHeaderRules = async () => {
     try {
       const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
       for (const r of existingRules) {
-        if (r.id >= UA_RULE_ID_BASE) liveRuleIds.add(r.id);
+        if (isHeaderRuleId(r.id)) liveRuleIds.add(r.id);
       }
     } catch (err) {
       safeLog(err, "read dynamic rules");
@@ -255,12 +264,157 @@ const cleanupStaleHeaderRules = async () => {
       await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: orphanIds });
     }
 
-    dnrNextRuleId = maxId + 1;
+    dnrNextRuleId = Math.min(maxId + 1, HEADER_RULE_ID_MAX);
     await persistHeaderRules();
   } catch {
     dnrNextRuleId = UA_RULE_ID_BASE;
   }
 };
+
+// ─── DNR allow rules for paused origins ──────────────────────────────────
+// Static's fingerprint/CAPTCHA rulesets are global. Pausing a site must also
+// let that origin's requests through those lists, otherwise "pause and reload"
+// would not fix login/checkout breakage caused by vendor blocking.
+const originPauseAllowRules = new Map(); // hostname -> ruleId
+let pauseAllowNextRuleId = PAUSE_ALLOW_RULE_ID_BASE;
+
+const hostnameForPauseAllow = (origin) => {
+  try {
+    const hostname = new URL(origin).hostname;
+    if (!hostname) return null;
+    if (hostname === "localhost" || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return null;
+    return hostname;
+  } catch {
+    return null;
+  }
+};
+
+const nextPauseAllowRuleId = (usedIds) => {
+  const take = (id) => {
+    if (usedIds.has(id)) return null;
+    pauseAllowNextRuleId = id >= PAUSE_ALLOW_RULE_ID_MAX ? PAUSE_ALLOW_RULE_ID_BASE : id + 1;
+    return id;
+  };
+  for (let id = pauseAllowNextRuleId; id <= PAUSE_ALLOW_RULE_ID_MAX; id++) {
+    const chosen = take(id);
+    if (chosen != null) return chosen;
+  }
+  for (let id = PAUSE_ALLOW_RULE_ID_BASE; id < pauseAllowNextRuleId; id++) {
+    const chosen = take(id);
+    if (chosen != null) return chosen;
+  }
+  return null;
+};
+
+const pauseAllowRuleForHostname = (ruleId, hostname) => ({
+  action: { type: "allow" },
+  condition: {
+    initiatorDomains: [hostname],
+    resourceTypes: ALL_RESOURCE_TYPES,
+  },
+  id: ruleId,
+  priority: 1000,
+});
+
+const addDynamicRule = async (rule) => {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [rule] });
+    return true;
+  } catch {
+    const types = (rule.condition && rule.condition.resourceTypes) || [];
+    const filtered = types.filter(
+      (typeName) => typeName === "websocket" || !typeName.startsWith("web")
+    );
+    if (filtered.length === types.length) return false;
+    try {
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        addRules: [{ ...rule, condition: { ...rule.condition, resourceTypes: filtered } }],
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+};
+
+const wantedPauseAllowHostnames = (disabledOrigins) => {
+  const wanted = new Set();
+  for (const [origin, disabled] of Object.entries(disabledOrigins || {})) {
+    if (!disabled) continue;
+    const hostname = hostnameForPauseAllow(origin);
+    if (hostname) wanted.add(hostname);
+  }
+  return wanted;
+};
+
+const pauseAllowHostnameFromRule = (rule) =>
+  rule.condition && Array.isArray(rule.condition.initiatorDomains)
+    ? rule.condition.initiatorDomains[0]
+    : null;
+
+const keepOrDropLivePauseAllowRule = (rule, wanted, state) => {
+  const hostname = pauseAllowHostnameFromRule(rule);
+  if (!hostname || !wanted.has(hostname) || state.seenHostnames.has(hostname)) {
+    state.removeRuleIds.push(rule.id);
+    state.usedIds.delete(rule.id);
+    return;
+  }
+  state.seenHostnames.add(hostname);
+  originPauseAllowRules.set(hostname, rule.id);
+  if (rule.id >= pauseAllowNextRuleId) {
+    pauseAllowNextRuleId =
+      rule.id >= PAUSE_ALLOW_RULE_ID_MAX ? PAUSE_ALLOW_RULE_ID_BASE : rule.id + 1;
+  }
+};
+
+const addMissingPauseAllowRules = async (wanted, usedIds) => {
+  for (const hostname of wanted) {
+    if (originPauseAllowRules.has(hostname)) continue;
+    const ruleId = nextPauseAllowRuleId(usedIds);
+    if (ruleId == null) break;
+    const added = await addDynamicRule(pauseAllowRuleForHostname(ruleId, hostname));
+    if (!added) continue;
+    usedIds.add(ruleId);
+    originPauseAllowRules.set(hostname, ruleId);
+  }
+};
+
+const reconcilePauseAllowRules = async (disabledOrigins) => {
+  const wanted = wantedPauseAllowHostnames(disabledOrigins);
+  let live;
+  try {
+    live = await chrome.declarativeNetRequest.getDynamicRules();
+  } catch (err) {
+    safeLog(err, "read pause-allow rules");
+    return;
+  }
+
+  const state = {
+    removeRuleIds: [],
+    seenHostnames: new Set(),
+    usedIds: new Set(live.map((rule) => rule.id)),
+  };
+  originPauseAllowRules.clear();
+  for (const rule of live.filter((entry) => isPauseAllowRuleId(entry.id))) {
+    keepOrDropLivePauseAllowRule(rule, wanted, state);
+  }
+
+  if (state.removeRuleIds.length > 0) {
+    try {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: state.removeRuleIds });
+    } catch (err) {
+      safeLog(err, "remove pause-allow rules");
+    }
+  }
+
+  await addMissingPauseAllowRules(wanted, state.usedIds);
+};
+
+const reconcilePauseAllowRulesFromStorage = () =>
+  serialize(async () => {
+    const { disabled_origins = {} } = await chrome.storage.local.get({ disabled_origins: {} });
+    await reconcilePauseAllowRules(disabled_origins);
+  });
 
 // ─── In-memory per-tab state ──────────────────────────────────────────────
 const perTabState = new Map(); // tabId -> { origin, frames: Map<frameId, {total, idCounts}> }
@@ -272,6 +426,8 @@ const MAX_COMPAT_ORIGINS = 50;
 const MAX_DIAGNOSTIC_EVENTS_PER_ORIGIN = 120;
 const MAX_DIAGNOSTIC_ORIGINS = 25;
 const COMPAT_WARNING_TTL_MS = 30 * 60 * 1000;
+const compatEntryIsFresh = (entry) =>
+  !!(entry && entry.lastUpdated && Date.now() - entry.lastUpdated <= COMPAT_WARNING_TTL_MS);
 
 const getOrInitTab = (tabId) => {
   let s = perTabState.get(tabId);
@@ -307,6 +463,7 @@ const updateBadge = (tabId, total) => {
 };
 
 const DISABLED_BADGE_COLOR = "#888";
+const COMPAT_BADGE_COLOR = "#d88030";
 
 const updateBadgeForTab = async (tabId, tabUrl) => {
   let origin = null;
@@ -321,10 +478,18 @@ const updateBadgeForTab = async (tabId, tabUrl) => {
     return;
   }
   try {
-    const { disabled_origins = {} } = await chrome.storage.local.get({ disabled_origins: {} });
+    const { compat_log = {}, disabled_origins = {} } = await chrome.storage.local.get({
+      compat_log: {},
+      disabled_origins: {},
+    });
     if (disabled_origins[origin]) {
       chrome.action.setBadgeText({ tabId, text: "OFF" }).catch(() => {});
       chrome.action.setBadgeBackgroundColor({ tabId, color: DISABLED_BADGE_COLOR }).catch(() => {});
+      return;
+    }
+    if (compatEntryIsFresh(compat_log[origin])) {
+      chrome.action.setBadgeText({ tabId, text: "!" }).catch(() => {});
+      chrome.action.setBadgeBackgroundColor({ tabId, color: COMPAT_BADGE_COLOR }).catch(() => {});
       return;
     }
   } catch {
@@ -993,7 +1158,7 @@ const topCompatEntries = (counts) =>
     .slice(0, 3);
 
 const compatWarningForEntry = (entry) => {
-  if (!entry || !entry.lastUpdated || Date.now() - entry.lastUpdated > COMPAT_WARNING_TTL_MS) {
+  if (!compatEntryIsFresh(entry)) {
     return null;
   }
   return {
@@ -1381,7 +1546,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
     for (const origin of Object.keys(next)) {
       if (next[origin] && !prev[origin]) removeOriginHeaderRule(origin);
     }
+    reconcilePauseAllowRulesFromStorage();
     // Update badges for all tabs after disabled_origins changes
+    chrome.tabs
+      .query({})
+      .then((tabs) => {
+        for (const tab of tabs) {
+          if (tab.id != null) updateBadgeForTab(tab.id, tab.url).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }
+  if (changes.compat_log) {
     chrome.tabs
       .query({})
       .then((tabs) => {
@@ -1394,7 +1570,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 // ─── Startup: reconcile persisted DNR header rules against live state ────
-cleanupStaleHeaderRules();
+cleanupStaleHeaderRules()
+  .then(() => reconcilePauseAllowRulesFromStorage())
+  .catch((err) => safeLog(err, "startup DNR reconcile"));
 // Mirror the persisted diagnostics flag into the in-memory gate so safeLog is
 // active immediately after a service-worker restart.
 chrome.storage.local.get({ diagnostics_mode: false }, ({ diagnostics_mode }) => {

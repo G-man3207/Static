@@ -101,7 +101,7 @@ test.describe("Network-layer header spoofing", () => {
     const rules = await extension.serviceWorker.evaluate(() =>
       chrome.declarativeNetRequest.getDynamicRules()
     );
-    const ourRules = rules.filter((r) => r.id >= 10_000);
+    const ourRules = rules.filter((r) => r.action && r.action.type === "modifyHeaders");
     expect(ourRules.length).toBeGreaterThanOrEqual(1);
 
     const ourRule = ourRules[0];
@@ -133,7 +133,7 @@ test.describe("Network-layer header spoofing", () => {
     let rules = await extension.serviceWorker.evaluate(() =>
       chrome.declarativeNetRequest.getDynamicRules()
     );
-    let ourRules = rules.filter((r) => r.id >= 10_000);
+    let ourRules = rules.filter((r) => r.action && r.action.type === "modifyHeaders");
     expect(ourRules.length).toBeGreaterThanOrEqual(1);
 
     // Turn off — should clean up all rules
@@ -142,7 +142,7 @@ test.describe("Network-layer header spoofing", () => {
     rules = await extension.serviceWorker.evaluate(() =>
       chrome.declarativeNetRequest.getDynamicRules()
     );
-    ourRules = rules.filter((r) => r.id >= 10_000);
+    ourRules = rules.filter((r) => r.action && r.action.type === "modifyHeaders");
     expect(ourRules.length).toBe(0);
   });
 

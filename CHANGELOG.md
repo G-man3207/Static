@@ -8,12 +8,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Added
 
+- Plain-language **Page not working?** recovery card in the popup for the current site, with one-click **Pause this site and reload** / **Turn protection back on**. A detected compatibility warning upgrades the same card instead of using separate technical copy.
+- Pausing a site now also installs a high-priority DNR `allow` rule for that initiator host, so fingerprint/CAPTCHA vendor network blocks no longer keep breaking logins after a per-site pause.
+- Toolbar badge shows `!` when the current site has a fresh compatibility warning, so casual users get a cue to open the popup without an in-page banner.
 - Noise mode now **learns WAR paths** from each origin's own probes and answers those exact files for persona IDs on later visits. LinkedIn-style `{id, file}` AED probes (e.g. `/inpage.js`, `/src/css/content.css`) are poisoned without answering first-visit path canaries. Learned paths are query-stripped, charset-limited, capped at 8 per ID, omitted from research exports, and never store website URLs.
 - DOM/global marker coverage for KeePassXC, Dark Reader, Bitwarden overlay (`data-bw-*`), and LanguageTool, closing Castle-style side-effect detection gaps.
 - KeePassXC-Browser (`oboonakemofpalcgghocfoadofidjkkk`) in the `password_manager` conflict slot, with an ID-seeded Noise manifest name.
 - DNR fingerprint vendor rules for LexisNexis Risk (`lexisnexisrisk.com`), Stytch device telemetry (`telemetry.stytch.com` only, not the auth product), Group-IB RU (`group-ib.ru`), IPFingerprint (`ipfingerprint.com`), Socure IO (`socure.io`), and Nethone (`nethone.com`) (rule IDs 77–82).
 - Playwright coverage for learned-path Noise decoys, path canaries, path caps, research-export omission, and new DOM markers (`tests/noise-learned-paths.spec.js`).
-
 - Noise-mode decoy `manifest.json` bodies are now **ID-seeded**: known store IDs return real-looking extension names (e.g. Bitwarden, uBlock Origin), and unknown IDs get a stable per-ID name/version so multi-ID probe dumps no longer collapse to one generic `"Browser Extension"` string.
 - Noise fetch/XHR image decoys now serve format-matched bodies and `Content-Type` for PNG, GIF, JPEG, and SVG (path extension, headers, and magic bytes stay aligned). Formats Static cannot synthesize correctly (e.g. WebP) stay fail-closed.
 - DNR fingerprint vendor rules for HUMAN legacy `whiteops.com`, Sift root `sift.com`, Accertify (`accertify.com`), and Group-IB (`group-ib.com`) (rule IDs 73–76).
@@ -26,6 +28,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - `rules/META.json` fingerprint_vendors bumped to 1.8.0 (`last_verified` 2026-08-21).
 - `docs/noise-behavior.md` documents the ID-seeded manifest contract, image magic-byte fail-closed policy, and learned WAR-path Noise contract.
 - Firefox smoke CI starts the browser with `--remote-allow-system-access` so WebDriver can still open `about:debugging` and `moz-extension://` pages on Firefox 153+.
+
+### Fixed
+
+- Firefox package build no longer leaves Chrome-only DNR resource type names in the pause-allow retry path, so the `build-firefox.js` self-check passes.
 
 ## [2.4.0] — 2026-07-09
 

@@ -80,6 +80,11 @@ function stripTypesFromServiceWorker(filePath) {
     // Remove lines like:  "webtransport",
     content = content.replace(new RegExp(`^\\s*"${typeName}",\\s*\\n`, "gm"), "");
   }
+  // Blank any leftover quoted type names (comparisons, comments, retries)
+  // so the packaged worker cannot mention types Firefox DNR rejects.
+  for (const typeName of UNSUPPORTED_RESOURCE_TYPES) {
+    content = content.split(`"${typeName}"`).join('""');
+  }
   if (content !== before) {
     fs.writeFileSync(filePath, content);
     return true;
