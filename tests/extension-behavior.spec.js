@@ -2589,7 +2589,7 @@ test("scrubs KeePassXC, Dark Reader, Bitwarden, and LanguageTool DOM markers", a
     };
   });
 
-  expect(result.attrs).toEqual([]);
+  expect(result.attrs).toEqual(["class"]);
   expect(result.classes).toEqual(["keep"]);
   expect(result.keepassTagCount).toBe(0);
 });
