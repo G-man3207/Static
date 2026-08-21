@@ -8,6 +8,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Added
 
+- Plain-language **Page not working?** recovery card in the popup for the current site, with one-click **Pause this site and reload** / **Turn protection back on**. A detected compatibility warning upgrades the same card instead of using separate technical copy.
+- Pausing a site now also installs a high-priority DNR `allow` rule for that initiator host, so fingerprint/CAPTCHA vendor network blocks no longer keep breaking logins after a per-site pause.
+- Toolbar badge shows `!` when the current site has a fresh compatibility warning, so casual users get a cue to open the popup without an in-page banner.
 - Noise-mode decoy `manifest.json` bodies are now **ID-seeded**: known store IDs return real-looking extension names (e.g. Bitwarden, uBlock Origin), and unknown IDs get a stable per-ID name/version so multi-ID probe dumps no longer collapse to one generic `"Browser Extension"` string.
 - Noise fetch/XHR image decoys now serve format-matched bodies and `Content-Type` for PNG, GIF, JPEG, and SVG (path extension, headers, and magic bytes stay aligned). Formats Static cannot synthesize correctly (e.g. WebP) stay fail-closed.
 - DNR fingerprint vendor rules for HUMAN legacy `whiteops.com`, Sift root `sift.com`, Accertify (`accertify.com`), and Group-IB (`group-ib.com`) (rule IDs 73–76).

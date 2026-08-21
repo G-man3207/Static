@@ -85,13 +85,21 @@ Firefox needs MAIN-world content scripts (128+) and built-in data-collection con
 7. **Replay poisoning (opt-in).** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
 8. **Iframe attribute hardening.** Extension probes and fingerprinting scripts can infer browser capabilities from the shape of `<iframe allow>` / `sandbox` / `allowfullscreen` / `allowpaymentrequest>` attributes. Static normalizes these attributes: it drops unsupported `allow` tokens, keeps only valid `sandbox` tokens, coerces legacy `allowfullscreen` / `allowpaymentrequest` into modern `allow` syntax, and works on pages with Trusted Types `require-trusted-types-for 'script'` CSP by creating a dedicated policy.
 9. **Style / CSSOM vector blocking.** Extension URLs can be smuggled into `<style>` text nodes, inline `style` attributes, `CSSStyleSheet.cssText`, `CSSStyleDeclaration.setProperty` / `cssText`, and `insertRule` / `replace` / `replaceSync` / `addRule` calls. Static scrubs these sources before the browser can issue a request, and does it synchronously so the URL cannot be read back.
-10. **Per-site disable.** You can turn Static off for individual sites from the popup. When a site is disabled, all extension-probe blocking, DOM scrubbing, global stripping, and opt-in poisoning modes are bypassed for that origin. The disabled state persists in `chrome.storage.local` and updates instantly on the current page. The **Disabled sites** page lists every paused origin with search, per-origin enable, and **Enable All**.
+10. **Per-site disable.** You can turn Static off for individual sites from the popup, including a plain-language **Page not working?** card with one-click pause and reload. When a site is disabled, all extension-probe blocking, DOM scrubbing, global stripping, and opt-in poisoning modes are bypassed for that origin, and Static also allows that origin's requests through the fingerprint/CAPTCHA network lists. The disabled state persists in `chrome.storage.local` and updates instantly on the current page. The **Disabled sites** page lists every paused origin with search, per-origin enable, and **Enable All**.
 
 The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds. The popup's diagnostics also include an **Exposed browser profile** view showing the JavaScript-visible user agent, platform, locale/language, timezone, screen, hardware buckets, WebGL, network, storage, and battery signals the current site can read; when Device signal poisoning is active, this view shows Static's stable per-site persona.
 
 ## Compatibility warning
 
-Static also watches for one high-confidence breakage signal: a Static-blocked extension-probe `fetch()` that becomes an unhandled page error. When that happens, the popup shows a local compatibility warning with a **Pause here and reload** escape hatch. The popup also links to a **Disabled sites** page where you can see every paused origin, re-enable individual sites, or enable them all at once. Static does not auto-disable itself, and the warning evidence stays local.
+Static watches for a high-confidence breakage signal: a Static-blocked extension-probe `fetch()` that becomes an unhandled page error. When that happens, the toolbar badge shows `!` and the popup switches the recovery card to a direct warning.
+
+Casual recovery does not depend on that signal. The popup always keeps a **Page not working?** card on the current site, with one button: **Pause this site and reload**. That pause:
+
+- turns off Static's page-layer defenses for that origin
+- lets the site's own requests through Static's fingerprint/CAPTCHA network lists (those lists are otherwise global)
+- reloads the tab so an already-broken page can recover
+
+Static does not auto-disable itself, does not inject an in-page banner (that would be another fingerprint), and keeps the warning evidence local. After a pause, the card becomes **Static is paused here** with **Turn protection back on**. The **Disabled sites** page lists every paused origin so a site can be re-enabled later.
 
 ## Playbook drift detection
 
@@ -328,7 +336,7 @@ static/
 
 - JS-layer patches run only where content scripts run. Pages served from `chrome://`, `about:`, the Chrome Web Store, and a handful of other restricted schemes are not covered.
 - The DOM scrubber ships with a default list of extensions whose markers are stripped. If one of those is an extension you use, its in-page UI (autofill icons, inline suggestions, etc.) may not render. Remove that extension's patterns from `lists.js` to keep it working.
-- Some sites use anti-bot vendors (PerimeterX, DataDome) as part of their login / checkout flow. If a site breaks, try disabling `fingerprint_vendors` first from the popup.
+- Some sites use anti-bot vendors (PerimeterX, DataDome) as part of their login / checkout flow. If a site breaks, use **Pause this site and reload** in the popup first. That pauses Static on that origin, including the fingerprinting vendor network rules. You can also disable `fingerprint_vendors` globally from **More**.
 - `captcha_vendors` is disabled by default because Arkose/FunCAPTCHA, DataDome, and Cloudflare Turnstile / Challenge Platform are served as CAPTCHA or device-check flows on some logins and protected forms (X signup, Roblox, some crypto exchanges, Cloudflare-protected forms); enabling it will break sign-in there.
 - Does not cover the entire browser-fingerprinting surface (canvas, WebGL, audio, fonts, font enumeration, WebRTC IP leak, etc.). Complements, doesn't replace, a dedicated anti-fingerprint extension.
 - Does not block broad tracker, ad-tech, analytics, or social pixel ecosystems. Complements, doesn't replace, uBlock Origin or Privacy Badger.

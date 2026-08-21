@@ -224,6 +224,179 @@ test("records compatibility warnings for unhandled blocked fetch probes", async 
   });
 });
 
+test("popup shows a plain-language recovery card on a regular site", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.bringToFront();
+
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+  await expect(popupPage.locator("#recovery")).toBeVisible();
+  await expect(popupPage.locator("#recovery")).toHaveAttribute("data-state", "help");
+  await expect(popupPage.locator("#recovery-title")).toHaveText("Page not working?");
+  await expect(popupPage.locator("#recovery-action")).toHaveText("Pause this site and reload");
+  await expect(popupPage.locator("#site-title-text")).toHaveText("Protect this site");
+  await expect(popupPage.locator("#site-status-text")).toHaveText(
+    "On. Pause it if the page looks broken."
+  );
+});
+
+test("popup recovery card upgrades when a compatibility warning is stored", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await extension.serviceWorker.evaluate(
+    (origin) =>
+      chrome.storage.local.set({
+        compat_log: {
+          [origin]: {
+            kinds: { unhandled_blocked_fetch: 1 },
+            lastUpdated: Date.now(),
+            pathKinds: { manifest: 1 },
+            total: 1,
+            vectors: { fetch: 1 },
+          },
+        },
+      }),
+    server.origin
+  );
+  await page.bringToFront();
+
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+  await expect(popupPage.locator("#recovery")).toHaveAttribute("data-state", "warning");
+  await expect(popupPage.locator("#recovery-title")).toHaveText(
+    "This site may be broken by Static"
+  );
+  await expect(popupPage.locator("#recovery-action")).toHaveText("Pause this site and reload");
+});
+
+test("popup recovery card offers resume when the site is paused", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
+  await page.bringToFront();
+
+  const popupPage = await extension.context.newPage();
+  await popupPage.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+  await expect(popupPage.locator("#recovery")).toHaveAttribute("data-state", "paused");
+  await expect(popupPage.locator("#recovery-title")).toHaveText("Static is paused here");
+  await expect(popupPage.locator("#recovery-action")).toHaveText("Turn protection back on");
+  await expect(popupPage.locator("#site-status-text")).toHaveText(
+    "Paused. This site can see installed extensions again."
+  );
+});
+
+test("pausing a site installs a DNR allow rule for that initiator and resume removes it", async ({
+  extension,
+}) => {
+  const origin = "https://shop.example";
+  const hostname = "shop.example";
+
+  await extension.serviceWorker.evaluate(
+    async (targetOrigin) =>
+      chrome.runtime.sendMessage({
+        disabled: true,
+        origin: targetOrigin,
+        type: "static_set_site_disabled",
+      }),
+    origin
+  );
+
+  await expect
+    .poll(async () => {
+      const rules = await extension.serviceWorker.evaluate(() =>
+        chrome.declarativeNetRequest.getDynamicRules()
+      );
+      return rules.filter((rule) => rule.action && rule.action.type === "allow");
+    })
+    .toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: { type: "allow" },
+          condition: expect.objectContaining({
+            initiatorDomains: [hostname],
+          }),
+          priority: 1000,
+        }),
+      ])
+    );
+
+  await extension.serviceWorker.evaluate(
+    async (targetOrigin) =>
+      chrome.runtime.sendMessage({
+        disabled: false,
+        origin: targetOrigin,
+        type: "static_set_site_disabled",
+      }),
+    origin
+  );
+
+  await expect
+    .poll(async () => {
+      const rules = await extension.serviceWorker.evaluate(() =>
+        chrome.declarativeNetRequest.getDynamicRules()
+      );
+      return rules.filter(
+        (rule) =>
+          rule.action &&
+          rule.action.type === "allow" &&
+          rule.condition &&
+          Array.isArray(rule.condition.initiatorDomains) &&
+          rule.condition.initiatorDomains.includes(hostname)
+      );
+    })
+    .toEqual([]);
+});
+
+test("toolbar badge shows an attention mark for a fresh compatibility warning", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.bringToFront();
+
+  const tabId = await extension.serviceWorker.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab && tab.id;
+  });
+  expect(typeof tabId).toBe("number");
+
+  await extension.serviceWorker.evaluate(
+    (origin) =>
+      chrome.storage.local.set({
+        compat_log: {
+          [origin]: {
+            kinds: { unhandled_blocked_fetch: 1 },
+            lastUpdated: Date.now(),
+            pathKinds: { manifest: 1 },
+            total: 1,
+            vectors: { fetch: 1 },
+          },
+        },
+      }),
+    server.origin
+  );
+
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate((id) => chrome.action.getBadgeText({ tabId: id }), tabId)
+    )
+    .toBe("!");
+});
+
 test("does not warn when blocked fetch probes are handled by the page", async ({
   extension,
   server,

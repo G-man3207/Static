@@ -8,7 +8,7 @@ const renderEmpty = () => {
   const content = document.getElementById("content");
   content.innerHTML = `<div class="empty-state">
     <p class="big">No sites are paused</p>
-    <p>Use the site toggle in the popup to pause Static on a site.</p>
+    <p>Use <strong>Page not working?</strong> in the popup, or the site toggle, to pause Static.</p>
   </div>`;
 };
 

@@ -197,46 +197,103 @@ const renderAdaptiveNotice = (resp) => {
   adaptiveEl.hidden = false;
 };
 
-const compatibilityDetailText = (warning) => {
-  const kinds = new Set((warning && warning.kinds ? warning.kinds : []).map(([kind]) => kind));
-  if (kinds.has("unhandled_blocked_fetch")) {
-    return "A blocked extension-probe fetch became an unhandled page error. If the site looks broken, pausing Static here is the safest quick fix.";
+const isHttpUrl = (url) => typeof url === "string" && /^https?:/i.test(url);
+const isExtensionUrl = (url) =>
+  typeof url === "string" && /^(chrome|moz|safari-web|ms-browser|edge)-extension:/i.test(url);
+
+const tabOrigin = (tab) => {
+  try {
+    return tab && tab.url ? new URL(tab.url).origin : null;
+  } catch {
+    return null;
   }
-  return "A recent Static action was followed by a page error. If the site looks broken, try pausing Static here.";
 };
 
-const pauseSiteAndReload = async (origin, button) => {
+const resolvePopupTab = async () => {
+  const [active] = await chrome.tabs
+    .query({ active: true, currentWindow: true })
+    .catch(() => [null]);
+  if (active && isHttpUrl(active.url)) return active;
+  const [focused] = await chrome.tabs
+    .query({ active: true, lastFocusedWindow: true })
+    .catch(() => [null]);
+  if (focused && isHttpUrl(focused.url)) return focused;
+  if (active && isExtensionUrl(active.url)) {
+    const all = await chrome.tabs.query({}).catch(() => []);
+    const httpTabs = all.filter((tab) => isHttpUrl(tab.url));
+    httpTabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+    if (httpTabs[0]) return httpTabs[0];
+  }
+  return active || null;
+};
+
+const reloadOriginTab = async (origin) => {
   if (!origin) return;
-  button.disabled = true;
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  const match = tabs.find((tab) => tabOrigin(tab) === origin && isHttpUrl(tab.url));
+  if (match && match.id != null) await chrome.tabs.reload(match.id);
+};
+
+const setSiteDisabledAndReload = async (origin, disabled, button) => {
+  if (!origin) return;
+  if (button) button.disabled = true;
   try {
     await chrome.runtime.sendMessage({
-      disabled: true,
+      disabled,
       origin,
       type: "static_set_site_disabled",
     });
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.id != null) await chrome.tabs.reload(tab.id);
+    await reloadOriginTab(origin);
     window.close();
   } catch (e) {
-    console.error("[Static] compatibility pause failed", e);
-    button.disabled = false;
+    console.error("[Static] site pause/resume failed", e);
+    if (button) button.disabled = false;
   }
 };
 
-const renderCompatibilityNotice = (resp) => {
-  const compatEl = document.getElementById("compat");
-  const detailEl = document.getElementById("compat-detail");
-  const pauseButton = document.getElementById("compat-pause");
-  const warning = resp && resp.compatWarning;
-  if (!warning || resp.disabled || !resp.origin) {
-    compatEl.hidden = true;
-    pauseButton.onclick = null;
+const renderRecoveryCard = (resp) => {
+  const card = document.getElementById("recovery");
+  const titleEl = document.getElementById("recovery-title");
+  const detailEl = document.getElementById("recovery-detail");
+  const actionButton = document.getElementById("recovery-action");
+  if (!resp || !resp.origin) {
+    card.hidden = true;
+    actionButton.onclick = null;
     return;
   }
-  detailEl.textContent = compatibilityDetailText(warning);
-  pauseButton.disabled = false;
-  pauseButton.onclick = () => pauseSiteAndReload(resp.origin, pauseButton);
-  compatEl.hidden = false;
+
+  card.hidden = false;
+  if (resp.disabled) {
+    card.dataset.state = "paused";
+    card.classList.remove("is-warning");
+    card.classList.add("is-paused");
+    titleEl.textContent = "Static is paused here";
+    detailEl.textContent =
+      "Protection is off on this site. Reload if the page still looks stuck. You can turn Static back on anytime.";
+    actionButton.textContent = "Turn protection back on";
+    actionButton.onclick = () => setSiteDisabledAndReload(resp.origin, false, actionButton);
+    return;
+  }
+
+  if (resp.compatWarning) {
+    card.dataset.state = "warning";
+    card.classList.add("is-warning");
+    card.classList.remove("is-paused");
+    titleEl.textContent = "This site may be broken by Static";
+    detailEl.textContent =
+      "Static blocked something this page expected. Pause here and reload to see if that fixes it.";
+    actionButton.textContent = "Pause this site and reload";
+    actionButton.onclick = () => setSiteDisabledAndReload(resp.origin, true, actionButton);
+    return;
+  }
+
+  card.dataset.state = "help";
+  card.classList.remove("is-warning", "is-paused");
+  titleEl.textContent = "Page not working?";
+  detailEl.textContent =
+    "Static can stop logins, checkouts, or extra features on some sites. Pause it here to check.";
+  actionButton.textContent = "Pause this site and reload";
+  actionButton.onclick = () => setSiteDisabledAndReload(resp.origin, true, actionButton);
 };
 
 const renderTopIds = (topIds) => {
@@ -638,10 +695,10 @@ const renderSiteSection = (resp) => {
 
   const updateUI = () => {
     if (isDisabled) {
-      statusText.textContent = "Paused on this site";
+      statusText.textContent = "Paused. This site can see installed extensions again.";
       statusText.className = "site-status-paused";
     } else {
-      statusText.textContent = "Protecting this site";
+      statusText.textContent = "On. Pause it if the page looks broken.";
       statusText.className = "site-status-active";
     }
   };
@@ -685,7 +742,7 @@ const renderDetails = (resp) => {
   renderCumulative(cumulative);
   renderDriftNotice(resp && resp.drift);
   renderAdaptiveNotice(resp);
-  renderCompatibilityNotice(resp);
+  renderRecoveryCard(resp);
   renderTopIds(topIds);
   renderPowerDiagnostics(resp);
 };
@@ -936,7 +993,7 @@ const renderRulesets = (enabledArr, counts) => {
 };
 
 (async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
+  const tab = await resolvePopupTab();
   const detailsPromise = tab
     ? chrome.runtime.sendMessage({ type: "static_get_details", tabId: tab.id }).catch(() => null)
     : Promise.resolve(null);
