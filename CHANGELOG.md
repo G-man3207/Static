@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [2.5.1] — 2026-09-25
+
 ### Changed
 
 - Device signal poisoning's spoofed persona user agent and `uaFullVersion` now report Chrome 152 instead of Chrome 120, keeping the poisoned persona plausible against current stable Chrome (~155). Applies to the JS layer, the popup's exposed-profile view, and the network-layer User-Agent header rewrite.
@@ -370,7 +372,8 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.5.1...HEAD
+[2.5.1]: https://github.com/G-man3207/Static/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/G-man3207/Static/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/G-man3207/Static/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/G-man3207/Static/compare/v2.2.0...v2.3.0
