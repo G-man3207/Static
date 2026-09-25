@@ -96,7 +96,7 @@ const userAgentStringFor = (uaOs) => {
   if (typeof realUA === "string" && realUA.includes("(") && realUA.includes(")")) {
     return realUA.replace(/\([^)]*\)/, `(${uaOs})`);
   }
-  return `Mozilla/5.0 (${uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`;
+  return `Mozilla/5.0 (${uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36`;
 };
 
 const ensureOriginHeaderRule = async (origin, fingerprintMode, persona) => {

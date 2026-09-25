@@ -478,7 +478,7 @@ const maskedUserAgentForPersona = (personaData) => {
   if (source.includes("(") && source.includes(")")) {
     return source.replace(/\([^)]*\)/, `(${uaOs})`);
   }
-  return `Mozilla/5.0 (${uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`;
+  return `Mozilla/5.0 (${uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36`;
 };
 
 const profileFromPersona = (personaData) => {

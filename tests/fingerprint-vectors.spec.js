@@ -198,7 +198,7 @@ test("Fingerprint masking masks uaFullVersion in high entropy values", async ({
   });
 
   if (result.skipped) return;
-  expect(result.uaFullVersion).toBe("120.0.0.0");
+  expect(result.uaFullVersion).toBe("152.0.0.0");
 });
 
 test("Fingerprint masking returns plausible mediaCapabilities info", async ({

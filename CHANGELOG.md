@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Changed
+
+- Device signal poisoning's spoofed persona user agent and `uaFullVersion` now report Chrome 152 instead of Chrome 120, keeping the poisoned persona plausible against current stable Chrome (~155). Applies to the JS layer, the popup's exposed-profile view, and the network-layer User-Agent header rewrite.
+
 ## [2.5.0] — 2026-08-21
 
 ### Added

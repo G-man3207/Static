@@ -3143,8 +3143,8 @@ test("per-site disable stops fingerprint masking", async ({ extension, server })
 
   // When disabled, native values should be returned, not the masked personas
   expect(["Win32", "MacIntel", "Linux x86_64"]).toContain(result.platform);
-  // Masked userAgent always contains Chrome/120.0.0.0; real UAs vary
-  expect(result.userAgent).not.toContain("Chrome/120.0.0.0");
+  // Masked userAgent always contains Chrome/152.0.0.0; real UAs vary
+  expect(result.userAgent).not.toContain("Chrome/152.0.0.0");
 });
 
 test("Clear log removes probe state and Noise identity while preserving preferences", async ({

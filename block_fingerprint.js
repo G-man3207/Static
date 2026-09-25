@@ -153,7 +153,7 @@
     if (source.includes("(") && source.includes(")")) {
       return source.replace(/\([^)]*\)/, `(${p.uaOs})`);
     }
-    return `Mozilla/5.0 (${p.uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`;
+    return `Mozilla/5.0 (${p.uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36`;
   };
 
   const maskedAppVersion = (appVersion) => {
@@ -317,7 +317,7 @@
       model: "",
       platform: p.uaDataPlatform,
       platformVersion: p.os === "windows" ? "10.0.0" : "15.0.0",
-      uaFullVersion: "120.0.0.0",
+      uaFullVersion: "152.0.0.0",
       wow64: false,
     };
     return Object.prototype.hasOwnProperty.call(values, hint) ? values[hint] : original;
