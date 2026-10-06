@@ -27,7 +27,7 @@
     "allow-top-navigation-by-user-activation",
     "allow-top-navigation-to-custom-protocols",
   ]);
-  const BRIDGE_EVENT = "__perf_probe_bi__";
+  const BRIDGE_EVENT = "__perf_iframe_bi__";
   let supportedAllowFeatures = null;
   let sandboxTokenList = null;
   let nativeRemoveAttribute = null;

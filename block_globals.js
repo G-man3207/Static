@@ -24,7 +24,7 @@
   const SCRUB_TARGETS = [window, WINDOW_PROTO].filter(Boolean);
   const FAST_SCRUB_MS = 25;
   const FAST_SCRUB_TICKS = 200;
-  const BRIDGE_EVENT = "__perf_probe_bi__";
+  const BRIDGE_EVENT = "__perf_globals_bi__";
   let disabled = false;
 
   const applyConfigUpdate = (data) => {

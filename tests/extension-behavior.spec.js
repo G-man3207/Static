@@ -2933,6 +2933,35 @@ test("per-site disable stops blocking extension probes", async ({ extension, ser
   expect(storage.logged).toBe(false);
 });
 
+test("per-site disable also stops global stripping and iframe attribute normalization", async ({
+  extension,
+  server,
+}) => {
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
+
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(500);
+
+  const result = await page.evaluate(() => {
+    Object.defineProperty(window, "__REACT_DEVTOOLS_GLOBAL_HOOK__", {
+      configurable: true,
+      value: { page: true },
+    });
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-scripts not-a-sandbox-token");
+    return {
+      hookKept: !!window.__REACT_DEVTOOLS_GLOBAL_HOOK__,
+      sandbox: frame.getAttribute("sandbox"),
+    };
+  });
+
+  expect(result).toEqual({ hookKept: true, sandbox: "allow-scripts not-a-sandbox-token" });
+});
+
 test("per-site disable stops blocking active vectors and CSSOM probes", async ({
   extension,
   server,

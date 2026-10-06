@@ -10,9 +10,13 @@
   const safeLog = (err, label) => {
     if (diagnosticsMode) console.error(`[Static] ${label}:`, err);
   };
+  // One event per MAIN-world script: setupBridge's first listener takes the
+  // port and stops propagation, so scripts must not share an event name.
   const CONFIG_EVENTS = [
     "__perf_decoy_bi__",
     "__perf_fingerprint_bi__",
+    "__perf_globals_bi__",
+    "__perf_iframe_bi__",
     "__perf_noise_bi__",
     "__perf_probe_bi__",
     "__perf_replay_bi__",
