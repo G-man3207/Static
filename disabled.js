@@ -1,5 +1,5 @@
 // Disabled-sites viewer. Loads the disabled_origins list from storage and
-// renders a searchable table; each row has a Re-enable button to restore
+// renders a searchable table; each row has an Enable button to restore
 // Static on that origin.
 
 const fmt = (n) => n.toLocaleString();
@@ -73,13 +73,9 @@ const renderTable = (origins) => {
 
 const updateSummary = () => {
   const rows = document.querySelectorAll(".disabled-table tbody tr");
-  const summary = document.getElementById("summary");
   const count = rows.length;
-  if (count > 0) {
-    summary.textContent = `${fmt(count)} site${count === 1 ? "" : "s"} paused`;
-  } else {
-    summary.textContent = "";
-  }
+  document.getElementById("summary").textContent =
+    count > 0 ? `${fmt(count)} site${count === 1 ? "" : "s"} paused` : "";
 };
 
 const filterTable = (query) => {
@@ -117,8 +113,7 @@ const filterTable = (query) => {
     const btn = document.getElementById("reenable-all");
     btn.disabled = true;
     try {
-      const originsCopy = [...origins];
-      for (const origin of originsCopy) {
+      for (const origin of origins) {
         await chrome.runtime.sendMessage({
           type: "static_set_site_disabled",
           disabled: false,

@@ -1,6 +1,7 @@
 // Static - pure service-worker helpers for caps, playbooks, and drift scoring.
 globalThis.__static_sw_utils__ = (() => {
-  const CONFIG_HELPERS = (globalThis.__static_config__ || {}).helpers || {};
+  const CFG = globalThis.__static_config__;
+  const H = CFG.helpers;
   const sumCounts = (counts) => {
     let total = 0;
     for (const value of Object.values(counts || {})) {
@@ -11,13 +12,8 @@ globalThis.__static_sw_utils__ = (() => {
 
   const countValue = (count) => (typeof count === "number" && count > 0 ? count : 0);
 
-  const knownPersonaIdsForCaps = () =>
-    CONFIG_HELPERS.knownPersonaIds
-      ? CONFIG_HELPERS.knownPersonaIds(globalThis.__static_config__)
-      : new Set();
-
   const countPriorityFor = ([key, count], priorityIds) =>
-    (priorityIds && priorityIds.has(String(key).toLowerCase()) ? 1000000 : 0) + countValue(count);
+    H.countPriorityFor(key, countValue(count), priorityIds);
 
   const mergeCounts = (target, source) => {
     let changed = false;
@@ -89,7 +85,7 @@ globalThis.__static_sw_utils__ = (() => {
     return week;
   };
 
-  const enforcePlaybookCaps = (entry, priorityIds = knownPersonaIdsForCaps()) => {
+  const enforcePlaybookCaps = (entry, priorityIds = H.knownPersonaIds()) => {
     if (!entry.playbook || !entry.playbook.weeks) return;
     for (const week of Object.values(entry.playbook.weeks)) {
       week.vectorCounts = trimCountMap(week.vectorCounts, 50);
@@ -103,27 +99,31 @@ globalThis.__static_sw_utils__ = (() => {
     }
   };
 
-  const maxPathsPerIdForCaps = () =>
-    (globalThis.__static_config__ && globalThis.__static_config__.maxPathsPerId) || 8;
-
   const enforceIdPathsCaps = (entry, retainedIds) => {
     if (!entry.idPaths || typeof entry.idPaths !== "object") {
       delete entry.idPaths;
       return;
     }
-    const maxPaths = maxPathsPerIdForCaps();
     const next = {};
     for (const [id, paths] of Object.entries(entry.idPaths)) {
       if (!retainedIds.has(id) || !paths || typeof paths !== "object") continue;
-      const trimmed = trimCountMap(paths, maxPaths);
+      const trimmed = trimCountMap(paths, CFG.maxPathsPerId);
       if (Object.keys(trimmed).length) next[id] = trimmed;
     }
     if (Object.keys(next).length) entry.idPaths = next;
     else delete entry.idPaths;
   };
 
+  // Keep the most recently updated origins of a per-origin log.
+  const trimLogOrigins = (log, maxOrigins) => {
+    const origins = Object.keys(log);
+    if (origins.length <= maxOrigins) return;
+    origins.sort((a, b) => (log[b].lastUpdated || 0) - (log[a].lastUpdated || 0));
+    for (const origin of origins.slice(maxOrigins)) delete log[origin];
+  };
+
   const enforceCaps = (probeLog) => {
-    const priorityIds = knownPersonaIdsForCaps();
+    const priorityIds = H.knownPersonaIds();
     for (const origin of Object.keys(probeLog)) {
       const entry = probeLog[origin];
       entry.idCounts ||= {};
@@ -131,10 +131,7 @@ globalThis.__static_sw_utils__ = (() => {
       enforceIdPathsCaps(entry, new Set(Object.keys(entry.idCounts)));
       enforcePlaybookCaps(entry, priorityIds);
     }
-    const origins = Object.keys(probeLog);
-    if (origins.length <= 100) return;
-    origins.sort((a, b) => (probeLog[b].lastUpdated || 0) - (probeLog[a].lastUpdated || 0));
-    for (const origin of origins.slice(100)) delete probeLog[origin];
+    trimLogOrigins(probeLog, 100);
   };
 
   const latestPlaybookComparison = (entry) => {
@@ -168,11 +165,8 @@ globalThis.__static_sw_utils__ = (() => {
     };
   };
 
-  const knownPersonaIds = (config) =>
-    CONFIG_HELPERS.knownPersonaIds ? CONFIG_HELPERS.knownPersonaIds(config) : new Set();
-
   const eligibilityKindFor = (id, count, knownIds, config) => {
-    if (!CONFIG_HELPERS.isValidExtensionId(id) || typeof count !== "number") return null;
+    if (!H.isValidExtensionId(id) || typeof count !== "number") return null;
     const known = knownIds.has(id);
     const min = known ? config.personaMinCount || 2 : config.unknownPersonaMinCount || 20;
     return count >= min ? (known ? "known" : "unknown") : null;
@@ -181,7 +175,7 @@ globalThis.__static_sw_utils__ = (() => {
   const personaDiagnosticsFor = (entry, selectedIds, noiseEnabled, config) => {
     const cfg = config || {};
     const target = cfg.personaSize || { min: 3, max: 8 };
-    const knownIds = knownPersonaIds(cfg);
+    const knownIds = H.knownPersonaIds(cfg);
     const stats = idPressureFor(entry && entry.idCounts);
     let eligibleKnown = 0;
     let eligibleUnknown = 0;
@@ -305,15 +299,11 @@ globalThis.__static_sw_utils__ = (() => {
       });
     }
 
-    const uniqueIds = Object.keys(current.idCounts || {}).length;
-    const singletonIds = Object.values(current.idCounts || {}).filter(
-      (count) => count === 1
-    ).length;
-    const canaryPressure = uniqueIds ? singletonIds / uniqueIds : 0;
-    if (uniqueIds >= 10 && canaryPressure >= 0.35) {
+    const { oneShotPressure, uniqueIds } = idPressureFor(current.idCounts);
+    if (uniqueIds >= 10 && oneShotPressure >= 0.35) {
       state.score += 2;
       state.reasons.push(
-        `One-shot ID pressure is high: ${percent(canaryPressure)}% of IDs were single-hit.`
+        `One-shot ID pressure is high: ${percent(oneShotPressure)}% of IDs were single-hit.`
       );
     }
   };
@@ -358,8 +348,10 @@ globalThis.__static_sw_utils__ = (() => {
     mergeCounts,
     personaDiagnosticsFor,
     playbookDriftForEntry,
+    sortedCountEntries,
     sumCounts,
     trimCountMap,
+    trimLogOrigins,
     enforceIdPathsCaps,
   };
 })();

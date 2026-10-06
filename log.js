@@ -2,10 +2,10 @@
 // Probe-log viewer. Loads the full log from the service worker and renders a
 // searchable table of origins; each row expands to show per-ID probe counts
 // for that origin. Also handles Export / Clear.
-const SW = globalThis.__static_sw_utils__ || {};
+const SW = globalThis.__static_sw_utils__;
 const fmt = (n) => n.toLocaleString();
 const fmtDate = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
-const LOG_DIAGNOSTICS = globalThis.__static_log_diagnostics__ || {};
+const LOG_DIAGNOSTICS = globalThis.__static_log_diagnostics__;
 const SEVERITY_LEVELS = {
   high: { label: "High", rank: 3 },
   medium: { label: "Medium", rank: 2 },
@@ -152,11 +152,7 @@ const ADAPTIVE_REASON_PREFIXES = [
   },
 ];
 
-const totalProbesFor = (entry) => {
-  let sum = 0;
-  for (const c of Object.values(entry.idCounts || {})) sum += c;
-  return sum;
-};
+const totalProbesFor = (entry) => SW.sumCounts(entry.idCounts);
 
 const sortedCountEntries = (counts) =>
   Object.entries(counts || {}).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
@@ -263,34 +259,16 @@ const buildDiagnosticPill = (diagnostics) => {
   return span;
 };
 
-const buildDriftDetail = (drift) => {
+const buildReasonsDetail = (titleText, reasons) => {
   const box = document.createElement("div");
   box.className = "drift-detail";
   const title = document.createElement("div");
   title.className = "drift-detail-title";
-  title.textContent = `Probe behavior: ${drift.label || "Learning"}`;
+  title.textContent = titleText;
   box.appendChild(title);
   const list = document.createElement("ul");
   list.className = "drift-reasons";
-  for (const reason of drift.reasons || []) {
-    const li = document.createElement("li");
-    li.textContent = reason;
-    list.appendChild(li);
-  }
-  box.appendChild(list);
-  return box;
-};
-
-const buildSeverityDetail = (severity, rank) => {
-  const box = document.createElement("div");
-  box.className = "drift-detail";
-  const title = document.createElement("div");
-  title.className = "drift-detail-title";
-  title.textContent = `Severity rank: #${fmt(rank)} (${severity.label})`;
-  box.appendChild(title);
-  const list = document.createElement("ul");
-  list.className = "drift-reasons";
-  for (const reason of severity.reasons || []) {
+  for (const reason of reasons || []) {
     const li = document.createElement("li");
     li.textContent = reason;
     list.appendChild(li);
@@ -435,30 +413,22 @@ const buildAdaptiveDetail = (adaptive) => {
 
 const eventTime = (event) => (event && event.at ? new Date(event.at).toLocaleTimeString() : "—");
 
-const textOr = (value, fallback) => (value ? value : fallback);
-
 const diagnosticProbeText = (event) => {
   const path = event.extensionPath ? ` ${event.extensionPath}` : "";
-  return `${eventTime(event)} · probe blocked · ${textOr(event.vector, "unknown")} · ${textOr(
-    event.pathKind,
-    "unknown"
-  )} · ${textOr(event.extensionId, "unknown")}${path}`;
+  return `${eventTime(event)} · probe blocked · ${event.vector || "unknown"} · ${event.pathKind || "unknown"} · ${event.extensionId || "unknown"}${path}`;
 };
 
 const diagnosticReplayText = (event) =>
-  `${eventTime(event)} · replay detected · ${textOr(event.signal, "unknown")}`;
+  `${eventTime(event)} · replay detected · ${event.signal || "unknown"}`;
 
 const diagnosticAdaptiveText = (event) => {
   const reason = Array.isArray(event.reasons) && event.reasons.length ? event.reasons[0] : "";
   const suffix = reason ? ` · ${reason}` : "";
-  return `${eventTime(event)} · adaptive signal · ${textOr(event.category, "unknown")} · score ${textOr(
-    event.score,
-    0
-  )}${suffix}`;
+  return `${eventTime(event)} · adaptive signal · ${event.category || "unknown"} · score ${event.score || 0}${suffix}`;
 };
 
 const diagnosticFallbackText = (event) =>
-  `${eventTime(event)} · ${textOr(event.type, "event")} · ${textOr(event.action, "observed")}`;
+  `${eventTime(event)} · ${event.type || "event"} · ${event.action || "observed"}`;
 
 const DIAGNOSTIC_TEXT_BUILDERS = {
   adaptive: diagnosticAdaptiveText,
@@ -525,15 +495,15 @@ const buildIdList = (entry) => {
 const buildOriginDetail = (entry, drift, severity, rank) => {
   const box = document.createElement("div");
   box.className = "id-list";
-  box.appendChild(buildSeverityDetail(severity, rank));
-  box.appendChild(buildDriftDetail(drift));
-  const playbook = LOG_DIAGNOSTICS.buildPlaybookDetail
-    ? LOG_DIAGNOSTICS.buildPlaybookDetail(entry, SW.latestPlaybookComparison(entry))
-    : null;
+  box.appendChild(
+    buildReasonsDetail(`Severity rank: #${fmt(rank)} (${severity.label})`, severity.reasons)
+  );
+  box.appendChild(
+    buildReasonsDetail(`Probe behavior: ${drift.label || "Learning"}`, drift.reasons)
+  );
+  const playbook = LOG_DIAGNOSTICS.buildPlaybookDetail(entry, SW.latestPlaybookComparison(entry));
   if (playbook) box.appendChild(playbook);
-  if (LOG_DIAGNOSTICS.buildNoiseReadinessDetail) {
-    box.appendChild(LOG_DIAGNOSTICS.buildNoiseReadinessDetail(entry));
-  }
+  box.appendChild(LOG_DIAGNOSTICS.buildNoiseReadinessDetail(entry));
   const adaptive = buildAdaptiveDetail(entry.__adaptive);
   if (adaptive) box.appendChild(adaptive);
   const diagnostics = buildDiagnosticDetail(entry.__diagnostics);
@@ -785,20 +755,13 @@ const bucketCount = (n) => {
   return "1000+";
 };
 
-const randomSalt = () => {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-};
+const toHex = (bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+const randomSalt = () => toHex(crypto.getRandomValues(new Uint8Array(16)));
 
 const hashLabel = async (salt, value) => {
   const data = new TextEncoder().encode(`${salt}|${value}`);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
 };
 
 // Anonymize the raw log for public sharing. Removes per-user timing signal
@@ -830,11 +793,7 @@ const buildShareableExport = async (raw) => {
   return out;
 };
 
-const countEntriesForReport = (counts, limit = 8) =>
-  Object.entries(counts || {})
-    .filter(([, count]) => typeof count === "number" && count > 0)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, limit);
+const countEntriesForReport = (counts, limit = 8) => SW.sortedCountEntries(counts, limit);
 
 const latestWeekForReport = (entry) => {
   const weeks = entry && entry.playbook && entry.playbook.weeks;
@@ -886,31 +845,31 @@ const signalKindCountsForReport = (signals) => {
 
 const issueProbeEventForReport = async (salt, event) => ({
   type: "probe",
-  action: textOr(event.action, "blocked"),
+  action: event.action || "blocked",
   extensionIdHash: event.extensionId ? await hashLabel(salt, `id:${event.extensionId}`) : null,
-  extensionPath: textOr(event.extensionPath, ""),
-  pathKind: textOr(event.pathKind, "unknown"),
-  vector: textOr(event.vector, "unknown"),
+  extensionPath: event.extensionPath || "",
+  pathKind: event.pathKind || "unknown",
+  vector: event.vector || "unknown",
 });
 
 const issueReplayEventForReport = async (salt, event) => ({
   type: "replay",
-  action: textOr(event.action, "detected"),
-  signalHash: await hashLabel(salt, `signal:${textOr(event.signal, "unknown")}`),
+  action: event.action || "detected",
+  signalHash: await hashLabel(salt, `signal:${event.signal || "unknown"}`),
   signalKind: signalKindForReport(event.signal),
 });
 
 const issueAdaptiveEventForReport = (event) => ({
   type: "adaptive",
-  action: textOr(event.action, "observed"),
-  category: textOr(event.category, "unknown"),
+  action: event.action || "observed",
+  category: event.category || "unknown",
   reasons: Array.isArray(event.reasons) ? event.reasons.slice(0, 8) : [],
-  score: textOr(event.score, 0),
+  score: event.score || 0,
 });
 
 const issueFallbackEventForReport = (event) => ({
-  action: textOr(event.action, "observed"),
-  type: textOr(event.type, "unknown"),
+  action: event.action || "observed",
+  type: event.type || "unknown",
 });
 
 const ISSUE_EVENT_BUILDERS = {
@@ -1035,22 +994,6 @@ const downloadJson = (obj, filename) => {
   }, 1000);
 };
 
-const copyText = async (text) => {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  textarea.remove();
-};
-
 document.getElementById("export-raw").addEventListener("click", () => {
   if (!fullData) return;
   downloadJson(fullData, `static-probe-log-${new Date().toISOString().slice(0, 10)}.json`);
@@ -1078,7 +1021,7 @@ document.getElementById("copy-issue-report").addEventListener("click", async () 
   if (!fullData) return;
   try {
     const report = await buildIssueReport(fullData);
-    await copyText(JSON.stringify(report, null, 2));
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
     status.textContent = "Copied";
     setTimeout(() => {
       if (status.textContent === "Copied") status.textContent = "";

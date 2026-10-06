@@ -81,7 +81,8 @@ const strictCorrectnessRules = {
   "prefer-const": ["error", { destructuring: "all" }],
   "prefer-template": "warn",
   radix: "error",
-  "require-atomic-updates": "warn",
+  // Property writes after an await (e.g. reverting a toggle) are intentional UI state updates.
+  "require-atomic-updates": ["warn", { allowProperties: true }],
   "sort-imports": ["error", { ignoreDeclarationSort: false }],
   strict: "off",
   yoda: "error",

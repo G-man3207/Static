@@ -1,7 +1,7 @@
 // Static - MAIN-world modules to service-worker bridge (ISOLATED world).
 (() => {
-  const CFG = globalThis.__static_config__ || {};
-  const H = CFG.helpers || {};
+  const CFG = globalThis.__static_config__;
+  const H = CFG.helpers;
   const MAX_CAPTURED_IDS = 2000;
 
   // Centralized error swallow: replaces bare `catch {}` so failures are
@@ -18,7 +18,16 @@
     "__perf_replay_bi__",
     "__perf_style_bi__",
   ];
-  const PROBE_EVENTS = ["__perf_noise_bi__", "__perf_probe_bi__", "__perf_style_bi__"];
+  const BRIDGE_EVENTS = [...CONFIG_EVENTS, "__perf_adaptive_bi__"];
+  const DISABLED_CONFIG = {
+    persona: [],
+    personaPaths: {},
+    fingerprintMode: "off",
+    fingerprintPersona: null,
+    diagnosticsMode: false,
+    noiseEnabled: false,
+    replayMode: "off",
+  };
   const configPorts = new Set();
   const pendingDiagnosticEvents = [];
   let disabled = false;
@@ -31,18 +40,15 @@
   const pendingVectorCounts = new Map();
   const pendingPathKindCounts = new Map();
   const pendingIdPaths = new Map();
-  const knownExtensionIds = H.knownPersonaIds ? H.knownPersonaIds(CFG) : new Set();
-  const MAX_PATHS_PER_ID = CFG.maxPathsPerId || 8;
+  const knownExtensionIds = H.knownPersonaIds();
+  const MAX_PATHS_PER_ID = CFG.maxPathsPerId;
 
   const bumpMap = (map, key, amount = 1) => {
     const safeKey = key || "unknown";
     map.set(safeKey, (map.get(safeKey) || 0) + amount);
   };
 
-  const countPriorityFor = (id, count) =>
-    H.countPriorityFor
-      ? H.countPriorityFor(id, count, knownExtensionIds)
-      : (knownExtensionIds.has(id) ? 1000000 : 0) + count;
+  const countPriorityFor = (id, count) => H.countPriorityFor(id, count, knownExtensionIds);
 
   const lowestPriorityIdFor = (map) => {
     let lowestId = null;
@@ -106,39 +112,19 @@
     }
   };
 
-  const idPathsToObject = (map) => {
-    const out = {};
-    for (const [id, paths] of map) {
-      out[id] = mapToObject(paths);
-    }
-    return out;
-  };
-
-  const mapToObject = (map) => {
-    const out = {};
-    for (const [key, value] of map) out[key] = value;
-    return out;
-  };
-
   const normalizeVector = (where) => {
     const value = typeof where === "string" ? where : "";
-    if (value === "fetch-decoy") return "fetch";
-    if (value === "xhr-decoy") return "xhr";
     if (value.endsWith("-decoy")) return value.slice(0, -"-decoy".length);
     return value || "unknown";
   };
-
-  const pathKindFor = (url) => (H.pathKindFor ? H.pathKindFor(url) : "unknown");
-  const extensionPathFor = (url) => (H.extensionPathFor ? H.extensionPathFor(url) : "");
-  const extractProbeId = (url) => (H.extractExtId ? H.extractExtId(url) : null);
 
   const queueDiagnosticProbe = (data) => {
     if (!diagnosticsMode || pendingDiagnosticEvents.length >= 80) return;
     pendingDiagnosticEvents.push({
       type: "probe",
-      extensionId: extractProbeId(data.url),
-      extensionPath: extensionPathFor(data.url),
-      pathKind: pathKindFor(data.url),
+      extensionId: H.extractExtId(data.url),
+      extensionPath: H.extensionPathFor(data.url),
+      pathKind: H.pathKindFor(data.url),
       vector: normalizeVector(data.where),
     });
   };
@@ -149,11 +135,13 @@
     const delta = pendingDelta;
     frameTotal += pendingDelta;
     pendingDelta = 0;
-    const snapshot = mapToObject(idCounts);
-    const deltaSnapshot = mapToObject(pendingIdCounts);
-    const vectorSnapshot = mapToObject(pendingVectorCounts);
-    const pathKindSnapshot = mapToObject(pendingPathKindCounts);
-    const idPathsSnapshot = idPathsToObject(pendingIdPaths);
+    const snapshot = Object.fromEntries(idCounts);
+    const deltaSnapshot = Object.fromEntries(pendingIdCounts);
+    const vectorSnapshot = Object.fromEntries(pendingVectorCounts);
+    const pathKindSnapshot = Object.fromEntries(pendingPathKindCounts);
+    const idPathsSnapshot = Object.fromEntries(
+      [...pendingIdPaths].map(([id, paths]) => [id, Object.fromEntries(paths)])
+    );
     const diagnosticSnapshot = pendingDiagnosticEvents.splice(0);
     pendingIdCounts.clear();
     pendingVectorCounts.clear();
@@ -200,14 +188,13 @@
     if (disabled) return;
     pendingDelta++;
     bumpMap(pendingVectorCounts, normalizeVector(data.where));
-    bumpMap(pendingPathKindCounts, pathKindFor(data.url));
+    bumpMap(pendingPathKindCounts, H.pathKindFor(data.url));
     queueDiagnosticProbe(data);
-    const id = extractProbeId(data.url);
+    const id = H.extractExtId(data.url);
     if (id) {
       bumpCappedIdMap(idCounts, id);
       bumpCappedIdMap(pendingIdCounts, id);
-      const path = H.extensionPathnameFor ? H.extensionPathnameFor(data.url) : "";
-      if (path) bumpCappedPathMap(id, path);
+      bumpCappedPathMap(id, H.extensionPathnameFor(data.url));
     }
     if (!flushTimer) flushTimer = setTimeout(flush, 150);
   };
@@ -251,7 +238,7 @@
         type: "static_compat_signal",
         signal: {
           kind: String(signal.kind || "unknown").slice(0, 64),
-          pathKind: pathKindFor(signal.url),
+          pathKind: H.pathKindFor(signal.url),
           vector: normalizeVector(signal.vector || signal.where),
         },
       });
@@ -284,31 +271,49 @@
     } catch (err) {
       safeLog(err, "bridge dispatch");
     }
-    return port;
   };
 
-  const postConfig = (port, response) => {
-    try {
-      port.postMessage({
-        type: "config_update",
-        persona: Array.isArray(response.ids) ? response.ids : [],
-        personaPaths:
-          response.paths && typeof response.paths === "object" && !Array.isArray(response.paths)
-            ? response.paths
-            : {},
-        disabled: !!response.disabled,
-        fingerprintMode:
-          typeof response.fingerprintMode === "string" ? response.fingerprintMode : "off",
-        fingerprintPersona:
-          response.fingerprintPersona && typeof response.fingerprintPersona === "object"
-            ? response.fingerprintPersona
-            : null,
-        diagnosticsMode: !!response.diagnosticsMode,
-        noiseEnabled: !!response.noiseEnabled,
-        replayMode: typeof response.replayMode === "string" ? response.replayMode : "off",
-      });
-    } catch {
-      configPorts.delete(port);
+  const broadcastConfig = (config) => {
+    for (const port of [...configPorts]) {
+      try {
+        port.postMessage(config);
+      } catch {
+        configPorts.delete(port);
+      }
+    }
+  };
+
+  const configFor = (response) => ({
+    type: "config_update",
+    persona: Array.isArray(response.ids) ? response.ids : [],
+    personaPaths:
+      response.paths && typeof response.paths === "object" && !Array.isArray(response.paths)
+        ? response.paths
+        : {},
+    disabled: !!response.disabled,
+    fingerprintMode:
+      typeof response.fingerprintMode === "string" ? response.fingerprintMode : "off",
+    fingerprintPersona:
+      response.fingerprintPersona && typeof response.fingerprintPersona === "object"
+        ? response.fingerprintPersona
+        : null,
+    diagnosticsMode: !!response.diagnosticsMode,
+    noiseEnabled: !!response.noiseEnabled,
+    replayMode: typeof response.replayMode === "string" ? response.replayMode : "off",
+  });
+
+  // Returns true when the per-site disabled flag actually changed.
+  const setDisabled = (nextDisabled) => {
+    const wasDisabled = disabled;
+    disabled = nextDisabled;
+    if (disabled && !wasDisabled) resetProbeState();
+    return disabled !== wasDisabled;
+  };
+
+  // Tell MAIN-world scripts about a disabled flip without waiting for a persona refresh.
+  const applyDisabled = (nextDisabled) => {
+    if (setDisabled(nextDisabled)) {
+      broadcastConfig({ type: "config_update", ...DISABLED_CONFIG, disabled });
     }
   };
 
@@ -317,33 +322,7 @@
       const currentOrigin = location.origin;
       if (!currentOrigin || currentOrigin === "null") return;
       const { disabled_origins = {} } = await chrome.storage.local.get({ disabled_origins: {} });
-      const wasDisabled = disabled;
-      const nowDisabled = !!disabled_origins[currentOrigin];
-      disabled = nowDisabled;
-      if (nowDisabled && !wasDisabled) {
-        resetProbeState();
-      }
-      // If disabled state changed, send config to MAIN world scripts
-      if (nowDisabled !== wasDisabled) {
-        const config = {
-          type: "config_update",
-          disabled: nowDisabled,
-          persona: [],
-          personaPaths: {},
-          fingerprintMode: "off",
-          fingerprintPersona: null,
-          diagnosticsMode: false,
-          noiseEnabled: false,
-          replayMode: "off",
-        };
-        for (const port of [...configPorts]) {
-          try {
-            port.postMessage(config);
-          } catch {
-            configPorts.delete(port);
-          }
-        }
-      }
+      applyDisabled(!!disabled_origins[currentOrigin]);
     } catch (err) {
       safeLog(err, "disabled state check");
     }
@@ -358,27 +337,18 @@
       const response = await chrome.runtime.sendMessage({ type: "static_get_persona" });
       if (!response) return;
       diagnosticsMode = !!response.diagnosticsMode;
-      const wasDisabled = disabled;
-      disabled = !!response.disabled;
-      if (disabled && !wasDisabled) {
-        resetProbeState();
-      }
-      for (const port of [...configPorts]) postConfig(port, response);
+      setDisabled(!!response.disabled);
+      broadcastConfig(configFor(response));
     } catch (err) {
       safeLog(err, "persona refresh");
     }
   };
 
-  const allEvents = new Set([...PROBE_EVENTS, ...CONFIG_EVENTS, "__perf_adaptive_bi__"]);
-  for (const eventName of allEvents) {
-    createPort(eventName);
-  }
+  for (const eventName of BRIDGE_EVENTS) createPort(eventName);
   // Re-dispatch after a tick so any MAIN-world scripts that missed the
   // synchronous dispatch (race between ISOLATED and MAIN worlds) get a port.
   setTimeout(() => {
-    for (const eventName of allEvents) {
-      createPort(eventName);
-    }
+    for (const eventName of BRIDGE_EVENTS) createPort(eventName);
   }, 0);
   // Check disabled state directly from storage first, then fetch persona.
   // refreshPersona already yields, so it naturally runs after the timeout above.
@@ -401,31 +371,7 @@
       return true;
     }
     if (msg && msg.type === "static_disabled_update") {
-      const wasDisabled = disabled;
-      disabled = !!msg.disabled;
-      if (disabled && !wasDisabled) {
-        resetProbeState();
-      }
-      if (disabled !== wasDisabled) {
-        const config = {
-          type: "config_update",
-          disabled,
-          persona: [],
-          personaPaths: {},
-          fingerprintMode: "off",
-          fingerprintPersona: null,
-          diagnosticsMode: false,
-          noiseEnabled: false,
-          replayMode: "off",
-        };
-        for (const port of [...configPorts]) {
-          try {
-            port.postMessage(config);
-          } catch {
-            configPorts.delete(port);
-          }
-        }
-      }
+      applyDisabled(!!msg.disabled);
       sendResponse({ ok: true });
       return true;
     }
@@ -433,38 +379,10 @@
   });
 
   // React immediately when disabled_origins changes from any context
-  if (chrome.storage && chrome.storage.onChanged) {
-    chrome.storage.onChanged.addListener((changes) => {
-      if (!changes.disabled_origins) return;
-      const currentOrigin = location.origin;
-      if (!currentOrigin || currentOrigin === "null") return;
-      const newOrigins = changes.disabled_origins.newValue || {};
-      const wasDisabled = disabled;
-      const nowDisabled = !!newOrigins[currentOrigin];
-      if (nowDisabled !== wasDisabled) {
-        disabled = nowDisabled;
-        if (nowDisabled && !wasDisabled) {
-          resetProbeState();
-        }
-        const config = {
-          type: "config_update",
-          disabled: nowDisabled,
-          persona: [],
-          personaPaths: {},
-          fingerprintMode: "off",
-          fingerprintPersona: null,
-          diagnosticsMode: false,
-          noiseEnabled: false,
-          replayMode: "off",
-        };
-        for (const port of [...configPorts]) {
-          try {
-            port.postMessage(config);
-          } catch {
-            configPorts.delete(port);
-          }
-        }
-      }
-    });
-  }
+  chrome.storage.onChanged.addListener((changes) => {
+    if (!changes.disabled_origins) return;
+    const currentOrigin = location.origin;
+    if (!currentOrigin || currentOrigin === "null") return;
+    applyDisabled(!!(changes.disabled_origins.newValue || {})[currentOrigin]);
+  });
 })();

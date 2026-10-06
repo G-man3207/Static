@@ -27,9 +27,6 @@ const replayState = {
   replayDetected: false,
   replayMode: "off",
 };
-const fingerprintState = {
-  fingerprintMode: "off",
-};
 const PROFILE_UA_HINTS = [
   "architecture",
   "bitness",
@@ -149,14 +146,6 @@ const pushConfigUpdateToActiveTab = async () => {
   }
 };
 
-const setChecked = (input, checked) => {
-  input.checked = checked;
-};
-
-const setSelectValue = (select, value) => {
-  select.value = value;
-};
-
 const setReplayMode = (mode) => {
   replayState.replayMode = mode;
   renderReplayIndicators();
@@ -196,8 +185,6 @@ const renderAdaptiveNotice = (resp) => {
   }`;
   adaptiveEl.hidden = false;
 };
-
-const isHttpOrigin = (origin) => typeof origin === "string" && /^https?:/i.test(origin);
 
 const tabIdFromQuery = () => {
   try {
@@ -267,7 +254,7 @@ const renderRecoveryCard = (resp) => {
   const titleEl = document.getElementById("recovery-title");
   const detailEl = document.getElementById("recovery-detail");
   const actionButton = document.getElementById("recovery-action");
-  if (!resp || !isHttpOrigin(resp.origin)) {
+  if (!resp || !isHttpUrl(resp.origin)) {
     card.hidden = true;
     actionButton.onclick = null;
     return;
@@ -715,7 +702,7 @@ const renderSiteSection = (resp) => {
   };
   updateUI();
 
-  if (!resp || !isHttpOrigin(resp.origin)) {
+  if (!resp || !isHttpUrl(resp.origin)) {
     section.hidden = true;
     return;
   }
@@ -771,7 +758,7 @@ const renderNoiseSection = (resp) => {
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] noise toggle failed", e);
-      setChecked(toggle, !desired);
+      toggle.checked = !desired;
     }
   });
 
@@ -811,11 +798,11 @@ const renderDiagnosticsSection = (resp) => {
         enabled: desired,
         type: "static_set_diagnostics",
       });
-      setChecked(toggle, !!(saved && saved.enabled));
+      toggle.checked = !!(saved && saved.enabled);
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] diagnostics toggle failed", e);
-      setChecked(toggle, !desired);
+      toggle.checked = !desired;
     }
   });
 };
@@ -836,44 +823,38 @@ const renderReplaySection = (resp) => {
     try {
       const saved = await chrome.runtime.sendMessage({ type: "static_set_replay", mode: desired });
       const next = saved && allowed.has(saved.mode) ? saved.mode : desired;
-      setSelectValue(select, next);
+      select.value = next;
       setReplayMode(next);
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] replay mode update failed", e);
-      setSelectValue(select, previous);
+      select.value = previous;
       setReplayMode(previous);
     }
   });
 };
 
-const setFingerprintMode = (mode) => {
-  fingerprintState.fingerprintMode = mode;
-};
-
 const renderFingerprintSection = (resp) => {
   const select = document.getElementById("fingerprint-mode");
   const allowed = new Set(["off", "mask"]);
-  fingerprintState.fingerprintMode =
-    resp && allowed.has(resp.fingerprintMode) ? resp.fingerprintMode : "off";
-  select.value = fingerprintState.fingerprintMode;
+  const state = { mode: resp && allowed.has(resp.fingerprintMode) ? resp.fingerprintMode : "off" };
+  select.value = state.mode;
 
   select.addEventListener("change", async () => {
     const desired = allowed.has(select.value) ? select.value : "off";
-    const previous = fingerprintState.fingerprintMode;
+    const previous = state.mode;
     try {
       const saved = await chrome.runtime.sendMessage({
         mode: desired,
         type: "static_set_fingerprint",
       });
-      const next = saved && allowed.has(saved.mode) ? saved.mode : desired;
-      setSelectValue(select, next);
-      setFingerprintMode(next);
+      state.mode = saved && allowed.has(saved.mode) ? saved.mode : desired;
+      select.value = state.mode;
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] fingerprint mode update failed", e);
-      setSelectValue(select, previous);
-      setFingerprintMode(previous);
+      state.mode = previous;
+      select.value = previous;
     }
   });
 };
@@ -941,7 +922,6 @@ const renderReplayIndicators = () => {
 
 const renderRulesets = (enabledArr, counts) => {
   const enabled = new Set(enabledArr);
-  renderReplayIndicators();
   const container = document.getElementById("rulesets");
   container.innerHTML = "";
   let currentGroup = null;

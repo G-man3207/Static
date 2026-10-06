@@ -23,7 +23,8 @@
 if (typeof importScripts === "function") {
   importScripts("lists.js", "service_worker_utils.js");
 }
-const CFG = globalThis.__static_config__ || {};
+const CFG = globalThis.__static_config__;
+const SW_HELPERS = CFG.helpers;
 const {
   enforceCaps,
   ensurePlaybookWeek,
@@ -33,6 +34,7 @@ const {
   playbookDriftForEntry,
   sumCounts,
   trimCountMap,
+  trimLogOrigins,
 } = globalThis.__static_sw_utils__;
 
 // Whether diagnostics logging is active (mirrors the `diagnostics_mode` storage
@@ -114,19 +116,13 @@ const ensureOriginHeaderRule = async (origin, fingerprintMode, persona) => {
     requestHeaders.push({ header, operation: "remove" });
   }
 
-  if (dnrNextRuleId > HEADER_RULE_ID_MAX) dnrNextRuleId = UA_RULE_ID_BASE;
   const ruleId = dnrNextRuleId++;
   if (dnrNextRuleId > HEADER_RULE_ID_MAX) dnrNextRuleId = UA_RULE_ID_BASE;
-  // requestDomains matches normal domain names. For bare IP addresses and
-  // localhost, requestDomains does not apply, so use a regexFilter anchored to
-  // scheme+host with a separator boundary. (A bare `*host*` urlFilter would
-  // match the host as an arbitrary substring anywhere in the URL.)
-  const condition = headerRuleConditionFor(hostname);
   const rule = {
     id: ruleId,
     priority: 100,
     action: { type: "modifyHeaders", requestHeaders },
-    condition,
+    condition: headerRuleConditionFor(hostname),
   };
 
   try {
@@ -142,7 +138,8 @@ const ensureOriginHeaderRule = async (origin, fingerprintMode, persona) => {
 };
 
 // Build a DNR condition that matches requests to `hostname` without matching
-// it as an arbitrary substring of a larger URL.
+// it as an arbitrary substring of a larger URL. requestDomains does not apply
+// to bare IPs or localhost, so those get a regexFilter anchored to scheme+host.
 const headerRuleConditionFor = (hostname) => {
   const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname === "localhost";
   if (isIp) {
@@ -195,40 +192,29 @@ const evictExcessHeaderRules = async () => {
 // against the live DNR rules instead of orphaning them.
 const persistHeaderRules = () =>
   serialize(async () => {
-    const serializable = {};
-    for (const [origin, entry] of originHeaderRules) {
-      serializable[origin] = entry;
-    }
-    await chrome.storage.local.set({ [HEADER_RULES_STORAGE_KEY]: serializable });
+    await chrome.storage.local.set({
+      [HEADER_RULES_STORAGE_KEY]: Object.fromEntries(originHeaderRules),
+    });
   });
 
 const clearAllHeaderRules = async () => {
-  const ruleIds = [];
-  for (const [, entry] of originHeaderRules) {
-    ruleIds.push(entry.ruleId);
-  }
+  const ruleIds = new Set([...originHeaderRules.values()].map((entry) => entry.ruleId));
   originHeaderRules.clear();
   await persistHeaderRules();
 
   // Always sweep our whole ID range to catch any orphaned rules from a prior
   // session, even if the in-memory map was already empty.
   try {
-    const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
-    const staleIds = existingRules.filter((r) => isHeaderRuleId(r.id)).map((r) => r.id);
-    for (const id of staleIds) {
-      if (!ruleIds.includes(id)) ruleIds.push(id);
+    for (const rule of await chrome.declarativeNetRequest.getDynamicRules()) {
+      if (isHeaderRuleId(rule.id)) ruleIds.add(rule.id);
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  if (ruleIds.length === 0) return;
+  if (ruleIds.size === 0) return;
 
   try {
-    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: ruleIds });
-  } catch {
-    // ignore
-  }
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [...ruleIds] });
+  } catch {}
 };
 
 const cleanupStaleHeaderRules = async () => {
@@ -418,9 +404,7 @@ const reconcilePauseAllowRulesFromStorage = () =>
 
 // ─── In-memory per-tab state ──────────────────────────────────────────────
 const perTabState = new Map(); // tabId -> { origin, frames: Map<frameId, {total, idCounts}> }
-const SW_HELPERS = CFG.helpers || {};
-const isValidExtensionId = (id) =>
-  SW_HELPERS.isValidExtensionId ? SW_HELPERS.isValidExtensionId(id) : false;
+const isValidExtensionId = (id) => SW_HELPERS.isValidExtensionId(id);
 const MAX_CAPTURED_IDS = 2000;
 const MAX_COMPAT_ORIGINS = 50;
 const MAX_DIAGNOSTIC_EVENTS_PER_ORIGIN = 120;
@@ -527,13 +511,6 @@ const addToCumulative = async (delta) => {
   await chrome.storage.local.set({ cumulative: cumulative + delta });
 };
 
-const trimLogOrigins = (log, maxOrigins) => {
-  const origins = Object.keys(log);
-  if (origins.length <= maxOrigins) return;
-  origins.sort((a, b) => (log[b].lastUpdated || 0) - (log[a].lastUpdated || 0));
-  for (const oldOrigin of origins.slice(maxOrigins)) delete log[oldOrigin];
-};
-
 const sanitizeExtensionIdCounts = (counts) => {
   const sanitized = {};
   for (const [id, count] of Object.entries(counts || {})) {
@@ -542,36 +519,31 @@ const sanitizeExtensionIdCounts = (counts) => {
       sanitized[safeId] = (sanitized[safeId] || 0) + count;
     }
   }
-  return trimCountMap(sanitized, MAX_CAPTURED_IDS, knownPersonaIds());
+  return trimCountMap(sanitized, MAX_CAPTURED_IDS, SW_HELPERS.knownPersonaIds());
 };
 
 const sanitizeExtensionIdPaths = (idPaths) => {
-  const maxPaths = CFG.maxPathsPerId || 8;
   const out = {};
-  const sanitizePath = SW_HELPERS.sanitizeExtensionPath
-    ? (path) => SW_HELPERS.sanitizeExtensionPath(path)
-    : () => "";
   for (const [id, paths] of Object.entries(idPaths || {})) {
     const safeId = id.toLowerCase();
     if (!isValidExtensionId(safeId) || !paths || typeof paths !== "object") continue;
     const sanitized = {};
     for (const [path, count] of Object.entries(paths)) {
-      const safePath = sanitizePath(path);
+      const safePath = SW_HELPERS.sanitizeExtensionPath(path);
       if (!safePath || typeof count !== "number" || count <= 0) continue;
       sanitized[safePath] = (sanitized[safePath] || 0) + count;
     }
-    if (Object.keys(sanitized).length) out[safeId] = trimCountMap(sanitized, maxPaths);
+    if (Object.keys(sanitized).length) out[safeId] = trimCountMap(sanitized, CFG.maxPathsPerId);
   }
   return out;
 };
 
 const mergeIdPaths = (target, source) => {
   let changed = false;
-  const maxPaths = CFG.maxPathsPerId || 8;
   for (const [id, paths] of Object.entries(source || {})) {
     target[id] ||= {};
     if (mergeCounts(target[id], paths)) changed = true;
-    target[id] = trimCountMap(target[id], maxPaths);
+    target[id] = trimCountMap(target[id], CFG.maxPathsPerId);
   }
   return changed;
 };
@@ -581,9 +553,7 @@ const personaPathsFor = (entry, ids) => {
   const out = {};
   if (!entry || !entry.idPaths) return out;
   for (const id of ids) {
-    const eligible = SW_HELPERS.eligiblePathsForId
-      ? SW_HELPERS.eligiblePathsForId(entry.idPaths[id], minCount)
-      : [];
+    const eligible = SW_HELPERS.eligiblePathsForId(entry.idPaths[id], minCount);
     if (eligible.length) out[id] = eligible;
   }
   return out;
@@ -878,13 +848,10 @@ const shuffleInPlace = (arr, rng) => {
   }
 };
 
-const knownPersonaIds = () =>
-  SW_HELPERS.knownPersonaIds ? SW_HELPERS.knownPersonaIds(CFG) : new Set();
-
 const eligiblePersonaIds = (entry) => {
   const minCount = CFG.personaMinCount || 2;
   const unknownMinCount = CFG.unknownPersonaMinCount || 20;
-  const knownIds = knownPersonaIds();
+  const knownIds = SW_HELPERS.knownPersonaIds();
   return Object.entries(entry.idCounts)
     .filter(([id, c]) => {
       const safeId = id.toLowerCase();
@@ -893,9 +860,6 @@ const eligiblePersonaIds = (entry) => {
     })
     .map(([id]) => id.toLowerCase());
 };
-
-const buildConflictSlotMap = () =>
-  SW_HELPERS.buildConflictSlotMap ? SW_HELPERS.buildConflictSlotMap(CFG) : new Map();
 
 const splitIdsBySlot = (ids, idToSlot) => {
   const bySlot = {};
@@ -946,7 +910,7 @@ const personaFor = async (origin) => {
   const week = Math.floor((Date.now() + phase) / rotationMs);
   const seed = await seedFor(secret, origin, week);
   const rng = mulberry32(seed);
-  const { bySlot, unslotted } = splitIdsBySlot(eligible, buildConflictSlotMap());
+  const { bySlot, unslotted } = splitIdsBySlot(eligible, SW_HELPERS.buildConflictSlotMap());
   return selectPersonaIds({ bySlot, rng, target: personaTargetSize(rng), unslotted });
 };
 
@@ -1065,16 +1029,8 @@ const originFromUrl = (url) => {
   }
 };
 
-const topLevelOriginFromSender = (sender) => {
-  return originFromUrl(sender && sender.tab && sender.tab.url);
-};
-
-const mapIdCounts = (idCounts) => {
-  return new Map(Object.entries(sanitizeExtensionIdCounts(idCounts)));
-};
-
 const rememberSenderOrigin = (sender) => {
-  const origin = topLevelOriginFromSender(sender);
+  const origin = originFromUrl(sender && sender.tab && sender.tab.url);
   if (origin && sender.tab) getOrInitTab(sender.tab.id).origin = origin;
   return origin;
 };
@@ -1085,7 +1041,7 @@ const handleProbeBlocked = (msg, sender) => {
   const origin = rememberSenderOrigin(sender);
   getOrInitTab(tabId).frames.set(sender.frameId || 0, {
     total: msg.frameTotal || 0,
-    idCounts: mapIdCounts(msg.idCounts),
+    idCounts: new Map(Object.entries(sanitizeExtensionIdCounts(msg.idCounts))),
   });
   updateBadgeForTab(tabId, sender.tab && sender.tab.url);
 
@@ -1271,13 +1227,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
 
 const handleGetPersona = (_msg, sender, sendResponse) => {
   (async () => {
-    const {
-      diagnostics_mode = false,
-      disabled_origins = {},
-      fingerprint_mode = "off",
-      noise_enabled = false,
-      replay_mode = "off",
-    } = await chrome.storage.local.get({
+    const stored = await chrome.storage.local.get({
       diagnostics_mode: false,
       disabled_origins: {},
       fingerprint_mode: "off",
@@ -1285,8 +1235,8 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
       replay_mode: "off",
     });
     const origin = rememberSenderOrigin(sender);
-    const disabled = !!(origin && disabled_origins[origin]);
-    const fingerprintMode = fingerprint_mode === "mask" ? "mask" : "off";
+    const disabled = !!(origin && stored.disabled_origins[origin]);
+    const fingerprintMode = stored.fingerprint_mode === "mask" ? "mask" : "off";
     const fingerprintPersona =
       fingerprintMode === "mask" ? await fingerprintPersonaFor(origin) : null;
 
@@ -1297,32 +1247,18 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
       await removeOriginHeaderRule(origin);
     }
 
-    if (!noise_enabled || !origin) {
-      sendResponse({
-        diagnosticsMode: diagnostics_mode,
-        disabled,
-        fingerprintMode,
-        fingerprintPersona,
-        ids: [],
-        paths: {},
-        noiseEnabled: noise_enabled,
-        origin,
-        replayMode: replay_mode,
-      });
-      return;
-    }
-    const ids = await personaFor(origin);
-    const { probe_log = {} } = await chrome.storage.local.get({ probe_log: {} });
+    const ids = stored.noise_enabled && origin ? await personaFor(origin) : [];
+    const { probe_log = {} } = ids.length ? await chrome.storage.local.get({ probe_log: {} }) : {};
     sendResponse({
-      diagnosticsMode: diagnostics_mode,
+      diagnosticsMode: stored.diagnostics_mode,
       disabled,
       fingerprintMode,
       fingerprintPersona,
       ids,
       paths: personaPathsFor(probe_log[origin], ids),
-      noiseEnabled: true,
+      noiseEnabled: stored.noise_enabled,
       origin,
-      replayMode: replay_mode,
+      replayMode: stored.replay_mode,
     });
   })();
   return true;
@@ -1394,7 +1330,7 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
       delete disabled_origins[origin];
     }
     await chrome.storage.local.set({ disabled_origins });
-    if (disabled && origin) {
+    if (disabled) {
       await removeOriginHeaderRule(origin);
     }
     // Notify the tab for this origin so content scripts can update immediately
@@ -1402,13 +1338,8 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
     await Promise.all(
       tabs.map((tab) => {
         if (tab.id == null) return null;
-        const tabOrigin = originFromUrl(tab.url);
-        // Update badge regardless of matching origin — tabs on other origins
-        // may need badge update too (e.g. the toggle was toggled on a tab whose
-        // origin just got disabled/re-enabled). But updateBadgeForTab with the
-        // tab's own URL origin handles this correctly.
         updateBadgeForTab(tab.id, tab.url).catch(() => {});
-        if (tabOrigin === origin) {
+        if (originFromUrl(tab.url) === origin) {
           // Send direct disabled update to MAIN world scripts AND persona update to bridge
           return Promise.all([
             chrome.tabs
@@ -1438,16 +1369,7 @@ const handleSetDiagnostics = (msg, _sender, sendResponse) => {
 
 const handleExportLog = (_msg, _sender, sendResponse) => {
   (async () => {
-    const {
-      probe_log = {},
-      replay_log = {},
-      adaptive_log = {},
-      compat_log = {},
-      diagnostic_log = {},
-      diagnostics_mode = false,
-      fingerprint_mode = "off",
-      cumulative = 0,
-    } = await chrome.storage.local.get({
+    const stored = await chrome.storage.local.get({
       probe_log: {},
       replay_log: {},
       adaptive_log: {},
@@ -1460,14 +1382,14 @@ const handleExportLog = (_msg, _sender, sendResponse) => {
     sendResponse({
       schema: "static.probe-log.v1",
       exportedAt: new Date().toISOString(),
-      cumulative,
-      compatibilityWarnings: compat_log,
-      diagnostics: diagnostic_log,
-      diagnosticsMode: diagnostics_mode,
-      fingerprintMode: fingerprint_mode,
-      origins: probe_log,
-      replayDetections: replay_log,
-      adaptiveSignals: adaptive_log,
+      cumulative: stored.cumulative,
+      compatibilityWarnings: stored.compat_log,
+      diagnostics: stored.diagnostic_log,
+      diagnosticsMode: stored.diagnostics_mode,
+      fingerprintMode: stored.fingerprint_mode,
+      origins: stored.probe_log,
+      replayDetections: stored.replay_log,
+      adaptiveSignals: stored.adaptive_log,
     });
   })();
   return true;
@@ -1530,6 +1452,16 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   }
 });
 
+const refreshAllBadges = () =>
+  chrome.tabs
+    .query({})
+    .then((tabs) => {
+      for (const tab of tabs) {
+        if (tab.id != null) updateBadgeForTab(tab.id, tab.url).catch(() => {});
+      }
+    })
+    .catch(() => {});
+
 // ─── Storage change listener: react to fingerprint_mode changes ───────────
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
@@ -1547,26 +1479,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
       if (next[origin] && !prev[origin]) removeOriginHeaderRule(origin);
     }
     reconcilePauseAllowRulesFromStorage();
-    // Update badges for all tabs after disabled_origins changes
-    chrome.tabs
-      .query({})
-      .then((tabs) => {
-        for (const tab of tabs) {
-          if (tab.id != null) updateBadgeForTab(tab.id, tab.url).catch(() => {});
-        }
-      })
-      .catch(() => {});
   }
-  if (changes.compat_log) {
-    chrome.tabs
-      .query({})
-      .then((tabs) => {
-        for (const tab of tabs) {
-          if (tab.id != null) updateBadgeForTab(tab.id, tab.url).catch(() => {});
-        }
-      })
-      .catch(() => {});
-  }
+  if (changes.disabled_origins || changes.compat_log) refreshAllBadges();
 });
 
 // ─── Startup: reconcile persisted DNR header rules against live state ────
@@ -1581,14 +1495,5 @@ chrome.storage.local.get({ diagnostics_mode: false }, ({ diagnostics_mode }) => 
 
 // Sweep existing tabs on startup to set badges for disabled origins
 chrome.storage.local.get({ disabled_origins: {} }, ({ disabled_origins }) => {
-  if (Object.keys(disabled_origins).length > 0) {
-    chrome.tabs
-      .query({})
-      .then((tabs) => {
-        for (const tab of tabs) {
-          if (tab.id != null) updateBadgeForTab(tab.id, tab.url).catch(() => {});
-        }
-      })
-      .catch(() => {});
-  }
+  if (Object.keys(disabled_origins).length > 0) refreshAllBadges();
 });
