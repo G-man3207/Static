@@ -2,13 +2,8 @@
 // This file must load FIRST among MAIN-world content scripts in manifest.json.
 (() => {
   const U = {};
-
-  // Leak-safe error swallow for MAIN-world code. We intentionally do NOT
-  // console.log here: console output in the MAIN world is visible to the page
-  // and would leak Static's presence. Catches are centralized + labelled so
-  // they can later be routed through the diagnostics bridge instead.
-  const safeLog = (_err, _label) => {};
-  U.safeLog = safeLog;
+  // MAIN-world catches stay silent: console output here is page-visible and
+  // would reveal Static.
 
   // ======================================================================
   // Stealth infrastructure — makes wrapped functions look native under
@@ -26,24 +21,18 @@
   try {
     Object.defineProperty(patchedFnToString, "name", { value: "toString", configurable: true });
     Object.defineProperty(patchedFnToString, "length", { value: 0, configurable: true });
-  } catch (err) {
-    safeLog(err, "toString name/length");
-  }
+  } catch {}
   Function.prototype.toString = patchedFnToString;
 
   U.stealth = (fn, nativeName, opts = {}) => {
     stealthFns.set(fn, opts.source || `function ${nativeName}() { [native code] }`);
     try {
       Object.defineProperty(fn, "name", { value: nativeName, configurable: true });
-    } catch (err) {
-      safeLog(err, "stealth name");
-    }
+    } catch {}
     if (typeof opts.length === "number") {
       try {
         Object.defineProperty(fn, "length", { value: opts.length, configurable: true });
-      } catch (err) {
-        safeLog(err, "stealth length");
-      }
+      } catch {}
     }
     return fn;
   };
@@ -58,6 +47,40 @@
   };
 
   U.origFnToString = origFnToString;
+
+  // ======================================================================
+  // Patch helpers — replace a native method or accessor while keeping its
+  // descriptor and a native-looking name/length/toString. `wrap` receives the
+  // current implementation and returns an object holding the replacement as a
+  // concise method keyed by the method name, or by `get` / `set` for accessors
+  // (e.g. `(orig) => ({ fetch() {} })`). Concise methods have no own
+  // `prototype` and are not constructible, like the natives they replace.
+  // Each helper returns the replaced implementation, or null if there was none.
+  // ======================================================================
+
+  const disguise = (fn, original, name) =>
+    U.stealth(fn, name, { length: original.length, source: U.nativeSourceFor(original, name) });
+
+  U.wrapMethod = (owner, name, wrap) => {
+    const desc = owner && Object.getOwnPropertyDescriptor(owner, name);
+    const orig = desc && desc.value;
+    if (typeof orig !== "function") return null;
+    Object.defineProperty(owner, name, { ...desc, value: disguise(wrap(orig)[name], orig, name) });
+    return orig;
+  };
+
+  const wrapAccessor = (kind) => (owner, prop, wrap) => {
+    const desc = owner && Object.getOwnPropertyDescriptor(owner, prop);
+    const orig = desc && desc[kind];
+    if (typeof orig !== "function") return null;
+    Object.defineProperty(owner, prop, {
+      ...desc,
+      [kind]: disguise(wrap(orig)[kind], orig, `${kind} ${prop}`),
+    });
+    return orig;
+  };
+  U.wrapGetter = wrapAccessor("get");
+  U.wrapSetter = wrapAccessor("set");
 
   // ======================================================================
   // Prototype / reflection utilities
@@ -83,9 +106,7 @@
         writable: true,
       };
       Object.defineProperty(proto, "constructor", { ...desc, value: wrapped });
-    } catch (err) {
-      safeLog(err, "align constructor");
-    }
+    } catch {}
   };
 
   U.copyConstructorStatics = (wrapped, original) => {
@@ -94,9 +115,7 @@
       try {
         const desc = Object.getOwnPropertyDescriptor(original, key);
         if (desc) Object.defineProperty(wrapped, key, desc);
-      } catch (err) {
-        safeLog(err, "copy statics");
-      }
+      } catch {}
     }
   };
 
@@ -159,9 +178,7 @@
       if (idRe && idRe.test(id)) {
         return { id, scheme };
       }
-    } catch (err) {
-      safeLog(err, "extension identity parse");
-    }
+    } catch {}
     return null;
   };
 
@@ -225,6 +242,43 @@
     return null;
   };
 
+  // Noise-mode persona state for one MAIN-world script, fed by config_update
+  // messages: which extension IDs to answer for and which learned WAR paths.
+  U.noisePersona = () => {
+    let enabled = false;
+    let ids = new Set();
+    let paths = new Map();
+    return {
+      update(data) {
+        if (Array.isArray(data.persona)) {
+          ids = new Set(data.persona.filter((id) => typeof id === "string"));
+        }
+        if (data.personaPaths && typeof data.personaPaths === "object") {
+          paths = new Map();
+          for (const [id, list] of Object.entries(data.personaPaths)) {
+            if (!Array.isArray(list)) continue;
+            const safeList = list.filter((path) => typeof path === "string");
+            paths.set(id.toLowerCase(), new Set(safeList.map((path) => path.toLowerCase())));
+          }
+        } else if (Array.isArray(data.persona)) {
+          paths = new Map();
+        }
+        if (typeof data.noiseEnabled === "boolean") enabled = data.noiseEnabled;
+      },
+      shouldDecoy(url) {
+        if (!enabled) return false;
+        const id = U.extractExtId(url);
+        return id != null && ids.has(id);
+      },
+      isLearnedPath(url) {
+        const id = U.extractExtId(url);
+        const learned = id && paths.get(id);
+        const pathname = learned && U.sanitizeExtensionPath(U.pathFor(url));
+        return !!pathname && learned.has(pathname);
+      },
+    };
+  };
+
   // ======================================================================
   // DOM / attribute utilities
   // ======================================================================
@@ -233,14 +287,10 @@
     if (!policy) return [];
     try {
       if (typeof policy.features === "function") return policy.features();
-    } catch (err) {
-      safeLog(err, "policy features");
-    }
+    } catch {}
     try {
       if (typeof policy.allowedFeatures === "function") return policy.allowedFeatures();
-    } catch (err) {
-      safeLog(err, "policy allowedFeatures");
-    }
+    } catch {}
     return [];
   };
 
@@ -254,13 +304,38 @@
     return colon === -1 ? lower : lower.slice(colon + 1);
   };
 
+  // Token lists of every `<meta http-equiv="content-security-policy">`
+  // directive called `name`, with quotes stripped.
+  const cspMetaDirectives = (name) => {
+    const found = [];
+    try {
+      for (const meta of document.querySelectorAll("meta[http-equiv]")) {
+        if (String(meta.httpEquiv || "").toLowerCase() !== "content-security-policy") continue;
+        for (const directive of String(meta.content || "").split(";")) {
+          const parts = directive.trim().split(/\s+/).filter(Boolean);
+          if (String(parts.shift() || "").toLowerCase() !== name) continue;
+          found.push(parts.map((part) => part.replace(/^'|'$/g, "")));
+        }
+      }
+    } catch {}
+    return found;
+  };
+
+  U.cspAllowsTrustedTypesPolicy = (policyName) =>
+    cspMetaDirectives("trusted-types").every(
+      (tokens) => !tokens.includes("none") && (tokens.includes("*") || tokens.includes(policyName))
+    );
+
+  U.cspRequiresTrustedTypes = () =>
+    cspMetaDirectives("require-trusted-types-for").some((tokens) => tokens.includes("script"));
+
   // ======================================================================
   // Bridge setup — shared MessagePort init pattern used by most block scripts.
   //
   // Each block script creates its own bridge via setupBridge(eventName, maxQueue, onConfigUpdate).
-  // Returns { post, getPort } where:
+  // Returns { post, probe } where:
   //   post(type, payload) — queues message until bridge connects, then forwards.
-  //   getPort()           — returns the connected port (or null before connect).
+  //   probe(url, where)   — reports a blocked extension probe; never throws.
   // ======================================================================
 
   U.setupBridge = (eventName, maxQueue, onConfigUpdate) => {
@@ -273,22 +348,16 @@
       if (!p || typeof p.postMessage !== "function") return;
       try {
         event.stopImmediatePropagation();
-      } catch (err) {
-        safeLog(err, "stop propagation");
-      }
+      } catch {}
       port = p;
       port.onmessage = (portEvent) => {
         try {
           onConfigUpdate(portEvent.data);
-        } catch (err) {
-          safeLog(err, "config update");
-        }
+        } catch {}
       };
       try {
         port.start();
-      } catch (err) {
-        safeLog(err, "port start");
-      }
+      } catch {}
       const batch = queued.splice(0, queued.length);
       for (const msg of batch) {
         try {
@@ -303,22 +372,31 @@
 
     document.addEventListener(eventName, onBridgeInit);
 
+    const post = (type, payload) => {
+      const msg = payload == null ? { type } : { type, ...payload };
+      if (port) {
+        try {
+          port.postMessage(msg);
+          return;
+        } catch {
+          port = null;
+        }
+      }
+      if (queued.length < maxQueue) {
+        queued.push(msg);
+      }
+    };
+
     return {
-      post: (type, payload) => {
-        const msg = payload == null ? { type } : { type, ...payload };
-        if (port) {
-          try {
-            port.postMessage(msg);
-            return;
-          } catch {
-            port = null;
-          }
-        }
-        if (queued.length < maxQueue) {
-          queued.push(msg);
-        }
+      post,
+      probe: (url, where) => {
+        try {
+          post("probe_blocked", {
+            url: url == null ? "" : String(url).slice(0, 512),
+            where: where == null ? "" : String(where).slice(0, 64),
+          });
+        } catch {}
       },
-      getPort: () => port,
     };
   };
 

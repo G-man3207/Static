@@ -6,47 +6,19 @@
   const MAX_QUEUED_PROBES = 1000;
   const COMPAT_SIGNAL_THROTTLE_MS = 15000;
   const blockedFetchPromises = new WeakMap();
-  let persona = new Set();
-  let personaPaths = new Map();
-  let noiseEnabled = false;
+  const noise = U.noisePersona();
   let disabled = false;
   let lastCompatSignalAt = 0;
 
   const applyConfigUpdate = (data) => {
     if (!data || data.type !== "config_update") return;
-    if (Array.isArray(data.persona)) {
-      persona = new Set(data.persona.filter((id) => typeof id === "string"));
-    }
-    if (data.personaPaths && typeof data.personaPaths === "object") {
-      const next = new Map();
-      for (const [id, paths] of Object.entries(data.personaPaths)) {
-        if (typeof id !== "string" || !Array.isArray(paths)) continue;
-        next.set(
-          id.toLowerCase(),
-          new Set(
-            paths.filter((path) => typeof path === "string").map((path) => path.toLowerCase())
-          )
-        );
-      }
-      personaPaths = next;
-    } else if (Array.isArray(data.persona)) {
-      personaPaths = new Map();
-    }
-    if (typeof data.noiseEnabled === "boolean") {
-      noiseEnabled = data.noiseEnabled;
-    }
+    noise.update(data);
     if (typeof data.disabled === "boolean") {
       disabled = data.disabled;
     }
   };
 
   const bridge = U.setupBridge(BRIDGE_EVENT, MAX_QUEUED_PROBES, applyConfigUpdate);
-
-  const postProbe = (url, where) => {
-    const safeUrl = url == null ? "" : String(url).slice(0, 512);
-    const safeWhere = where == null ? "" : String(where).slice(0, 64);
-    bridge.post("probe_blocked", { url: safeUrl, where: safeWhere });
-  };
 
   const postCompatSignal = (signal) => {
     bridge.post("compat_signal", {
@@ -79,12 +51,6 @@
   };
 
   window.addEventListener("unhandledrejection", reportUnhandledBlockedFetch, { capture: true });
-
-  const shouldDecoy = (url) => {
-    if (!noiseEnabled) return false;
-    const id = U.extractExtId(url);
-    return id != null && persona.has(id);
-  };
 
   const PNG_1X1_B64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -166,10 +132,6 @@
     "Guard",
     "Kit",
   ];
-  const IMAGE_DECOY_PATHS = U.IMAGE_DECOY_PATHS;
-  const SCRIPT_DECOY_PATHS = U.SCRIPT_DECOY_PATHS;
-  const HTML_DECOY_PATHS = U.HTML_DECOY_PATHS;
-  const STYLE_DECOY_PATHS = U.STYLE_DECOY_PATHS;
   const fakeXhrResponses = new WeakMap();
   const fakeFetchResponses = new WeakMap();
 
@@ -225,47 +187,37 @@
     return null;
   };
 
+  // Wrap getters so decoy responses report their fake metadata.
+  const patchFakeGetters = (owner, props, valueFor) => {
+    for (const prop of props) {
+      const found = U.descriptorOwnerFor(owner, prop);
+      if (!found) continue;
+      U.wrapGetter(found.owner, prop, (nativeGet) => ({
+        get() {
+          return valueFor(this, prop, nativeGet);
+        },
+      }));
+    }
+  };
+
   const patchFakeResponseMetadata = () => {
     if (typeof Response === "undefined" || !Response.prototype) return;
-    for (const prop of ["type", "url"]) {
-      const found = U.descriptorOwnerFor(Response.prototype, prop);
-      if (!found || !found.desc || typeof found.desc.get !== "function") continue;
-      const { desc, owner } = found;
-      Object.defineProperty(owner, prop, {
-        ...desc,
-        get: U.stealth(
-          function get() {
-            const fake = fakeFetchResponses.get(this);
-            if (fake && Object.prototype.hasOwnProperty.call(fake, prop)) return fake[prop];
-            return desc.get.call(this);
-          },
-          `get ${prop}`,
-          { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
-        ),
-      });
-    }
-
-    const cloneDesc = Object.getOwnPropertyDescriptor(Response.prototype, "clone");
-    const origClone = cloneDesc && cloneDesc.value;
-    if (typeof origClone !== "function") return;
-    const wrappedClone = {
+    patchFakeGetters(Response.prototype, ["type", "url"], (response, prop, nativeGet) => {
+      const fake = fakeFetchResponses.get(response);
+      if (fake && Object.prototype.hasOwnProperty.call(fake, prop)) return fake[prop];
+      return nativeGet.call(response);
+    });
+    U.wrapMethod(Response.prototype, "clone", (origClone) => ({
       clone() {
         const cloned = origClone.apply(this, arguments);
         const fake = fakeFetchResponses.get(this);
         if (fake) fakeFetchResponses.set(cloned, fake);
         return cloned;
       },
-    }.clone;
-    Object.defineProperty(Response.prototype, "clone", {
-      ...cloneDesc,
-      value: U.stealth(wrappedClone, "clone", {
-        length: 0,
-        source: U.nativeSourceFor(origClone, "clone"),
-      }),
-    });
+    }));
   };
 
-  const fakeXhrValueFor = (xhr, prop, desc) => {
+  const fakeXhrValueFor = (xhr, prop, nativeGet) => {
     const fake = fakeXhrResponses.get(xhr);
     if (fake && Object.prototype.hasOwnProperty.call(fake, prop)) {
       if (prop === "responseText" && fake.responseTextError) {
@@ -276,75 +228,45 @@
       }
       return fake[prop];
     }
-    return desc.get.call(xhr);
+    return nativeGet.call(xhr);
   };
 
   const patchFakeXhrMetadata = () => {
     if (typeof XMLHttpRequest === "undefined" || !XMLHttpRequest.prototype) return;
-    for (const prop of [
-      "readyState",
-      "response",
-      "responseText",
-      "responseURL",
-      "status",
-      "statusText",
-    ]) {
-      const found = U.descriptorOwnerFor(XMLHttpRequest.prototype, prop);
-      if (!found || !found.desc || typeof found.desc.get !== "function") continue;
-      const { desc, owner } = found;
-      Object.defineProperty(owner, prop, {
-        ...desc,
-        get: U.stealth(
-          function get() {
-            return fakeXhrValueFor(this, prop, desc);
-          },
-          `get ${prop}`,
-          { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
-        ),
-      });
-    }
-  };
-
-  const pathForDecoy = U.pathFor;
-
-  const matchesPathPattern = U.matchesPathPattern;
-
-  const isLearnedPersonaPath = (url) => {
-    const id = U.extractExtId(url);
-    if (!id) return false;
-    const learned = personaPaths.get(id);
-    if (!learned) return false;
-    const pathname = U.sanitizeExtensionPath(pathForDecoy(url));
-    return pathname ? learned.has(pathname) : false;
+    patchFakeGetters(
+      XMLHttpRequest.prototype,
+      ["readyState", "response", "responseText", "responseURL", "status", "statusText"],
+      fakeXhrValueFor
+    );
   };
 
   const allowlistedOrLearnedKind = (url, pathname, patterns, kind) => {
-    if (matchesPathPattern(pathname, patterns) || isLearnedPersonaPath(url)) return kind;
+    if (U.matchesPathPattern(pathname, patterns) || noise.isLearnedPath(url)) return kind;
     return null;
   };
 
   const decoyKindForPath = (url) => {
-    const pathname = pathForDecoy(url);
+    const pathname = U.pathFor(url);
     if (!pathname) return null;
     if (pathname.endsWith("/manifest.json")) return "manifest";
     if (/\.(png|jpe?g|gif|webp|ico|bmp|svg)$/i.test(pathname)) {
-      const kind = allowlistedOrLearnedKind(url, pathname, IMAGE_DECOY_PATHS, "image");
+      const kind = allowlistedOrLearnedKind(url, pathname, U.IMAGE_DECOY_PATHS, "image");
       return kind && imageDecoyForPath(pathname) ? "image" : null;
     }
     if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) {
-      return allowlistedOrLearnedKind(url, pathname, SCRIPT_DECOY_PATHS, "script");
+      return allowlistedOrLearnedKind(url, pathname, U.SCRIPT_DECOY_PATHS, "script");
     }
     if (pathname.endsWith(".html") || pathname.endsWith(".htm")) {
-      return allowlistedOrLearnedKind(url, pathname, HTML_DECOY_PATHS, "html");
+      return allowlistedOrLearnedKind(url, pathname, U.HTML_DECOY_PATHS, "html");
     }
     if (pathname.endsWith(".css")) {
-      return allowlistedOrLearnedKind(url, pathname, STYLE_DECOY_PATHS, "style");
+      return allowlistedOrLearnedKind(url, pathname, U.STYLE_DECOY_PATHS, "style");
     }
-    return isLearnedPersonaPath(url) ? U.learnedDecoyKindForPath(pathname) : null;
+    return noise.isLearnedPath(url) ? U.learnedDecoyKindForPath(pathname) : null;
   };
 
   const buildDecoyBody = (url) => {
-    const pathname = pathForDecoy(url);
+    const pathname = U.pathFor(url);
     const kind = decoyKindForPath(url);
     if (kind === "manifest") {
       return {
@@ -377,12 +299,9 @@
   };
 
   const decoyHeadersFor = (url, contentType, len) => {
-    const id =
-      (typeof U !== "undefined" && U.extractExtId ? U.extractExtId(url) : null) ||
-      "00000000000000000000000000000000";
-    const iid = id || "00000000000000000000000000000000";
+    const id = U.extractExtId(url) || "00000000000000000000000000000000";
     let h = 0;
-    for (let i = 0; i < iid.length; i++) h = (h * 31 + iid.charCodeAt(i)) >>> 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
     const t = 1704067200000 + (h % 365) * 86400000;
     const lm = new Date(t).toUTCString();
     const hd = {
@@ -401,8 +320,7 @@
     return 0;
   };
 
-  const buildDecoyResponse = (url, method = "GET", decoyBody = buildDecoyBody(url)) => {
-    if (!decoyBody) return null;
+  const buildDecoyResponse = (url, method, decoyBody) => {
     const { body, contentType } = decoyBody;
     const responseBody = method === "HEAD" ? null : body;
     const len = byteLengthFor(body);
@@ -435,12 +353,6 @@
   };
 
   const isDecoyableMethod = (method) => method === "GET" || method === "HEAD";
-
-  const bump = (where, url) => {
-    try {
-      postProbe(url, where);
-    } catch {}
-  };
 
   const textBodyFor = (body) => {
     if (typeof body === "string") return body;
@@ -477,26 +389,23 @@
   };
 
   const patchFetch = () => {
-    const origFetch = window.fetch;
-    if (typeof origFetch !== "function") return;
-    const wrappedFetch = {
+    U.wrapMethod(window, "fetch", (origFetch) => ({
       fetch(input) {
         if (disabled) return origFetch.apply(this, arguments);
         if (U.isBad(input)) {
           const url = U.getUrl(input);
           const method = fetchMethodFor(input, arguments[1]);
           const decoyBody = buildDecoyBody(url);
-          if (shouldDecoy(url) && isDecoyableMethod(method) && decoyBody) {
-            bump("fetch-decoy", url);
+          if (noise.shouldDecoy(url) && isDecoyableMethod(method) && decoyBody) {
+            bridge.probe(url, "fetch-decoy");
             return Promise.resolve(buildDecoyResponse(url, method, decoyBody));
           }
-          bump("fetch", url);
+          bridge.probe(url, "fetch");
           return rejectBlockedFetch(url);
         }
         return origFetch.apply(this, arguments);
       },
-    }.fetch;
-    window.fetch = U.stealth(wrappedFetch, "fetch", { length: 1 });
+    }));
   };
 
   const emptyFakeXhr = (readyState) => ({
@@ -524,12 +433,8 @@
     return names;
   };
 
-  const fakeXhrSuccess = (xhr, blocked, decoyBody = buildDecoyBody(blocked.url)) => {
-    const { async = true, method = "GET", url } = blocked;
-    if (!decoyBody) {
-      fakeXhrFailure(xhr, async);
-      return;
-    }
+  const fakeXhrSuccess = (xhr, blocked, decoyBody) => {
+    const { async, method, url } = blocked;
     const { contentType } = decoyBody;
     const body = method === "HEAD" ? "" : decoyBody.body;
     const text = method === "HEAD" ? "" : textBodyFor(body);
@@ -598,9 +503,6 @@
   const patchXhr = () => {
     const blockedXHRs = new WeakMap();
     const visibleHeaderCache = new WeakMap();
-    const origOpen = XMLHttpRequest.prototype.open;
-    const origSend = XMLHttpRequest.prototype.send;
-    const origGetResponseHeader = XMLHttpRequest.prototype.getResponseHeader;
     const origGetAllResponseHeaders = XMLHttpRequest.prototype.getAllResponseHeaders;
     const visibleHeaderNamesFor = (xhr) => {
       try {
@@ -614,7 +516,7 @@
         return null;
       }
     };
-    const wrappedOpen = {
+    U.wrapMethod(XMLHttpRequest.prototype, "open", (origOpen) => ({
       open(method, url, ...rest) {
         if (disabled) return origOpen.call(this, method, url, ...rest);
         const bad = U.isBad(url);
@@ -631,24 +533,24 @@
         visibleHeaderCache.delete(this);
         return origOpen.call(this, method, bad ? "about:blank" : url, ...rest);
       },
-    }.open;
-    const wrappedSend = {
+    }));
+    U.wrapMethod(XMLHttpRequest.prototype, "send", (origSend) => ({
       send(...args) {
         if (disabled) return origSend.apply(this, args);
         if (!blockedXHRs.has(this)) return origSend.apply(this, args);
         const blocked = blockedXHRs.get(this);
         blockedXHRs.delete(this);
         const decoyBody = buildDecoyBody(blocked.url);
-        if (shouldDecoy(blocked.url) && isDecoyableMethod(blocked.method) && decoyBody) {
-          bump("xhr-decoy", blocked.url);
+        if (noise.shouldDecoy(blocked.url) && isDecoyableMethod(blocked.method) && decoyBody) {
+          bridge.probe(blocked.url, "xhr-decoy");
           fakeXhrSuccess(this, blocked, decoyBody);
           return;
         }
-        bump("xhr", blocked.url);
+        bridge.probe(blocked.url, "xhr");
         fakeXhrFailure(this, blocked.async);
       },
-    }.send;
-    const wrappedGetResponseHeader = {
+    }));
+    U.wrapMethod(XMLHttpRequest.prototype, "getResponseHeader", (origGetResponseHeader) => ({
       getResponseHeader(name) {
         const normalizedName = String(name == null ? "" : name)
           .trim()
@@ -665,8 +567,8 @@
         if (visibleHeaderNames && !visibleHeaderNames.has(normalizedName)) return null;
         return origGetResponseHeader.apply(this, arguments);
       },
-    }.getResponseHeader;
-    const wrappedGetAllResponseHeaders = {
+    }));
+    U.wrapMethod(XMLHttpRequest.prototype, "getAllResponseHeaders", () => ({
       getAllResponseHeaders() {
         const fake = fakeXhrResponses.get(this);
         if (fake) return fake.allHeaders;
@@ -674,19 +576,7 @@
         visibleHeaderCache.set(this, { rawHeaders, names: parseHeaderNames(rawHeaders) });
         return rawHeaders;
       },
-    }.getAllResponseHeaders;
-    XMLHttpRequest.prototype.open = U.stealth(wrappedOpen, "open");
-    XMLHttpRequest.prototype.send = U.stealth(wrappedSend, "send");
-    XMLHttpRequest.prototype.getResponseHeader = U.stealth(
-      wrappedGetResponseHeader,
-      "getResponseHeader",
-      { length: 1 }
-    );
-    XMLHttpRequest.prototype.getAllResponseHeaders = U.stealth(
-      wrappedGetAllResponseHeaders,
-      "getAllResponseHeaders",
-      { length: 0 }
-    );
+    }));
   };
 
   patchFakeResponseMetadata();

@@ -1,4 +1,3 @@
-/* eslint-disable max-lines -- MAIN-world style shims are safer kept contiguous */
 // Static - MAIN-world blocking for CSS declaration extension URL probes.
 (() => {
   const U = globalThis.__static_block_utils__;
@@ -15,18 +14,6 @@
       disabled = data.disabled;
     }
   });
-
-  const postProbe = (url, where) => {
-    const safeUrl = url == null ? "" : String(url).slice(0, 512);
-    const safeWhere = where == null ? "" : String(where).slice(0, 64);
-    bridge.post("probe_blocked", { url: safeUrl, where: safeWhere });
-  };
-
-  const bump = (where, url) => {
-    try {
-      postProbe(url, where);
-    } catch {}
-  };
 
   const isStyleElement = (node) => {
     return (
@@ -53,7 +40,7 @@
   const blockStyleText = (label, value) => {
     const url = U.firstBadUrlIn(value);
     if (!url) return false;
-    bump(label, url);
+    bridge.probe(url, label);
     return true;
   };
 
@@ -108,7 +95,7 @@
   const sanitizeStyleDeclarationValue = (value, label) => {
     const url = U.firstBadUrlIn(value);
     if (!url) return { changed: false, value };
-    bump(label, url);
+    bridge.probe(url, label);
 
     if (!nativeCssTextSetter || typeof document.createElement !== "function") {
       return { changed: true, value: "" };
@@ -169,200 +156,100 @@
   };
 
   const patchSetProperty = (proto) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, "setProperty");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(proto, "setProperty", (orig) => ({
       setProperty(name, value, priority) {
         if (disabled) return orig.call(this, name, value, priority);
         const url = U.firstBadUrlIn(value);
         if (url) {
-          bump("style.setProperty", url);
+          bridge.probe(url, "style.setProperty");
           return;
         }
         return orig.call(this, name, value, priority);
       },
-    }.setProperty;
-    Object.defineProperty(proto, "setProperty", {
-      ...desc,
-      value: U.stealth(wrapped, "setProperty", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "setProperty"),
-      }),
-    });
+    }));
   };
+
+  // Setter that strips extension URLs from a CSS declaration value.
+  const sanitizingDeclarationSetter = (label) => (nativeSet) => ({
+    set(value) {
+      if (disabled) {
+        nativeSet.call(this, value);
+        return;
+      }
+      const sanitized = sanitizeStyleDeclarationValue(value, label);
+      nativeSet.call(this, sanitized.changed ? sanitized.value : value);
+    },
+  });
 
   const patchCssText = (proto) => {
     const desc = Object.getOwnPropertyDescriptor(proto, "cssText");
     if (!desc || !desc.set) return;
     nativeCssTextGetter = desc.get;
     nativeCssTextSetter = desc.set;
-    const wrapped = {
-      set cssText(value) {
-        if (disabled) {
-          desc.set.call(this, value);
-          return;
-        }
-        const sanitized = sanitizeStyleDeclarationValue(value, "style.cssText");
-        desc.set.call(this, sanitized.changed ? sanitized.value : value);
-      },
-    };
-    Object.defineProperty(proto, "cssText", {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: U.stealth(Object.getOwnPropertyDescriptor(wrapped, "cssText").set, "set cssText", {
-        length: desc.set.length,
-        source: U.nativeSourceFor(desc.set, "set cssText"),
-      }),
-    });
+    U.wrapSetter(proto, "cssText", sanitizingDeclarationSetter("style.cssText"));
   };
 
   const patchCssUrlPropertySetters = (proto) => {
     for (const prop of Object.getOwnPropertyNames(proto || {})) {
       if (prop === "cssText") continue;
-      const desc = Object.getOwnPropertyDescriptor(proto, prop);
-      if (!desc || !desc.set) continue;
-      const setterHolder = {
-        set [prop](value) {
-          if (disabled) {
-            desc.set.call(this, value);
-            return;
-          }
-          const sanitized = sanitizeStyleDeclarationValue(value, "style.property");
-          desc.set.call(this, sanitized.changed ? sanitized.value : value);
-        },
-      };
-      const wrappedSet = Object.getOwnPropertyDescriptor(setterHolder, prop).set;
       try {
-        Object.defineProperty(proto, prop, {
-          configurable: true,
-          enumerable: desc.enumerable,
-          get: desc.get,
-          set: U.stealth(wrappedSet, `set ${prop}`, {
-            length: desc.set.length,
-            source: U.nativeSourceFor(desc.set, `set ${prop}`),
-          }),
-        });
+        U.wrapSetter(proto, prop, sanitizingDeclarationSetter("style.property"));
       } catch {}
     }
   };
 
   const patchTextContent = (proto) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, "textContent");
-    if (!desc || !desc.set) return;
-    const wrapped = {
-      set textContent(value) {
-        if (disabled) {
-          desc.set.call(this, value);
-          return;
-        }
-        if (isStyleElement(this) && blockStyleText("style.textContent", value)) {
-          desc.set.call(this, "");
-          return;
-        }
-        if (isStyleTextNode(this) && blockStyleText("style.textContent", value)) {
-          desc.set.call(this, "");
-          return;
-        }
-        desc.set.call(this, value);
+    U.wrapSetter(proto, "textContent", (nativeSet) => ({
+      set(value) {
+        const blocked =
+          !disabled &&
+          (isStyleElement(this) || isStyleTextNode(this)) &&
+          blockStyleText("style.textContent", value);
+        nativeSet.call(this, blocked ? "" : value);
       },
-    };
-    Object.defineProperty(proto, "textContent", {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: U.stealth(
-        Object.getOwnPropertyDescriptor(wrapped, "textContent").set,
-        "set textContent",
-        {
-          length: desc.set.length,
-          source: U.nativeSourceFor(desc.set, "set textContent"),
-        }
-      ),
-    });
+    }));
   };
 
   const patchStyleTextNodeSetter = (proto, prop, label) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, prop);
-    if (!desc || !desc.set) return;
-    const wrapped = {
-      set [prop](value) {
-        if (disabled) {
-          desc.set.call(this, value);
-          return;
-        }
-        if (isStyleTextNode(this) && blockStyleText(label, value)) {
-          desc.set.call(this, "");
-          return;
-        }
-        desc.set.call(this, value);
+    U.wrapSetter(proto, prop, (nativeSet) => ({
+      set(value) {
+        const blocked = !disabled && isStyleTextNode(this) && blockStyleText(label, value);
+        nativeSet.call(this, blocked ? "" : value);
       },
-    };
-    Object.defineProperty(proto, prop, {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: U.stealth(Object.getOwnPropertyDescriptor(wrapped, prop).set, `set ${prop}`, {
-        length: desc.set.length,
-        source: U.nativeSourceFor(desc.set, `set ${prop}`),
-      }),
-    });
+    }));
   };
 
   const patchInnerHTML = (proto, innerHTMLDesc) => {
-    if (!innerHTMLDesc || !innerHTMLDesc.set) return;
-    const wrapped = {
-      set innerHTML(value) {
+    U.wrapSetter(proto, "innerHTML", (nativeSet) => ({
+      set(value) {
         if (disabled) {
-          innerHTMLDesc.set.call(this, value);
+          nativeSet.call(this, value);
           return;
         }
         const nextValue =
           isStyleElement(this) && blockStyleText("style.innerHTML", value)
             ? ""
             : sanitizeStyleMarkup(value, "style.innerHTML", innerHTMLDesc);
-        innerHTMLDesc.set.call(this, nextValue);
+        nativeSet.call(this, nextValue);
       },
-    };
-    Object.defineProperty(proto, "innerHTML", {
-      configurable: true,
-      enumerable: innerHTMLDesc.enumerable,
-      get: innerHTMLDesc.get,
-      set: U.stealth(Object.getOwnPropertyDescriptor(wrapped, "innerHTML").set, "set innerHTML", {
-        length: innerHTMLDesc.set.length,
-        source: U.nativeSourceFor(innerHTMLDesc.set, "set innerHTML"),
-      }),
-    });
+    }));
   };
 
-  const patchOuterHTML = (proto, outerHTMLDesc, innerHTMLDesc) => {
-    if (!outerHTMLDesc || !outerHTMLDesc.set || !innerHTMLDesc) return;
-    const wrapped = {
-      set outerHTML(value) {
-        if (disabled) {
-          outerHTMLDesc.set.call(this, value);
-          return;
-        }
-        outerHTMLDesc.set.call(this, sanitizeStyleMarkup(value, "style.outerHTML", innerHTMLDesc));
+  const patchOuterHTML = (proto, innerHTMLDesc) => {
+    if (!innerHTMLDesc) return;
+    U.wrapSetter(proto, "outerHTML", (nativeSet) => ({
+      set(value) {
+        nativeSet.call(
+          this,
+          disabled ? value : sanitizeStyleMarkup(value, "style.outerHTML", innerHTMLDesc)
+        );
       },
-    };
-    Object.defineProperty(proto, "outerHTML", {
-      configurable: true,
-      enumerable: outerHTMLDesc.enumerable,
-      get: outerHTMLDesc.get,
-      set: U.stealth(Object.getOwnPropertyDescriptor(wrapped, "outerHTML").set, "set outerHTML", {
-        length: outerHTMLDesc.set.length,
-        source: U.nativeSourceFor(outerHTMLDesc.set, "set outerHTML"),
-      }),
-    });
+    }));
   };
 
   const patchInsertAdjacentHTML = (proto, innerHTMLDesc) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, "insertAdjacentHTML");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function" || !innerHTMLDesc) return;
-    const wrapped = {
+    if (!innerHTMLDesc) return;
+    U.wrapMethod(proto, "insertAdjacentHTML", (orig) => ({
       insertAdjacentHTML(position, html) {
         if (disabled) return orig.call(this, position, html);
         const nextHtml =
@@ -371,35 +258,18 @@
             : sanitizeStyleMarkup(html, "style.insertAdjacentHTML", innerHTMLDesc);
         return orig.call(this, position, nextHtml);
       },
-    }.insertAdjacentHTML;
-    Object.defineProperty(proto, "insertAdjacentHTML", {
-      ...desc,
-      value: U.stealth(wrapped, "insertAdjacentHTML", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "insertAdjacentHTML"),
-      }),
-    });
+    }));
   };
 
   const patchInsertAdjacentText = (proto) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, "insertAdjacentText");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(proto, "insertAdjacentText", (orig) => ({
       insertAdjacentText(position, text) {
         if (disabled) return orig.call(this, position, text);
         const nextText =
           isStyleElement(this) && blockStyleText("style.insertAdjacentText", text) ? "" : text;
         return orig.call(this, position, nextText);
       },
-    }.insertAdjacentText;
-    Object.defineProperty(proto, "insertAdjacentText", {
-      ...desc,
-      value: U.stealth(wrapped, "insertAdjacentText", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "insertAdjacentText"),
-      }),
-    });
+    }));
   };
 
   const scrubInsertionArgs = (target, args, label) => {
@@ -421,10 +291,7 @@
   };
 
   const patchNodeInsertionMethod = (proto, name, label) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, name);
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(proto, name, (orig) => ({
       [name](node, ...rest) {
         if (disabled) return orig.call(this, node, ...rest);
         if (node && typeof node === "object") {
@@ -434,45 +301,27 @@
         }
         return orig.call(this, node, ...rest);
       },
-    }[name];
-    Object.defineProperty(proto, name, {
-      ...desc,
-      value: U.stealth(wrapped, name, {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, name),
-      }),
-    });
+    }));
   };
 
   const patchElementInsertionMethod = (proto, name, label) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, name);
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(proto, name, (orig) => ({
       [name](...args) {
         if (disabled) return orig.apply(this, args);
         return orig.apply(this, scrubInsertionArgs(this, args, label));
       },
-    }[name];
-    Object.defineProperty(proto, name, {
-      ...desc,
-      value: U.stealth(wrapped, name, {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, name),
-      }),
-    });
+    }));
   };
 
   const patchStyleTextInsertion = () => {
     const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
-    const outerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, "outerHTML");
     patchTextContent(Node.prototype);
     patchStyleTextNodeSetter(Node.prototype, "nodeValue", "style.nodeValue");
     if (typeof CharacterData !== "undefined" && CharacterData.prototype) {
       patchStyleTextNodeSetter(CharacterData.prototype, "data", "style.data");
     }
     patchInnerHTML(Element.prototype, innerHTMLDesc);
-    patchOuterHTML(Element.prototype, outerHTMLDesc, innerHTMLDesc);
+    patchOuterHTML(Element.prototype, innerHTMLDesc);
     patchInsertAdjacentHTML(Element.prototype, innerHTMLDesc);
     patchInsertAdjacentText(Element.prototype);
     for (const name of ["appendChild", "insertBefore", "replaceChild"]) {
@@ -492,7 +341,7 @@
       const value = style.getPropertyValue(name);
       const url = U.firstBadUrlIn(value);
       if (url) {
-        bump(label, url);
+        bridge.probe(url, label);
         try {
           style.removeProperty(name);
           changed = true;
@@ -519,9 +368,7 @@
 
   const patchStyleAttributeSetters = () => {
     if (typeof Element === "undefined" || !Element.prototype) return;
-    const origSetAttribute = Element.prototype.setAttribute;
-    const origSetAttributeNS = Element.prototype.setAttributeNS;
-    const wrapped = {
+    U.wrapMethod(Element.prototype, "setAttribute", (origSetAttribute) => ({
       setAttribute(name, value) {
         if (disabled) return origSetAttribute.apply(this, arguments);
         if (U.attrLocalName(null, name) === "style") {
@@ -530,24 +377,18 @@
         }
         return origSetAttribute.apply(this, arguments);
       },
+    }));
+    U.wrapMethod(Element.prototype, "setAttributeNS", (origSetAttributeNS) => ({
       setAttributeNS(ns, name, value) {
         if (disabled) return origSetAttributeNS.apply(this, arguments);
         if (U.attrLocalName(null, name) === "style") {
           const sanitized = sanitizeStyleDeclarationValue(value, "style.setAttributeNS");
-          return origSetAttributeNS.call(
-            this,
-            ns,
-            name,
-            sanitized.changed ? sanitized.value : value
-          );
+          const safeValue = sanitized.changed ? sanitized.value : value;
+          return origSetAttributeNS.call(this, ns, name, safeValue);
         }
         return origSetAttributeNS.apply(this, arguments);
       },
-    };
-    Element.prototype.setAttribute = U.stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
-    Element.prototype.setAttributeNS = U.stealth(wrapped.setAttributeNS, "setAttributeNS", {
-      length: 3,
-    });
+    }));
   };
 
   const observeStyleAttributes = () => {

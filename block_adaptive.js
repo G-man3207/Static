@@ -54,7 +54,6 @@
     /^(?:grammarly-|lastpass-|dashlane-|honey-|onepassword-|protonpass-|keepassxc-|darkreader-|bitwarden-)/i;
   const DOM_MARKER_CLASS_RE =
     /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-)|protonpass(?:$|-)|keepassxc(?:$|-)|darkreader(?:$|-)|bitwarden(?:$|-))/i;
-  const adaptiveWindows = new Map();
   const reportedVendorSignals = new Set();
   const instrumentedFingerprintGlobals = new WeakSet();
   const instrumentedSiftQueues = new WeakSet();
@@ -75,6 +74,7 @@
     sift: { account: false, scriptUrl: "", source: "", trackPageview: false },
   };
   let disabled = false;
+  let adaptiveWindow = null;
   let activeAdaptiveSource = "";
   const asyncSourceWrappers = new WeakMap();
   const eventListenerWrappers = new WeakMap();
@@ -349,10 +349,10 @@
   };
 
   const getAdaptiveEntry = (now) => {
-    const key = "page-window";
-    let entry = adaptiveWindows.get(key);
-    if (entry && now - entry.startedAt <= ADAPTIVE_WINDOW_MS) return entry;
-    entry = {
+    if (adaptiveWindow && now - adaptiveWindow.startedAt <= ADAPTIVE_WINDOW_MS) {
+      return adaptiveWindow;
+    }
+    adaptiveWindow = {
       startedAt: now,
       lastReportedAt: 0,
       kinds: {},
@@ -360,8 +360,7 @@
       sources: {},
       details: {},
     };
-    adaptiveWindows.set(key, entry);
-    return entry;
+    return adaptiveWindow;
   };
 
   const bumpEntry = (entry, kind, detail, source) => {
@@ -573,22 +572,17 @@
     if (typeof orig !== "function") return;
     const wrapped = wrap(orig);
     if (typeof wrapped !== "function") return;
+    U.stealth(wrapped, key, { length: orig.length, source: U.nativeSourceFor(orig, key) });
     try {
       Object.defineProperty(target, key, {
         configurable: true,
         enumerable: Object.prototype.propertyIsEnumerable.call(target, key),
         writable: true,
-        value: U.stealth(wrapped, key, {
-          length: orig.length,
-          source: U.nativeSourceFor(orig, key),
-        }),
+        value: wrapped,
       });
     } catch {
       try {
-        target[key] = U.stealth(wrapped, key, {
-          length: orig.length,
-          source: U.nativeSourceFor(orig, key),
-        });
+        target[key] = wrapped;
       } catch {}
     }
   };
@@ -884,39 +878,29 @@
     if (vendorScanTicks < 20) setTimeout(scanVendorRuntime, 500);
   };
 
-  const patchMethod = ({ owner, name, label, recorder, length }) => {
-    if (!owner || typeof owner[name] !== "function") return;
-    const orig = owner[name];
-    const wrapped = {
+  const patchMethod = ({ owner, name, recorder }) => {
+    U.wrapMethod(owner, name, (orig) => ({
       [name](...args) {
         try {
-          if (recorder) recorder.apply(this, args);
+          recorder.apply(this, args);
         } catch {}
         return orig.apply(this, args);
       },
-    }[name];
-    owner[name] = U.stealth(wrapped, label || name, { length: length ?? orig.length });
+    }));
   };
 
   const patchGetter = (proto, prop, detail, kind) => {
     try {
       const found = U.descriptorOwnerFor(proto, prop);
-      const desc = found && found.desc;
-      if (!desc || typeof desc.get !== "function") return;
-      Object.defineProperty(found.owner, prop, {
-        configurable: true,
-        enumerable: desc.enumerable,
-        get: U.stealth(
-          function get() {
-            try {
-              recordAdaptiveSignal(kind, { detail });
-            } catch {}
-            return desc.get.call(this);
-          },
-          `get ${prop}`,
-          { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
-        ),
-      });
+      if (!found) return;
+      U.wrapGetter(found.owner, prop, (nativeGet) => ({
+        get() {
+          try {
+            recordAdaptiveSignal(kind, { detail });
+          } catch {}
+          return nativeGet.call(this);
+        },
+      }));
     } catch {}
   };
 
@@ -1230,23 +1214,12 @@
   };
 
   const patchEventHandlerProperty = (owner, prop, label) => {
-    if (!owner) return;
     try {
-      const desc = Object.getOwnPropertyDescriptor(owner, prop);
-      if (!desc || typeof desc.set !== "function") return;
-      Object.defineProperty(owner, prop, {
-        ...desc,
-        set: U.stealth(
-          function set(value) {
-            return desc.set.call(this, wrapAsyncCallback(value, currentAdaptiveSource(), label));
-          },
-          `set ${prop}`,
-          {
-            length: desc.set.length,
-            source: U.nativeSourceFor(desc.set, `set ${prop}`),
-          }
-        ),
-      });
+      U.wrapSetter(owner, prop, (nativeSet) => ({
+        set(value) {
+          return nativeSet.call(this, wrapAsyncCallback(value, currentAdaptiveSource(), label));
+        },
+      }));
     } catch {}
   };
 
@@ -1280,7 +1253,6 @@
             : null
         );
       },
-      length: 1,
     });
     patchXhrNetwork();
     patchBeaconNetwork();
@@ -1310,20 +1282,12 @@
 
   const patchBeaconNetwork = () => {
     try {
-      const navProto = Object.getPrototypeOf(navigator);
-      const beaconDesc = navProto && Object.getOwnPropertyDescriptor(navProto, "sendBeacon");
-      const origBeacon = beaconDesc && beaconDesc.value;
-      if (typeof origBeacon !== "function") return;
-      const wrappedBeacon = {
+      U.wrapMethod(Object.getPrototypeOf(navigator), "sendBeacon", (origBeacon) => ({
         sendBeacon(url) {
           recordAdaptiveNetwork("sendBeacon", url, arguments[1]);
           return origBeacon.apply(this, arguments);
         },
-      }.sendBeacon;
-      Object.defineProperty(navProto, "sendBeacon", {
-        ...beaconDesc,
-        value: U.stealth(wrappedBeacon, "sendBeacon", { length: 1 }),
-      });
+      }));
     } catch {}
   };
 
@@ -1359,9 +1323,7 @@
 
   const patchInputHooks = () => {
     if (typeof EventTarget === "undefined" || !EventTarget.prototype) return;
-    const origAddEventListener = EventTarget.prototype.addEventListener;
-    const origRemoveEventListener = EventTarget.prototype.removeEventListener;
-    const wrappedAddEventListener = {
+    U.wrapMethod(EventTarget.prototype, "addEventListener", (origAddEventListener) => ({
       addEventListener(type, listener) {
         try {
           const eventType = String(type);
@@ -1383,26 +1345,14 @@
         });
         return origAddEventListener.apply(this, args);
       },
-    }.addEventListener;
-    const wrappedRemoveEventListener = {
+    }));
+    U.wrapMethod(EventTarget.prototype, "removeEventListener", (origRemoveEventListener) => ({
       removeEventListener(type, listener) {
         const args = Array.from(arguments);
         args[1] = eventListenerForRemoval(this, type, listener, arguments[2]);
         return origRemoveEventListener.apply(this, args);
       },
-    }.removeEventListener;
-    EventTarget.prototype.addEventListener = U.stealth(
-      wrappedAddEventListener,
-      "addEventListener",
-      {
-        length: 2,
-      }
-    );
-    EventTarget.prototype.removeEventListener = U.stealth(
-      wrappedRemoveEventListener,
-      "removeEventListener",
-      { length: 2 }
-    );
+    }));
   };
 
   try {

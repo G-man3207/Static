@@ -48,7 +48,7 @@
     try {
       supported.push(...U.readPolicyFeatures(document.featurePolicy || document.permissionsPolicy));
     } catch {}
-    if (!supported.length && typeof document.createElement === "function") {
+    if (!supported.length) {
       try {
         supported.push(...U.readPolicyFeatures(document.createElement("iframe").featurePolicy));
       } catch {}
@@ -60,7 +60,7 @@
   const sandboxSupports = (token) => {
     const safeToken = String(token || "").toLowerCase();
     if (!safeToken) return false;
-    if (!sandboxTokenList && typeof document.createElement === "function") {
+    if (!sandboxTokenList) {
       try {
         sandboxTokenList = document.createElement("iframe").sandbox;
       } catch {
@@ -87,45 +87,10 @@
     return kept;
   };
 
-  const normalizeTokenList = (value, supports) => normalizedTokensFor(value, supports).join(" ");
-
   const normalizeSandboxTokens = (tokens) =>
     normalizedTokensFor(tokens.map((token) => String(token)).join(" "), sandboxSupports);
 
-  const normalizeSandboxValue = (value) => normalizeTokenList(value, sandboxSupports);
-
-  const cspTrustedTypesAllowsPolicy = (policyName) => {
-    try {
-      for (const meta of document.querySelectorAll("meta[http-equiv]")) {
-        if (String(meta.httpEquiv || "").toLowerCase() !== "content-security-policy") continue;
-        const directives = String(meta.content || "").split(";");
-        for (const directive of directives) {
-          const parts = directive.trim().split(/\s+/).filter(Boolean);
-          if (String(parts.shift() || "").toLowerCase() !== "trusted-types") continue;
-          const tokens = parts.map((part) => part.replace(/^'|'$/g, ""));
-          if (tokens.includes("none")) return false;
-          if (!tokens.includes("*") && !tokens.includes(policyName)) return false;
-        }
-      }
-    } catch {}
-    return true;
-  };
-
-  const trustedTypesRequireScript = () => {
-    try {
-      for (const meta of document.querySelectorAll("meta[http-equiv]")) {
-        if (String(meta.httpEquiv || "").toLowerCase() !== "content-security-policy") continue;
-        const directives = String(meta.content || "").split(";");
-        for (const directive of directives) {
-          const parts = directive.trim().split(/\s+/).filter(Boolean);
-          if (String(parts.shift() || "").toLowerCase() !== "require-trusted-types-for") continue;
-          const tokens = parts.map((part) => part.replace(/^'|'$/g, ""));
-          if (tokens.includes("script")) return true;
-        }
-      }
-    } catch {}
-    return false;
-  };
+  const normalizeSandboxValue = (value) => normalizedTokensFor(value, sandboxSupports).join(" ");
 
   const trustedHtmlPolicyForSink = () => {
     if (trustedHtmlPolicy !== undefined) return trustedHtmlPolicy;
@@ -133,7 +98,7 @@
       trustedHtmlPolicy = null;
       return null;
     }
-    if (!cspTrustedTypesAllowsPolicy("staticBlockIframeAttrs")) {
+    if (!U.cspAllowsTrustedTypesPolicy("staticBlockIframeAttrs")) {
       trustedHtmlPolicy = null;
       return null;
     }
@@ -219,146 +184,75 @@
   };
 
   const patchAttributeSetters = () => {
-    const origSetAttribute = Element.prototype.setAttribute;
-    const origSetAttributeNS = Element.prototype.setAttributeNS;
     nativeRemoveAttribute = Element.prototype.removeAttribute;
-    const wrapped = {
+    U.wrapMethod(Element.prototype, "setAttribute", (origSetAttribute) => ({
       setAttribute(name, value) {
         if (disabled) return origSetAttribute.call(this, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttribute.call(this, name, normalized.value);
       },
+    }));
+    U.wrapMethod(Element.prototype, "setAttributeNS", (origSetAttributeNS) => ({
       setAttributeNS(ns, name, value) {
         if (disabled) return origSetAttributeNS.call(this, ns, name, value);
         const normalized = normalizeIframeAttr(this, name, value);
         if (normalized.skip) return;
         return origSetAttributeNS.call(this, ns, name, normalized.value);
       },
-    };
-    Element.prototype.setAttribute = U.stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
-    Element.prototype.setAttributeNS = U.stealth(wrapped.setAttributeNS, "setAttributeNS", {
-      length: 3,
-    });
+    }));
   };
 
   const patchIframeStringProperty = (prop, normalize, beforeSet) => {
     if (typeof HTMLIFrameElement === "undefined") return;
-    const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, prop);
-    if (!desc || !desc.set) return;
-    const setterHolder = {
-      set [prop](value) {
+    U.wrapSetter(HTMLIFrameElement.prototype, prop, (nativeSet) => ({
+      set(value) {
         if (disabled) {
-          desc.set.call(this, value);
+          nativeSet.call(this, value);
           return;
         }
         if (beforeSet) beforeSet(this);
-        desc.set.call(this, normalize(value));
+        nativeSet.call(this, normalize(value));
       },
-    };
-    const wrappedSet = Object.getOwnPropertyDescriptor(setterHolder, prop).set;
-    Object.defineProperty(HTMLIFrameElement.prototype, prop, {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: U.stealth(wrappedSet, `set ${prop}`, {
-        length: desc.set.length,
-        source: U.nativeSourceFor(desc.set, `set ${prop}`),
-      }),
-    });
+    }));
   };
 
   const patchIframeLegacyBooleanProperty = (prop) => {
     if (typeof HTMLIFrameElement === "undefined") return;
-    const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, prop);
-    if (!desc || !desc.set) return;
-    const setterHolder = {
-      set [prop](value) {
-        if (disabled) {
-          desc.set.call(this, value);
-          return;
-        }
-        if (value && this.hasAttribute("allow")) return;
-        desc.set.call(this, value);
+    U.wrapSetter(HTMLIFrameElement.prototype, prop, (nativeSet) => ({
+      set(value) {
+        if (!disabled && value && this.hasAttribute("allow")) return;
+        nativeSet.call(this, value);
       },
-    };
-    const wrappedSet = Object.getOwnPropertyDescriptor(setterHolder, prop).set;
-    Object.defineProperty(HTMLIFrameElement.prototype, prop, {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: U.stealth(wrappedSet, `set ${prop}`, {
-        length: desc.set.length,
-        source: U.nativeSourceFor(desc.set, `set ${prop}`),
-      }),
-    });
+    }));
+  };
+
+  // If Trusted Types is enforced (at document_start this is from HTTP headers,
+  // not meta tags) but we cannot create a compatible policy, leave HTML sinks
+  // unpatched to avoid TrustedHTML assignment violations.
+  const canPatchHtmlSinks = () => trustedHtmlPolicy !== null || !U.cspRequiresTrustedTypes();
+
+  const trustedHtmlFor = (value) => {
+    const html = sanitizeIframeMarkup(value);
+    return trustedHtmlPolicy ? trustedHtmlPolicy.createHTML(html) : html;
   };
 
   const patchHtmlSink = (proto, prop) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, prop);
-    if (!desc || !desc.set) return;
-
-    // If Trusted Types is enforced (at document_start this is from HTTP headers,
-    // not meta tags) but we cannot create a compatible policy, skip patching
-    // to avoid TrustedHTML assignment violations.
-    if (trustedHtmlPolicy === null && trustedTypesRequireScript()) {
-      return;
-    }
-
-    const setterHolder = {
-      set [prop](value) {
-        if (disabled) {
-          desc.set.call(this, value);
-          return;
-        }
-        const html = sanitizeIframeMarkup(value);
-        if (trustedHtmlPolicy) {
-          desc.set.call(this, trustedHtmlPolicy.createHTML(html));
-        } else {
-          desc.set.call(this, html);
-        }
+    if (!canPatchHtmlSinks()) return;
+    U.wrapSetter(proto, prop, (nativeSet) => ({
+      set(value) {
+        nativeSet.call(this, disabled ? value : trustedHtmlFor(value));
       },
-    };
-    const wrappedSet = Object.getOwnPropertyDescriptor(setterHolder, prop).set;
-    Object.defineProperty(proto, prop, {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: U.stealth(wrappedSet, `set ${prop}`, {
-        length: desc.set.length,
-        source: U.nativeSourceFor(desc.set, `set ${prop}`),
-      }),
-    });
+    }));
   };
 
   const patchInsertAdjacentHTML = () => {
-    const desc = Object.getOwnPropertyDescriptor(Element.prototype, "insertAdjacentHTML");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-
-    // If Trusted Types is enforced but we cannot create a compatible policy,
-    // skip patching to avoid TrustedHTML assignment violations.
-    if (trustedHtmlPolicy === null && trustedTypesRequireScript()) {
-      return;
-    }
-
-    const wrapped = {
+    if (!canPatchHtmlSinks()) return;
+    U.wrapMethod(Element.prototype, "insertAdjacentHTML", (orig) => ({
       insertAdjacentHTML(position, html) {
-        if (disabled) return orig.call(this, position, html);
-        const sanitized = sanitizeIframeMarkup(html);
-        if (trustedHtmlPolicy) {
-          return orig.call(this, position, trustedHtmlPolicy.createHTML(sanitized));
-        }
-        return orig.call(this, position, sanitized);
+        return orig.call(this, position, disabled ? html : trustedHtmlFor(html));
       },
-    }.insertAdjacentHTML;
-    Object.defineProperty(Element.prototype, "insertAdjacentHTML", {
-      ...desc,
-      value: U.stealth(wrapped, "insertAdjacentHTML", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "insertAdjacentHTML"),
-      }),
-    });
+    }));
   };
 
   const isSandboxTokenList = (list) => {
@@ -374,83 +268,35 @@
     }
   };
 
-  const patchDomTokenListValue = (proto) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, "value");
-    if (!desc || !desc.set) return;
-    const setterHolder = {
-      set value(nextValue) {
-        if (disabled) {
-          desc.set.call(this, nextValue);
-          return;
-        }
-        const value = isSandboxTokenList(this) ? normalizeSandboxValue(nextValue) : nextValue;
-        desc.set.call(this, value);
+  const patchSandboxDomTokenList = () => {
+    if (typeof DOMTokenList === "undefined" || !DOMTokenList.prototype) return;
+    const proto = DOMTokenList.prototype;
+    U.wrapSetter(proto, "value", (nativeSet) => ({
+      set(nextValue) {
+        const sandbox = !disabled && isSandboxTokenList(this);
+        nativeSet.call(this, sandbox ? normalizeSandboxValue(nextValue) : nextValue);
       },
-    };
-    Object.defineProperty(proto, "value", {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: U.stealth(Object.getOwnPropertyDescriptor(setterHolder, "value").set, "set value", {
-        length: desc.set.length,
-        source: U.nativeSourceFor(desc.set, "set value"),
-      }),
-    });
-  };
-
-  const patchDomTokenListAdd = (proto) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, "add");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    }));
+    U.wrapMethod(proto, "add", (orig) => ({
       add(...tokens) {
-        if (disabled) return orig.apply(this, tokens);
-        if (!isSandboxTokenList(this)) return orig.apply(this, tokens);
+        if (disabled || !isSandboxTokenList(this)) return orig.apply(this, tokens);
         const normalized = normalizeSandboxTokens(tokens);
         if (!normalized.length) return;
         return orig.apply(this, normalized);
       },
-    }.add;
-    Object.defineProperty(proto, "add", {
-      ...desc,
-      value: U.stealth(wrapped, "add", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "add"),
-      }),
-    });
-  };
-
-  const patchDomTokenListToggle = (proto) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, "toggle");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    }));
+    U.wrapMethod(proto, "toggle", (orig) => ({
       toggle(token, force) {
-        if (disabled) return orig.apply(this, arguments);
-        if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
+        if (disabled || !isSandboxTokenList(this)) return orig.apply(this, arguments);
         const [normalized] = normalizeSandboxTokens([token]);
         if (!normalized) return false;
         if (arguments.length > 1) return orig.call(this, normalized, force);
         return orig.call(this, normalized);
       },
-    }.toggle;
-    Object.defineProperty(proto, "toggle", {
-      ...desc,
-      value: U.stealth(wrapped, "toggle", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "toggle"),
-      }),
-    });
-  };
-
-  const patchDomTokenListReplace = (proto) => {
-    const desc = Object.getOwnPropertyDescriptor(proto, "replace");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    }));
+    U.wrapMethod(proto, "replace", (orig) => ({
       replace(token, newToken) {
-        if (disabled) return orig.apply(this, arguments);
-        if (!isSandboxTokenList(this)) return orig.apply(this, arguments);
+        if (disabled || !isSandboxTokenList(this)) return orig.apply(this, arguments);
         const oldToken = String(token || "")
           .trim()
           .toLowerCase();
@@ -458,22 +304,7 @@
         if (!oldToken || !sandboxSupports(oldToken) || !safeNewToken) return false;
         return orig.call(this, oldToken, safeNewToken);
       },
-    }.replace;
-    Object.defineProperty(proto, "replace", {
-      ...desc,
-      value: U.stealth(wrapped, "replace", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "replace"),
-      }),
-    });
-  };
-
-  const patchSandboxDomTokenList = () => {
-    if (typeof DOMTokenList === "undefined" || !DOMTokenList.prototype) return;
-    patchDomTokenListValue(DOMTokenList.prototype);
-    patchDomTokenListAdd(DOMTokenList.prototype);
-    patchDomTokenListToggle(DOMTokenList.prototype);
-    patchDomTokenListReplace(DOMTokenList.prototype);
+    }));
   };
 
   // Initialize Trusted Types policy eagerly so it is ready before any HTML

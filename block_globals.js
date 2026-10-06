@@ -113,10 +113,7 @@
   };
 
   const patchObjectDefineProperty = () => {
-    const desc = Object.getOwnPropertyDescriptor(Object, "defineProperty");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(Object, "defineProperty", (orig) => ({
       defineProperty(target, key) {
         if (disabled) return orig.apply(this, arguments);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
@@ -125,41 +122,21 @@
         }
         return orig.apply(this, arguments);
       },
-    }.defineProperty;
-    Object.defineProperty(Object, "defineProperty", {
-      ...desc,
-      value: U.stealth(wrapped, "defineProperty", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "defineProperty"),
-      }),
-    });
+    }));
   };
 
   const patchObjectDefineProperties = () => {
-    const desc = Object.getOwnPropertyDescriptor(Object, "defineProperties");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(Object, "defineProperties", (orig) => ({
       defineProperties(target, descriptors) {
         if (disabled) return orig.call(this, target, descriptors);
         const filtered = filterDescriptors(target, descriptors);
         return orig.call(this, target, filtered);
       },
-    }.defineProperties;
-    Object.defineProperty(Object, "defineProperties", {
-      ...desc,
-      value: U.stealth(wrapped, "defineProperties", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "defineProperties"),
-      }),
-    });
+    }));
   };
 
   const patchObjectAssign = () => {
-    const desc = Object.getOwnPropertyDescriptor(Object, "assign");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(Object, "assign", (orig) => ({
       assign(target) {
         if (disabled) return orig.apply(this, arguments);
         if (!isProtectedTarget(target)) return orig.apply(this, arguments);
@@ -182,22 +159,11 @@
         }
         return orig.call(this, target, ...sources);
       },
-    }.assign;
-    Object.defineProperty(Object, "assign", {
-      ...desc,
-      value: U.stealth(wrapped, "assign", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "assign"),
-      }),
-    });
+    }));
   };
 
   const patchReflectDefineProperty = () => {
-    if (typeof Reflect === "undefined") return;
-    const desc = Object.getOwnPropertyDescriptor(Reflect, "defineProperty");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(Reflect, "defineProperty", (orig) => ({
       defineProperty(target, key, attributes) {
         if (disabled) return orig.call(this, target, key, attributes);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
@@ -206,22 +172,11 @@
         }
         return orig.call(this, target, key, attributes);
       },
-    }.defineProperty;
-    Object.defineProperty(Reflect, "defineProperty", {
-      ...desc,
-      value: U.stealth(wrapped, "defineProperty", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "defineProperty"),
-      }),
-    });
+    }));
   };
 
   const patchReflectSet = () => {
-    if (typeof Reflect === "undefined") return;
-    const desc = Object.getOwnPropertyDescriptor(Reflect, "set");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(Reflect, "set", (orig) => ({
       set(target, key) {
         if (disabled) return orig.apply(this, arguments);
         if (isProtectedTarget(target) && isProtectedKey(key)) {
@@ -230,22 +185,11 @@
         }
         return orig.apply(this, arguments);
       },
-    }.set;
-    Object.defineProperty(Reflect, "set", {
-      ...desc,
-      value: U.stealth(wrapped, "set", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "set"),
-      }),
-    });
+    }));
   };
 
   const patchLegacyDefineAccessor = (name) => {
-    const proto = Object.prototype;
-    const desc = proto && Object.getOwnPropertyDescriptor(proto, name);
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(Object.prototype, name, (orig) => ({
       [name](key) {
         if (disabled) return orig.apply(this, arguments);
         if (isProtectedTarget(this) && isProtectedKey(key)) {
@@ -254,14 +198,7 @@
         }
         return orig.apply(this, arguments);
       },
-    }[name];
-    Object.defineProperty(proto, name, {
-      ...desc,
-      value: U.stealth(wrapped, name, {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, name),
-      }),
-    });
+    }));
   };
 
   patchObjectDefineProperty();

@@ -6,18 +6,12 @@
   const PNG_1X1_B64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
   const PNG_1X1_BINARY = atob(PNG_1X1_B64);
-  const IMAGE_DECOY_PATHS = U.IMAGE_DECOY_PATHS;
-  const SCRIPT_DECOY_PATHS = U.SCRIPT_DECOY_PATHS;
-  const HTML_DECOY_PATHS = U.HTML_DECOY_PATHS;
-  const STYLE_DECOY_PATHS = U.STYLE_DECOY_PATHS;
   const animatedHrefProxies = new WeakMap();
   const attrNodeOriginals = new WeakMap();
   const elementOriginals = new WeakMap();
   const mutationOldValueOriginals = new WeakMap();
   const MAX_QUEUED_PROBES = 1000;
-  let noiseEnabled = false;
-  let persona = new Set();
-  let personaPaths = new Map();
+  const noise = U.noisePersona();
   let disabled = false;
   let nativeAttrValueGetter = null;
   let nativeAttrValueSetter = null;
@@ -27,41 +21,11 @@
 
   const applyConfigUpdate = (data) => {
     if (!data || data.type !== "config_update") return;
-    if (Array.isArray(data.persona)) {
-      persona = new Set(data.persona.filter((id) => typeof id === "string"));
-    }
-    if (data.personaPaths && typeof data.personaPaths === "object") {
-      const next = new Map();
-      for (const [id, paths] of Object.entries(data.personaPaths)) {
-        if (typeof id !== "string" || !Array.isArray(paths)) continue;
-        next.set(
-          id.toLowerCase(),
-          new Set(
-            paths.filter((path) => typeof path === "string").map((path) => path.toLowerCase())
-          )
-        );
-      }
-      personaPaths = next;
-    } else if (Array.isArray(data.persona)) {
-      personaPaths = new Map();
-    }
-    if (typeof data.noiseEnabled === "boolean") noiseEnabled = data.noiseEnabled;
+    noise.update(data);
     if (typeof data.disabled === "boolean") disabled = data.disabled;
   };
 
   const bridge = U.setupBridge(BRIDGE_EVENT, MAX_QUEUED_PROBES, applyConfigUpdate);
-
-  const postProbe = (url, where) => {
-    const safeUrl = url == null ? "" : String(url).slice(0, 512);
-    const safeWhere = where == null ? "" : String(where).slice(0, 64);
-    bridge.post("probe_blocked", { url: safeUrl, where: safeWhere });
-  };
-
-  const shouldDecoy = (url) => {
-    if (!noiseEnabled) return false;
-    const id = U.extractExtId(url);
-    return id != null && persona.has(id);
-  };
 
   const rememberOriginal = (el, prop, url) => {
     const entry = elementOriginals.get(el) || {};
@@ -207,26 +171,13 @@
     return filtered || records;
   };
 
-  const pathFor = U.pathFor;
-
-  const matchesPathPattern = U.matchesPathPattern;
-
-  const isLearnedPersonaPath = (url) => {
-    const id = U.extractExtId(url);
-    if (!id) return false;
-    const learned = personaPaths.get(id);
-    if (!learned) return false;
-    const pathname = U.sanitizeExtensionPath(pathFor(url));
-    return pathname ? learned.has(pathname) : false;
-  };
-
   const learnedKindFor = (url) =>
-    isLearnedPersonaPath(url) ? U.learnedDecoyKindForPath(pathFor(url)) : null;
+    noise.isLearnedPath(url) ? U.learnedDecoyKindForPath(U.pathFor(url)) : null;
 
-  const imageDecoyPath = (pathname) => matchesPathPattern(pathname, IMAGE_DECOY_PATHS);
-  const scriptDecoyPath = (pathname) => matchesPathPattern(pathname, SCRIPT_DECOY_PATHS);
-  const htmlDecoyPath = (pathname) => matchesPathPattern(pathname, HTML_DECOY_PATHS);
-  const styleDecoyPath = (pathname) => matchesPathPattern(pathname, STYLE_DECOY_PATHS);
+  const imageDecoyPath = (pathname) => U.matchesPathPattern(pathname, U.IMAGE_DECOY_PATHS);
+  const scriptDecoyPath = (pathname) => U.matchesPathPattern(pathname, U.SCRIPT_DECOY_PATHS);
+  const htmlDecoyPath = (pathname) => U.matchesPathPattern(pathname, U.HTML_DECOY_PATHS);
+  const styleDecoyPath = (pathname) => U.matchesPathPattern(pathname, U.STYLE_DECOY_PATHS);
 
   const passiveHrefDecoyKind = (tag, pathname) => {
     if (tag === "link") {
@@ -279,7 +230,7 @@
   };
 
   const passiveDecoyKindFor = (url, prop, elOrTag) => {
-    const pathname = pathFor(url);
+    const pathname = U.pathFor(url);
     const tag = tagFrom(elOrTag);
     if (!pathname) return null;
     const learned = learnedKindFor(url);
@@ -344,16 +295,6 @@
     return prop === "srcset" ? `${url} 1x` : url;
   };
 
-  const canHandlePassiveElement = (el, prop) => {
-    const tag = String((el && el.tagName) || "").toLowerCase();
-    if (prop === "src") return ["img", "input", "script", "source", "embed"].includes(tag);
-    if (prop === "srcset") return tag === "img" || tag === "source";
-    if (prop === "href") return tag === "link" || tag === "use" || tag === "image";
-    if (prop === "data") return tag === "object";
-    if (prop === "poster") return tag === "video";
-    return false;
-  };
-
   const probeUrlFor = (prop, value) => {
     if (prop === "srcset") {
       const match = String(value == null ? "" : value).match(U.BAD_URL_RE);
@@ -365,9 +306,9 @@
   const elementProbe = (el, prop, value) => {
     if (disabled) return null;
     const url = probeUrlFor(prop, value);
-    if (!url || !canHandlePassiveElement(el, prop)) return null;
+    if (!url || !canHandleTagProp(tagFrom(el), prop)) return null;
     const kind = passiveDecoyKindFor(url, prop, el);
-    return { kind, mode: shouldDecoy(url) && kind ? "decoy" : "block", url };
+    return { kind, mode: noise.shouldDecoy(url) && kind ? "decoy" : "block", url };
   };
 
   const replacementUrlFor = (mode, kind, prop, original) => {
@@ -378,29 +319,12 @@
   const isScriptSrcSink = (el, prop) =>
     prop === "src" && typeof HTMLScriptElement !== "undefined" && el instanceof HTMLScriptElement;
 
-  const cspTrustedTypesAllowsPolicy = (policyName) => {
-    try {
-      for (const meta of document.querySelectorAll("meta[http-equiv]")) {
-        if (String(meta.httpEquiv || "").toLowerCase() !== "content-security-policy") continue;
-        const directives = String(meta.content || "").split(";");
-        for (const directive of directives) {
-          const parts = directive.trim().split(/\s+/).filter(Boolean);
-          if (String(parts.shift() || "").toLowerCase() !== "trusted-types") continue;
-          const tokens = parts.map((part) => part.replace(/^'|'$/g, ""));
-          if (tokens.includes("none")) return false;
-          if (!tokens.includes("*") && !tokens.includes(policyName)) return false;
-        }
-      }
-    } catch {}
-    return true;
-  };
-
   const trustedPolicyForScriptUrls = () => {
     if (!globalThis.trustedTypes || typeof globalThis.trustedTypes.createPolicy !== "function") {
       return null;
     }
     if (trustedScriptUrlPolicy !== undefined) return trustedScriptUrlPolicy;
-    if (!cspTrustedTypesAllowsPolicy("staticElementDecoys")) {
+    if (!U.cspAllowsTrustedTypesPolicy("staticElementDecoys")) {
       trustedScriptUrlPolicy = null;
       return trustedScriptUrlPolicy;
     }
@@ -436,12 +360,8 @@
   // while getters/serialization still surface the original (via remember).
   // -----------------------------------------------------------------------
 
-  const bumpSinkProbe = (baseLabel, url, isDecoy) => {
-    try {
-      const where = isDecoy ? `${baseLabel}-decoy` : baseLabel;
-      postProbe(url, where);
-    } catch {}
-  };
+  const bumpSinkProbe = (baseLabel, url, isDecoy) =>
+    bridge.probe(url, isDecoy ? `${baseLabel}-decoy` : baseLabel);
 
   const tokenMatchFor = (value) => {
     const text = String(value || "");
@@ -475,7 +395,7 @@
         if (!U.isBad(u)) return piece;
         const url = U.getUrl(u);
         const k = passiveDecoyKindFor(url, "srcset", tagNameOrEl);
-        const mo = shouldDecoy(url) && k ? "decoy" : "block";
+        const mo = noise.shouldDecoy(url) && k ? "decoy" : "block";
         const replacement = replacementUrlFor(mo, k, "srcset", val);
         rememberReplacementToken(tokenMap, replacement, { currentSrc: url, srcset: val });
         bumpFn(url, mo === "decoy");
@@ -512,7 +432,7 @@
             localBump(url, false);
             return `${attr}=${q}${q}`;
           }
-          const mo = k && shouldDecoy(url) ? "decoy" : "block";
+          const mo = k && noise.shouldDecoy(url) ? "decoy" : "block";
           const repl = replacementUrlFor(mo, k, prop, url);
           rememberReplacementToken(tokenMap, repl, url);
           localBump(url, mo === "decoy");
@@ -551,7 +471,6 @@
         for (const prop of suspect) {
           let realVal = null;
           try {
-            const lc = prop === "formaction" ? "formaction" : prop;
             if (prop === "srcset" || prop === "src" || prop === "href" || prop === "poster") {
               // bypass getter via native desc if possible
               const ctorProto = el.constructor && el.constructor.prototype;
@@ -559,12 +478,10 @@
               // eslint-disable-next-line max-depth
               if (d && d.get) realVal = d.get.call(el);
             }
-            if (realVal == null) realVal = el.getAttribute(lc || prop);
-          } catch {
-            try {
-              realVal = el.getAttribute(prop === "formaction" ? "formaction" : prop);
-            } catch {}
-          }
+          } catch {}
+          try {
+            if (realVal == null) realVal = el.getAttribute(prop);
+          } catch {}
           if (!realVal || typeof realVal !== "string") continue;
           const cands = prop === "srcset" ? realVal.split(",") : [realVal];
           for (const c of cands) {
@@ -598,17 +515,14 @@
   };
 
   const guardProp = (proto, prop, label) => {
-    if (!proto) return;
-    const desc = Object.getOwnPropertyDescriptor(proto, prop);
-    if (!desc || !desc.set) return;
-    const setterHolder = {
-      set [prop](value) {
+    const wrapped = U.wrapSetter(proto, prop, (nativeSet) => ({
+      set(value) {
         const probe = elementProbe(this, prop, value);
         if (probe) {
           const original = prop === "srcset" ? String(value) : probe.url;
           rememberOriginal(this, prop, original);
           if (prop === "srcset") rememberOriginal(this, "currentSrc", probe.url);
-          postProbe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
+          bridge.probe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
           const replacement = replacementValueFor({
             el: this,
             kind: probe.kind,
@@ -617,7 +531,7 @@
             prop,
           });
           if (replacement != null) {
-            desc.set.call(this, replacement);
+            nativeSet.call(this, replacement);
             rememberNativeMutationValue(this, prop, null, original);
             rememberElementAttrNodeOriginal(this, prop, original);
           }
@@ -625,27 +539,15 @@
         }
         forgetElementAttrNodeOriginal(this, prop);
         forgetOriginal(this, prop);
-        desc.set.call(this, value);
+        nativeSet.call(this, value);
       },
-    };
-    const get = desc.get
-      ? U.stealth(
-          function get() {
-            return rememberedOriginal(this, prop) || desc.get.call(this);
-          },
-          `get ${prop}`,
-          { length: desc.get.length, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
-        )
-      : desc.get;
-    Object.defineProperty(proto, prop, {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get,
-      set: U.stealth(Object.getOwnPropertyDescriptor(setterHolder, prop).set, `set ${prop}`, {
-        length: desc.set.length,
-        source: U.nativeSourceFor(desc.set, `set ${prop}`),
-      }),
-    });
+    }));
+    if (!wrapped) return;
+    U.wrapGetter(proto, prop, (nativeGet) => ({
+      get() {
+        return rememberedOriginal(this, prop) || nativeGet.call(this);
+      },
+    }));
   };
 
   const attrPropFor = (name) => {
@@ -722,7 +624,7 @@
     }
     rememberAttrNodeOriginal(attr, original);
     if (prop === "srcset") rememberOriginal(el, "currentSrc", probe.url);
-    postProbe(probe.url, probe.mode === "decoy" ? `${label}-${prop}-decoy` : label);
+    bridge.probe(probe.url, probe.mode === "decoy" ? `${label}-${prop}-decoy` : label);
     if (writeAttr) {
       setNativeAttrValue(attr, replacementUrlFor(probe.mode, probe.kind, prop, original));
       rememberMutationOldValueOriginal({
@@ -826,23 +728,13 @@
   };
 
   const patchCloneNode = () => {
-    const desc = Object.getOwnPropertyDescriptor(Node.prototype, "cloneNode");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(Node.prototype, "cloneNode", (orig) => ({
       cloneNode() {
         const clone = orig.apply(this, arguments);
         copyOriginalTreeForClone(this, clone);
         return clone;
       },
-    }.cloneNode;
-    Object.defineProperty(Node.prototype, "cloneNode", {
-      ...desc,
-      value: U.stealth(wrapped, "cloneNode", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "cloneNode"),
-      }),
-    });
+    }));
   };
 
   const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -925,77 +817,31 @@
   };
 
   const patchHtmlSerialization = () => {
-    const innerDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
-    const outerDesc = Object.getOwnPropertyDescriptor(Element.prototype, "outerHTML");
-    if (innerDesc && innerDesc.get) {
-      const innerGetterHolder = {
-        get innerHTML() {
-          return serializeWithOriginals(this, innerDesc.get.call(this), false);
+    for (const [prop, includeRoot] of [
+      ["innerHTML", false],
+      ["outerHTML", true],
+    ]) {
+      U.wrapGetter(Element.prototype, prop, (nativeGet) => ({
+        get() {
+          return serializeWithOriginals(this, nativeGet.call(this), includeRoot);
         },
-      };
-      Object.defineProperty(Element.prototype, "innerHTML", {
-        configurable: true,
-        enumerable: innerDesc.enumerable,
-        get: U.stealth(
-          Object.getOwnPropertyDescriptor(innerGetterHolder, "innerHTML").get,
-          "get innerHTML",
-          {
-            length: 0,
-            source: U.nativeSourceFor(innerDesc.get, "get innerHTML"),
-          }
-        ),
-        set: innerDesc.set,
-      });
-    }
-    if (outerDesc && outerDesc.get) {
-      const outerGetterHolder = {
-        get outerHTML() {
-          return serializeWithOriginals(this, outerDesc.get.call(this), true);
-        },
-      };
-      Object.defineProperty(Element.prototype, "outerHTML", {
-        configurable: true,
-        enumerable: outerDesc.enumerable,
-        get: U.stealth(
-          Object.getOwnPropertyDescriptor(outerGetterHolder, "outerHTML").get,
-          "get outerHTML",
-          {
-            length: 0,
-            source: U.nativeSourceFor(outerDesc.get, "get outerHTML"),
-          }
-        ),
-        set: outerDesc.set,
-      });
+      }));
     }
   };
 
   const patchXmlSerializer = () => {
-    if (typeof XMLSerializer === "undefined" || !XMLSerializer.prototype) return;
-    const desc = Object.getOwnPropertyDescriptor(XMLSerializer.prototype, "serializeToString");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    if (typeof XMLSerializer === "undefined") return;
+    U.wrapMethod(XMLSerializer.prototype, "serializeToString", (orig) => ({
       serializeToString(node) {
         return serializeWithOriginals(node, orig.apply(this, arguments), true);
       },
-    }.serializeToString;
-    Object.defineProperty(XMLSerializer.prototype, "serializeToString", {
-      ...desc,
-      value: U.stealth(wrapped, "serializeToString", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "serializeToString"),
-      }),
-    });
+    }));
   };
 
   const patchHtmlSetters = () => {
     const patchOne = (proto, prop) => {
-      if (!proto) return;
-      const desc = Object.getOwnPropertyDescriptor(proto, prop);
-      if (!desc || !desc.set) return;
-      const nativeSet = desc.set;
-      const wrapped = {
-        set [prop](value) {
+      U.wrapSetter(proto, prop, (nativeSet) => ({
+        set(value) {
           if (disabled) {
             nativeSet.call(this, value);
             return;
@@ -1007,33 +853,15 @@
             attachRemembersToSubtree(this, tokenMap);
           }
         },
-      };
-      const wset = Object.getOwnPropertyDescriptor(wrapped, prop).set;
-      Object.defineProperty(proto, prop, {
-        configurable: true,
-        enumerable: desc.enumerable,
-        get: desc.get,
-        set: U.stealth(wset, `set ${prop}`, {
-          length: desc.set.length,
-          source: U.nativeSourceFor(desc.set, `set ${prop}`),
-        }),
-      });
+      }));
     };
-    if (typeof Element !== "undefined" && Element.prototype) {
-      patchOne(Element.prototype, "innerHTML");
-      patchOne(Element.prototype, "outerHTML");
-    }
-    if (typeof ShadowRoot !== "undefined" && ShadowRoot.prototype) {
-      patchOne(ShadowRoot.prototype, "innerHTML");
-    }
+    patchOne(Element.prototype, "innerHTML");
+    patchOne(Element.prototype, "outerHTML");
+    if (typeof ShadowRoot !== "undefined") patchOne(ShadowRoot.prototype, "innerHTML");
   };
 
   const patchInsertAdjacentHTMLForElements = () => {
-    if (typeof Element === "undefined" || !Element.prototype) return;
-    const desc = Object.getOwnPropertyDescriptor(Element.prototype, "insertAdjacentHTML");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    U.wrapMethod(Element.prototype, "insertAdjacentHTML", (orig) => ({
       insertAdjacentHTML(position, html) {
         if (disabled) return orig.call(this, position, html);
         const input = typeof html === "string" ? html : String(html);
@@ -1044,22 +872,12 @@
         }
         return result;
       },
-    }.insertAdjacentHTML;
-    Object.defineProperty(Element.prototype, "insertAdjacentHTML", {
-      ...desc,
-      value: U.stealth(wrapped, "insertAdjacentHTML", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "insertAdjacentHTML"),
-      }),
-    });
+    }));
   };
 
   const patchDomParser = () => {
-    if (typeof DOMParser === "undefined" || !DOMParser.prototype) return;
-    const desc = Object.getOwnPropertyDescriptor(DOMParser.prototype, "parseFromString");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    if (typeof DOMParser === "undefined") return;
+    U.wrapMethod(DOMParser.prototype, "parseFromString", (orig) => ({
       parseFromString(markup, type) {
         if (disabled || typeof markup !== "string" || !U.BAD_URL_RE.test(markup)) {
           return orig.apply(this, arguments);
@@ -1073,22 +891,12 @@
         }
         return doc;
       },
-    }.parseFromString;
-    Object.defineProperty(DOMParser.prototype, "parseFromString", {
-      ...desc,
-      value: U.stealth(wrapped, "parseFromString", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "parseFromString"),
-      }),
-    });
+    }));
   };
 
   const patchRangeFragment = () => {
-    if (typeof Range === "undefined" || !Range.prototype) return;
-    const desc = Object.getOwnPropertyDescriptor(Range.prototype, "createContextualFragment");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    if (typeof Range === "undefined") return;
+    U.wrapMethod(Range.prototype, "createContextualFragment", (orig) => ({
       createContextualFragment(html) {
         if (disabled || typeof html !== "string" || !U.BAD_URL_RE.test(html)) {
           return orig.apply(this, arguments);
@@ -1100,14 +908,7 @@
         }
         return frag;
       },
-    }.createContextualFragment;
-    Object.defineProperty(Range.prototype, "createContextualFragment", {
-      ...desc,
-      value: U.stealth(wrapped, "createContextualFragment", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "createContextualFragment"),
-      }),
-    });
+    }));
   };
 
   const applyElementAttributeProbe = ({
@@ -1125,7 +926,7 @@
     if (ns) rememberNamespacedAttributeOriginal(el, ns, name, original);
     else rememberAttributeOriginal(el, name, original);
     if (prop === "srcset") rememberOriginal(el, "currentSrc", probe.url);
-    postProbe(probe.url, probe.mode === "decoy" ? `${baseLabel}-${prop}-decoy` : baseLabel);
+    bridge.probe(probe.url, probe.mode === "decoy" ? `${baseLabel}-${prop}-decoy` : baseLabel);
     const replacement = replacementValueFor({
       el,
       kind: probe.kind,
@@ -1141,15 +942,9 @@
   };
 
   const patchAttributes = () => {
-    const origSetAttribute = Element.prototype.setAttribute;
-    const origSetAttributeNS = Element.prototype.setAttributeNS;
-    const origGetAttribute = Element.prototype.getAttribute;
-    const origGetAttributeNS = Element.prototype.getAttributeNS;
-    const origRemoveAttribute = Element.prototype.removeAttribute;
-    const origRemoveAttributeNS = Element.prototype.removeAttributeNS;
-    nativeGetAttribute = origGetAttribute;
-    nativeGetAttributeNS = origGetAttributeNS;
-    const wrapped = {
+    nativeGetAttribute = Element.prototype.getAttribute;
+    nativeGetAttributeNS = Element.prototype.getAttributeNS;
+    U.wrapMethod(Element.prototype, "setAttribute", (origSetAttribute) => ({
       setAttribute(name, value) {
         const prop = attrPropFor(name);
         const probe = prop && elementProbe(this, prop, value);
@@ -1171,6 +966,8 @@
         }
         return origSetAttribute.apply(this, arguments);
       },
+    }));
+    U.wrapMethod(Element.prototype, "setAttributeNS", (origSetAttributeNS) => ({
       setAttributeNS(ns, name, value) {
         const prop = attrPropFor(name);
         const probe = prop && elementProbe(this, prop, value);
@@ -1193,6 +990,8 @@
         }
         return origSetAttributeNS.apply(this, arguments);
       },
+    }));
+    U.wrapMethod(Element.prototype, "getAttribute", (origGetAttribute) => ({
       getAttribute(name) {
         const prop = attrPropFor(name);
         const attrOriginal = rememberedOriginal(this, attrKeyFor(name));
@@ -1201,6 +1000,8 @@
         const propOriginal = prop && rememberedOriginal(this, prop);
         return propOriginal && nativeValue != null ? propOriginal : nativeValue;
       },
+    }));
+    U.wrapMethod(Element.prototype, "getAttributeNS", (origGetAttributeNS) => ({
       getAttributeNS(ns, name) {
         const prop = attrPropFor(name);
         const attrOriginal = rememberedOriginal(this, attrNsKeyFor(ns, name));
@@ -1209,6 +1010,8 @@
         const propOriginal = prop && rememberedOriginal(this, prop);
         return propOriginal && nativeValue != null ? propOriginal : nativeValue;
       },
+    }));
+    U.wrapMethod(Element.prototype, "removeAttribute", (origRemoveAttribute) => ({
       removeAttribute(name) {
         const prop = attrPropFor(name);
         if (prop) {
@@ -1218,6 +1021,8 @@
         }
         return origRemoveAttribute.apply(this, arguments);
       },
+    }));
+    U.wrapMethod(Element.prototype, "removeAttributeNS", (origRemoveAttributeNS) => ({
       removeAttributeNS(ns, name) {
         const prop = attrPropFor(name);
         if (prop) {
@@ -1227,30 +1032,10 @@
         }
         return origRemoveAttributeNS.apply(this, arguments);
       },
-    };
-    Element.prototype.setAttribute = U.stealth(wrapped.setAttribute, "setAttribute", { length: 2 });
-    Element.prototype.setAttributeNS = U.stealth(wrapped.setAttributeNS, "setAttributeNS", {
-      length: 3,
-    });
-    Element.prototype.getAttribute = U.stealth(wrapped.getAttribute, "getAttribute", { length: 1 });
-    Element.prototype.getAttributeNS = U.stealth(wrapped.getAttributeNS, "getAttributeNS", {
-      length: 2,
-    });
-    Element.prototype.removeAttribute = U.stealth(wrapped.removeAttribute, "removeAttribute", {
-      length: 1,
-    });
-    Element.prototype.removeAttributeNS = U.stealth(
-      wrapped.removeAttributeNS,
-      "removeAttributeNS",
-      {
-        length: 2,
-      }
-    );
+    }));
   };
 
   const patchAttributeNodes = () => {
-    const origSetAttributeNode = Element.prototype.setAttributeNode;
-    const origSetAttributeNodeNS = Element.prototype.setAttributeNodeNS;
     const oldAttrFor = (el, attr) => {
       try {
         if (attr.namespaceURI) return el.getAttributeNodeNS(attr.namespaceURI, attr.localName);
@@ -1296,87 +1081,42 @@
       });
       return result;
     };
-    const wrapped = {
-      setAttributeNode(attr) {
-        const found = attributeNodeProbe(this, attr);
-        if (found) {
-          return applyAttrNodeProbe({
-            attr,
-            el: this,
-            found,
-            label: "setAttributeNode",
-            nativeSetter: origSetAttributeNode,
-          });
-        }
-        return origSetAttributeNode.apply(this, arguments);
-      },
-      setAttributeNodeNS(attr) {
-        const found = attributeNodeProbe(this, attr);
-        if (found) {
-          return applyAttrNodeProbe({
-            attr,
-            el: this,
-            found,
-            label: "setAttributeNodeNS",
-            nativeSetter: origSetAttributeNodeNS,
-          });
-        }
-        return origSetAttributeNodeNS.apply(this, arguments);
-      },
-    };
-    if (typeof origSetAttributeNode === "function") {
-      Element.prototype.setAttributeNode = U.stealth(wrapped.setAttributeNode, "setAttributeNode", {
-        length: 1,
-      });
-    }
-    if (typeof origSetAttributeNodeNS === "function") {
-      Element.prototype.setAttributeNodeNS = U.stealth(
-        wrapped.setAttributeNodeNS,
-        "setAttributeNodeNS",
-        { length: 1 }
-      );
+    for (const name of ["setAttributeNode", "setAttributeNodeNS"]) {
+      U.wrapMethod(Element.prototype, name, (nativeSetter) => ({
+        [name](attr) {
+          const found = attributeNodeProbe(this, attr);
+          if (found) {
+            return applyAttrNodeProbe({ attr, el: this, found, label: name, nativeSetter });
+          }
+          return nativeSetter.apply(this, arguments);
+        },
+      }));
     }
   };
 
   const patchCurrentSrc = () => {
-    const desc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "currentSrc");
-    if (!desc || !desc.get) return;
-    Object.defineProperty(HTMLImageElement.prototype, "currentSrc", {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: U.stealth(
-        function get() {
-          return (
-            rememberedOriginal(this, "currentSrc") ||
-            rememberedOriginal(this, "src") ||
-            desc.get.call(this)
-          );
-        },
-        "get currentSrc",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get currentSrc") }
-      ),
-    });
+    U.wrapGetter(HTMLImageElement.prototype, "currentSrc", (nativeGet) => ({
+      get() {
+        return (
+          rememberedOriginal(this, "currentSrc") ||
+          rememberedOriginal(this, "src") ||
+          nativeGet.call(this)
+        );
+      },
+    }));
   };
 
   const patchStyleSheetHref = () => {
-    if (typeof StyleSheet === "undefined" || !StyleSheet.prototype) return;
-    const desc = Object.getOwnPropertyDescriptor(StyleSheet.prototype, "href");
-    if (!desc || !desc.get) return;
-    Object.defineProperty(StyleSheet.prototype, "href", {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: U.stealth(
-        function get() {
-          try {
-            return rememberedOriginal(this.ownerNode, "href") || desc.get.call(this);
-          } catch {
-            return desc.get.call(this);
-          }
-        },
-        "get href",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get href") }
-      ),
-    });
+    if (typeof StyleSheet === "undefined") return;
+    U.wrapGetter(StyleSheet.prototype, "href", (nativeGet) => ({
+      get() {
+        try {
+          return rememberedOriginal(this.ownerNode, "href") || nativeGet.call(this);
+        } catch {
+          return nativeGet.call(this);
+        }
+      },
+    }));
   };
 
   const patchMutationObserver = () => {
@@ -1421,7 +1161,7 @@
     const url = U.isBad(value) ? U.getUrl(value) : "";
     if (!url) return null;
     const kind = passiveDecoyKindFor(url, "href", el);
-    return { kind, mode: shouldDecoy(url) && kind ? "decoy" : "block", url };
+    return { kind, mode: noise.shouldDecoy(url) && kind ? "decoy" : "block", url };
   };
 
   const animatedHrefProxyFor = (el, animated, label) => {
@@ -1443,7 +1183,7 @@
         if (probe) {
           rememberOriginal(el, "href", probe.url);
           rememberAttributeOriginal(el, "href", probe.url);
-          postProbe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
+          bridge.probe(probe.url, probe.mode === "decoy" ? `${label}-decoy` : label);
           target.baseVal = replacementUrlFor(probe.mode, probe.kind, "href", probe.url);
           return true;
         }
@@ -1458,47 +1198,32 @@
   };
 
   const patchSvgHref = (Ctor, label) => {
-    const proto = Ctor && Ctor.prototype;
-    if (!proto) return;
-    const desc = Object.getOwnPropertyDescriptor(proto, "href");
-    if (!desc || !desc.get) return;
-    Object.defineProperty(proto, "href", {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: U.stealth(
-        function get() {
-          const animated = desc.get.call(this);
-          return animated && typeof animated === "object"
-            ? animatedHrefProxyFor(this, animated, label)
-            : animated;
-        },
-        "get href",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get href") }
-      ),
-    });
+    if (!Ctor) return;
+    U.wrapGetter(Ctor.prototype, "href", (nativeGet) => ({
+      get() {
+        const animated = nativeGet.call(this);
+        return animated && typeof animated === "object"
+          ? animatedHrefProxyFor(this, animated, label)
+          : animated;
+      },
+    }));
   };
 
   patchAttrValues();
   patchCloneNode();
-  guardProp(HTMLImageElement.prototype, "src", "img.src");
-  guardProp(HTMLImageElement.prototype, "srcset", "img.srcset");
-  if (typeof HTMLInputElement !== "undefined") {
-    guardProp(HTMLInputElement.prototype, "src", "input.src");
-  }
-  guardProp(HTMLScriptElement.prototype, "src", "script.src");
-  guardProp(HTMLLinkElement.prototype, "href", "link.href");
-  if (typeof HTMLVideoElement !== "undefined") {
-    guardProp(HTMLVideoElement.prototype, "poster", "video.poster");
-  }
-  if (typeof HTMLSourceElement !== "undefined") {
-    guardProp(HTMLSourceElement.prototype, "src", "source.src");
-    guardProp(HTMLSourceElement.prototype, "srcset", "source.srcset");
-  }
-  if (typeof HTMLEmbedElement !== "undefined") {
-    guardProp(HTMLEmbedElement.prototype, "src", "embed.src");
-  }
-  if (typeof HTMLObjectElement !== "undefined") {
-    guardProp(HTMLObjectElement.prototype, "data", "object.data");
+  for (const [ctorName, prop, label] of [
+    ["HTMLImageElement", "src", "img.src"],
+    ["HTMLImageElement", "srcset", "img.srcset"],
+    ["HTMLInputElement", "src", "input.src"],
+    ["HTMLScriptElement", "src", "script.src"],
+    ["HTMLLinkElement", "href", "link.href"],
+    ["HTMLVideoElement", "poster", "video.poster"],
+    ["HTMLSourceElement", "src", "source.src"],
+    ["HTMLSourceElement", "srcset", "source.srcset"],
+    ["HTMLEmbedElement", "src", "embed.src"],
+    ["HTMLObjectElement", "data", "object.data"],
+  ]) {
+    if (window[ctorName]) guardProp(window[ctorName].prototype, prop, label);
   }
   patchAttributes();
   patchAttributeNodes();
@@ -1511,7 +1236,7 @@
   patchInsertAdjacentHTMLForElements();
   patchDomParser();
   patchRangeFragment();
-  if (typeof SVGUseElement !== "undefined") patchSvgHref(SVGUseElement, "svg.use.href");
-  if (typeof SVGImageElement !== "undefined") patchSvgHref(SVGImageElement, "svg.image.href");
-  if (typeof SVGScriptElement !== "undefined") patchSvgHref(SVGScriptElement, "svg.script.href");
+  patchSvgHref(globalThis.SVGUseElement, "svg.use.href");
+  patchSvgHref(globalThis.SVGImageElement, "svg.image.href");
+  patchSvgHref(globalThis.SVGScriptElement, "svg.script.href");
 })();

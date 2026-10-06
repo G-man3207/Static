@@ -343,121 +343,42 @@
     return value;
   };
 
-  const patchDatadogGlobal = () => {
+  // Instrument a replay SDK global now, or whenever the page assigns it later.
+  const trapGlobal = (name, instrument) => {
     try {
-      const desc = Object.getOwnPropertyDescriptor(window, "DD_RUM");
+      const desc = Object.getOwnPropertyDescriptor(window, name);
       if (desc) {
-        if ("value" in desc) instrumentDatadogGlobal(desc.value);
+        if ("value" in desc) instrument(desc.value);
         return;
       }
-      let currentValue = undefined;
-      Object.defineProperty(window, "DD_RUM", {
+      let currentValue;
+      Object.defineProperty(window, name, {
         configurable: true,
         enumerable: true,
         get: U.stealth(
           function get() {
             return currentValue;
           },
-          "get DD_RUM",
+          `get ${name}`,
           { length: 0 }
         ),
         set: U.stealth(
           function set(value) {
-            currentValue = instrumentDatadogGlobal(value);
+            currentValue = instrument(value);
           },
-          "set DD_RUM",
+          `set ${name}`,
           { length: 1 }
         ),
       });
     } catch {}
   };
 
-  const patchPostHogGlobal = () => {
-    try {
-      const desc = Object.getOwnPropertyDescriptor(window, "posthog");
-      if (desc) {
-        if ("value" in desc) instrumentPostHogGlobal(desc.value);
-        return;
-      }
-      let currentValue = undefined;
-      Object.defineProperty(window, "posthog", {
-        configurable: true,
-        enumerable: true,
-        get: U.stealth(
-          function get() {
-            return currentValue;
-          },
-          "get posthog",
-          { length: 0 }
-        ),
-        set: U.stealth(
-          function set(value) {
-            currentValue = instrumentPostHogGlobal(value);
-          },
-          "set posthog",
-          { length: 1 }
-        ),
-      });
-    } catch {}
-  };
-
-  const patchOpenReplayGlobal = () => {
-    try {
-      const desc = Object.getOwnPropertyDescriptor(window, "OpenReplay");
-      if (desc) {
-        if ("value" in desc) instrumentOpenReplayGlobal(desc.value);
-        return;
-      }
-      let currentValue = undefined;
-      Object.defineProperty(window, "OpenReplay", {
-        configurable: true,
-        enumerable: true,
-        get: U.stealth(
-          function get() {
-            return currentValue;
-          },
-          "get OpenReplay",
-          { length: 0 }
-        ),
-        set: U.stealth(
-          function set(value) {
-            currentValue = instrumentOpenReplayGlobal(value);
-          },
-          "set OpenReplay",
-          { length: 1 }
-        ),
-      });
-    } catch {}
-  };
-
-  const patchSentryGlobal = () => {
-    try {
-      const desc = Object.getOwnPropertyDescriptor(window, "Sentry");
-      if (desc) {
-        if ("value" in desc) instrumentSentryGlobal(desc.value);
-        return;
-      }
-      let currentValue = undefined;
-      Object.defineProperty(window, "Sentry", {
-        configurable: true,
-        enumerable: true,
-        get: U.stealth(
-          function get() {
-            return currentValue;
-          },
-          "get Sentry",
-          { length: 0 }
-        ),
-        set: U.stealth(
-          function set(value) {
-            currentValue = instrumentSentryGlobal(value);
-          },
-          "set Sentry",
-          { length: 1 }
-        ),
-      });
-    } catch {}
-  };
+  const REPLAY_SDK_GLOBALS = [
+    ["DD_RUM", instrumentDatadogGlobal],
+    ["posthog", instrumentPostHogGlobal],
+    ["OpenReplay", instrumentOpenReplayGlobal],
+    ["Sentry", instrumentSentryGlobal],
+  ];
 
   const applyConfigUpdate = (data) => {
     if (!data || data.type !== "config_update") return;
@@ -471,26 +392,20 @@
     if (!configReceived) {
       configReceived = true;
       // Drain any signals queued before the first config arrived
-      for (const sig of pendingSignals) {
-        if (!disabled) {
-          const safeSignal = sig == null ? "unknown" : String(sig).slice(0, 96);
-          bridge.post("replay_detected", { signal: safeSignal });
-        }
-      }
-      pendingSignals.length = 0;
+      for (const signal of pendingSignals.splice(0)) postReplayDetected(signal);
     }
   };
 
   const bridge = U.setupBridge(BRIDGE_EVENT, MAX_QUEUED_SIGNALS, applyConfigUpdate);
 
+  // `signal` is already sanitized by markReplayDetected.
   const postReplayDetected = (signal) => {
     if (disabled) return;
     if (!configReceived) {
       pendingSignals.push(signal);
       return;
     }
-    const safeSignal = signal == null ? "unknown" : String(signal).slice(0, 96);
-    bridge.post("replay_detected", { signal: safeSignal });
+    bridge.post("replay_detected", { signal });
   };
 
   const isReplayScriptUrl = (url) => {
@@ -696,9 +611,7 @@
 
   const patchReplayListeners = () => {
     if (typeof EventTarget === "undefined" || !EventTarget.prototype) return;
-    const origAddEventListener = EventTarget.prototype.addEventListener;
-    const origRemoveEventListener = EventTarget.prototype.removeEventListener;
-    const wrappedAddEventListener = {
+    U.wrapMethod(EventTarget.prototype, "addEventListener", (origAddEventListener) => ({
       addEventListener(type, listener, options) {
         if (disabled || !listener || !shouldWrapReplayListener(type, listener)) {
           return origAddEventListener.apply(this, arguments);
@@ -708,8 +621,8 @@
         rememberActiveReplayListener(this, type, listener);
         return result;
       },
-    }.addEventListener;
-    const wrappedRemoveEventListener = {
+    }));
+    U.wrapMethod(EventTarget.prototype, "removeEventListener", (origRemoveEventListener) => ({
       removeEventListener(type, listener, options) {
         if (disabled) {
           return origRemoveEventListener.apply(this, arguments);
@@ -721,19 +634,7 @@
         }
         return origRemoveEventListener.call(this, type, listener, options);
       },
-    }.removeEventListener;
-    EventTarget.prototype.addEventListener = U.stealth(
-      wrappedAddEventListener,
-      "addEventListener",
-      {
-        length: 2,
-      }
-    );
-    EventTarget.prototype.removeEventListener = U.stealth(
-      wrappedRemoveEventListener,
-      "removeEventListener",
-      { length: 2 }
-    );
+    }));
   };
 
   const getReplayListenerWrapper = (listener) => {
@@ -875,18 +776,11 @@
   const scanReplaySignals = () => {
     if (disabled) return;
     replayScanTicks++;
-    try {
-      instrumentDatadogGlobal(window.DD_RUM);
-    } catch {}
-    try {
-      instrumentPostHogGlobal(window.posthog);
-    } catch {}
-    try {
-      instrumentOpenReplayGlobal(window.OpenReplay);
-    } catch {}
-    try {
-      instrumentSentryGlobal(window.Sentry);
-    } catch {}
+    for (const [name, instrument] of REPLAY_SDK_GLOBALS) {
+      try {
+        instrument(window[name]);
+      } catch {}
+    }
     for (const key of REPLAY_GLOBALS) {
       try {
         if (window[key] != null) markReplayDetected(`global:${key}`);
@@ -899,53 +793,27 @@
   };
 
   const patchReplayScriptProperties = () => {
-    guardScriptProp(HTMLScriptElement.prototype, "src", "script.src");
-    const origSetAttribute = Element.prototype.setAttribute;
-    const origSetNS = Element.prototype.setAttributeNS;
-    Element.prototype.setAttribute = makeAttributeDetector(origSetAttribute, "setAttribute", 2);
-    Element.prototype.setAttributeNS = makeAttributeDetector(origSetNS, "setAttributeNS", 3);
-  };
-
-  const guardScriptProp = (proto, prop) => {
-    if (!proto) return;
-    const desc = Object.getOwnPropertyDescriptor(proto, prop);
-    if (!desc || !desc.set) return;
-    const setterHolder = {
-      set [prop](value) {
+    U.wrapSetter(HTMLScriptElement.prototype, "src", (nativeSet) => ({
+      set(value) {
         if (!disabled) maybeDetectReplayScript(value);
-        desc.set.call(this, value);
+        nativeSet.call(this, value);
       },
-    };
-    const guardedSetter = Object.getOwnPropertyDescriptor(setterHolder, prop).set;
-    Object.defineProperty(proto, prop, {
-      configurable: true,
-      enumerable: desc.enumerable,
-      get: desc.get,
-      set: U.stealth(guardedSetter, `set ${prop}`, {
-        length: desc.set.length,
-        source: U.nativeSourceFor(desc.set, `set ${prop}`),
-      }),
-    });
+    }));
+    for (const name of ["setAttribute", "setAttributeNS"]) {
+      const namespaced = name === "setAttributeNS";
+      U.wrapMethod(Element.prototype, name, (orig) => ({
+        [name](...args) {
+          const attrName = namespaced ? args[1] : args[0];
+          if (typeof attrName === "string" && attrName.toLowerCase() === "src") {
+            maybeDetectReplayScript(namespaced ? args[2] : args[1]);
+          }
+          return orig.apply(this, args);
+        },
+      }));
+    }
   };
 
-  const makeAttributeDetector = (origFn, name, length) => {
-    const wrapped = {
-      [name](...args) {
-        const attrName = args.length >= 3 ? args[1] : args[0];
-        const attrValue = args.length >= 3 ? args[2] : args[1];
-        if (typeof attrName === "string" && attrName.toLowerCase() === "src") {
-          maybeDetectReplayScript(attrValue);
-        }
-        return origFn.apply(this, args);
-      },
-    }[name];
-    return U.stealth(wrapped, name, { length });
-  };
-
-  patchDatadogGlobal();
-  patchPostHogGlobal();
-  patchOpenReplayGlobal();
-  patchSentryGlobal();
+  for (const [name, instrument] of REPLAY_SDK_GLOBALS) trapGlobal(name, instrument);
   patchReplayScriptProperties();
   patchReplayListeners();
   setTimeout(scanReplaySignals, 0);

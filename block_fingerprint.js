@@ -1,4 +1,4 @@
-/* eslint-disable max-lines, max-statements, max-lines-per-function, complexity -- MAIN-world fingerprint shims are safer kept contiguous */
+/* eslint-disable max-lines, max-statements -- MAIN-world fingerprint shims are safer kept contiguous */
 // Static - MAIN-world opt-in device and browser signal poisoning.
 (() => {
   const U = globalThis.__static_block_utils__;
@@ -183,24 +183,58 @@
     return Object.prototype.hasOwnProperty.call(navValues, prop) ? navValues[prop] : original;
   };
 
-  const patchGetter = (target, prop, nativeName, maskedValue) => {
-    if (!target) return;
-    const found = U.descriptorOwnerFor(target, prop);
-    if (!found || !found.desc || typeof found.desc.get !== "function") return;
-    const { desc, owner } = found;
+  // Wrap a getter wherever it lives on `target`'s prototype chain so masking
+  // returns maskedValue(original, receiver) instead of the native value.
+  const patchGetter = (target, prop, maskedValue) => {
+    const found = target && U.descriptorOwnerFor(target, prop);
+    if (!found) return;
     try {
-      Object.defineProperty(owner, prop, {
-        ...desc,
-        get: U.stealth(
-          function get() {
-            const original = desc.get.call(this);
-            return isMasking() ? maskedValue(original, this) : original;
-          },
-          nativeName,
-          { length: 0, source: U.nativeSourceFor(desc.get, nativeName) }
-        ),
-      });
+      U.wrapGetter(found.owner, prop, (nativeGet) => ({
+        get() {
+          const original = nativeGet.call(this);
+          return isMasking() ? maskedValue(original, this) : original;
+        },
+      }));
     } catch {}
+  };
+
+  // Same for methods: wrap `name` wherever it lives on the prototype chain.
+  const patchMethodOf = (target, name, wrap) => {
+    const found = target && U.descriptorOwnerFor(target, name);
+    if (found) U.wrapMethod(found.owner, name, wrap);
+  };
+
+  // Proxy `target` so the methods named in `fakes` become native-looking
+  // fakes; `fakes[name](native, target, args)` runs on call. Other methods
+  // read through bound to the real object.
+  const proxyWithFakes = (target, fakes) => {
+    if (!target) return target;
+    return new Proxy(target, {
+      get(t, prop) {
+        const value = Reflect.get(t, prop, t);
+        if (typeof value !== "function") return value;
+        if (!Object.prototype.hasOwnProperty.call(fakes, prop)) return value.bind(t);
+        return U.stealth(
+          function () {
+            return fakes[prop](value, t, arguments);
+          },
+          prop,
+          { length: value.length, source: U.nativeSourceFor(value, prop) }
+        );
+      },
+    });
+  };
+
+  const fakeArrayLike = (original) => {
+    if (typeof original !== "object" || original == null) return null;
+    const fake = Object.create(Object.getPrototypeOf(original));
+    Object.defineProperty(fake, "length", {
+      value: 0,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    return fake;
   };
 
   const patchNavigatorGetters = () => {
@@ -216,53 +250,12 @@
       "platform",
       "userAgent",
       "vendor",
+      "webdriver",
     ]) {
-      patchGetter(Navigator.prototype, prop, `get ${prop}`, (original) =>
-        navigatorValueFor(prop, original)
-      );
+      patchGetter(Navigator.prototype, prop, (original) => navigatorValueFor(prop, original));
     }
-    // navigator.webdriver may be a data property in some browsers (e.g. Chrome),
-    // so patch it explicitly instead of relying on patchGetter which skips non-getters.
-    try {
-      const webdriverDesc =
-        Object.getOwnPropertyDescriptor(Navigator.prototype, "webdriver") ||
-        (Object.getOwnPropertyDescriptor(window, "navigator") &&
-          Object.getOwnPropertyDescriptor(navigator, "webdriver"));
-      if (webdriverDesc) {
-        if (typeof webdriverDesc.get === "function") {
-          patchGetter(Navigator.prototype, "webdriver", "get webdriver", (original) =>
-            navigatorValueFor("webdriver", original)
-          );
-        } else if ("value" in webdriverDesc) {
-          Object.defineProperty(webdriverDesc.owner || navigator, "webdriver", {
-            ...webdriverDesc,
-            value: navigatorValueFor("webdriver", webdriverDesc.value),
-          });
-        }
-      }
-    } catch {}
-    const fakeArrayLike = (original) => {
-      if (typeof original !== "object" || original == null) return null;
-      const fake = Object.create(Object.getPrototypeOf(original));
-      Object.defineProperty(fake, "length", {
-        value: 0,
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-      return fake;
-    };
-    if (typeof navigator !== "undefined" && navigator.plugins) {
-      patchGetter(Navigator.prototype, "plugins", "get plugins", (original) => {
-        if (!isMasking()) return original;
-        return fakeArrayLike(original) || [];
-      });
-    }
-    if (typeof navigator !== "undefined" && navigator.mimeTypes) {
-      patchGetter(Navigator.prototype, "mimeTypes", "get mimeTypes", (original) => {
-        if (!isMasking()) return original;
-        return fakeArrayLike(original) || [];
-      });
+    for (const prop of ["plugins", "mimeTypes"]) {
+      patchGetter(Navigator.prototype, prop, (original) => fakeArrayLike(original) || []);
     }
   };
 
@@ -281,26 +274,15 @@
         "pixelDepth",
         "width",
       ]) {
-        patchGetter(Screen.prototype, prop, `get ${prop}`, (original) =>
-          screenValueFor(prop, original)
-        );
+        patchGetter(Screen.prototype, prop, (original) => screenValueFor(prop, original));
       }
     }
-    patchGetter(window, "devicePixelRatio", "get devicePixelRatio", (original) =>
+    patchGetter(window, "devicePixelRatio", (original) =>
       screenValueFor("devicePixelRatio", original)
     );
     if (typeof ScreenOrientation !== "undefined" && ScreenOrientation.prototype) {
-      for (const prop of ["type", "angle"]) {
-        const orientationValues = {
-          type: "landscape-primary",
-          angle: 0,
-        };
-        patchGetter(ScreenOrientation.prototype, prop, `get ${prop}`, (original) =>
-          Object.prototype.hasOwnProperty.call(orientationValues, prop)
-            ? orientationValues[prop]
-            : original
-        );
-      }
+      patchGetter(ScreenOrientation.prototype, "type", () => "landscape-primary");
+      patchGetter(ScreenOrientation.prototype, "angle", () => 0);
     }
   };
 
@@ -416,9 +398,7 @@
 
   const patchUserAgentData = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    patchGetter(Navigator.prototype, "userAgentData", "get userAgentData", (original, owner) =>
-      maskedUaData(original, owner)
-    );
+    patchGetter(Navigator.prototype, "userAgentData", maskedUaData);
   };
 
   const timeZoneOffsetFor = (date, timeZone) => {
@@ -503,48 +483,21 @@
   };
 
   const patchTimezone = () => {
-    const dateDesc = Object.getOwnPropertyDescriptor(Date.prototype, "getTimezoneOffset");
-    const origOffset = dateDesc && dateDesc.value;
-    if (typeof origOffset === "function") {
-      const wrappedOffset = {
-        getTimezoneOffset() {
-          if (!isMasking()) return origOffset.apply(this, arguments);
-          return timeZoneOffsetFor(this, persona().timeZone);
-        },
-      }.getTimezoneOffset;
-      Object.defineProperty(Date.prototype, "getTimezoneOffset", {
-        ...dateDesc,
-        value: U.stealth(wrappedOffset, "getTimezoneOffset", {
-          length: origOffset.length,
-          source: U.nativeSourceFor(origOffset, "getTimezoneOffset"),
-        }),
-      });
-    }
-
-    const intlProto = Intl && Intl.DateTimeFormat && Intl.DateTimeFormat.prototype;
-    const resolvedDesc = intlProto && Object.getOwnPropertyDescriptor(intlProto, "resolvedOptions");
-    const origResolved = resolvedDesc && resolvedDesc.value;
-    if (typeof origResolved !== "function") return;
-    const wrappedResolved = {
+    U.wrapMethod(Date.prototype, "getTimezoneOffset", (origOffset) => ({
+      getTimezoneOffset() {
+        if (!isMasking()) return origOffset.apply(this, arguments);
+        return timeZoneOffsetFor(this, persona().timeZone);
+      },
+    }));
+    U.wrapMethod(Intl.DateTimeFormat.prototype, "resolvedOptions", (origResolved) => ({
       resolvedOptions() {
         const options = origResolved.apply(this, arguments);
         if (!isMasking() || explicitTimeZoneDateTimeFormats.has(this)) return options;
         return { ...options, timeZone: persona().timeZone };
       },
-    }.resolvedOptions;
-    Object.defineProperty(intlProto, "resolvedOptions", {
-      ...resolvedDesc,
-      value: U.stealth(wrappedResolved, "resolvedOptions", {
-        length: origResolved.length,
-        source: U.nativeSourceFor(origResolved, "resolvedOptions"),
-      }),
-    });
-
+    }));
     for (const method of ["toLocaleString", "toLocaleDateString", "toLocaleTimeString"]) {
-      const desc = Object.getOwnPropertyDescriptor(Date.prototype, method);
-      const orig = desc && desc.value;
-      if (typeof orig !== "function") continue;
-      const wrapped = {
+      U.wrapMethod(Date.prototype, method, (orig) => ({
         [method](...args) {
           if (!isMasking()) return orig.apply(this, args);
           const locale = args[0];
@@ -552,14 +505,7 @@
           if (!options.timeZone) options.timeZone = persona().timeZone;
           return orig.call(this, locale, options);
         },
-      }[method];
-      Object.defineProperty(Date.prototype, method, {
-        ...desc,
-        value: U.stealth(wrapped, method, {
-          length: orig.length,
-          source: U.nativeSourceFor(orig, method),
-        }),
-      });
+      }));
     }
   };
 
@@ -570,7 +516,7 @@
     } catch {}
     if (!proto) return;
     for (const prop of ["downlink", "effectiveType", "rtt", "saveData", "type"]) {
-      patchGetter(proto, prop, `get ${prop}`, (original) => {
+      patchGetter(proto, prop, (original) => {
         const connection = persona().connection;
         return Object.prototype.hasOwnProperty.call(connection, prop) ? connection[prop] : original;
       });
@@ -601,102 +547,115 @@
   };
 
   const patchBattery = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = U.descriptorOwnerFor(Navigator.prototype, "getBattery");
-    const desc = found && found.desc;
-    const orig = desc && desc.value;
-    if (!found || typeof orig !== "function") return;
-    const wrapped = {
+    if (typeof Navigator === "undefined") return;
+    patchMethodOf(Navigator.prototype, "getBattery", (orig) => ({
       getBattery() {
         if (isMasking()) return Promise.resolve(fakeBattery());
         return orig.apply(this, arguments);
       },
-    }.getBattery;
-    Object.defineProperty(found.owner, "getBattery", {
-      ...desc,
-      value: U.stealth(wrapped, "getBattery", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "getBattery"),
-      }),
-    });
+    }));
   };
 
   const patchPerformanceMemory = () => {
-    const perf = window.performance;
-    if (!perf) return;
-    const found = U.descriptorOwnerFor(perf, "memory");
-    if (!found || !found.desc) return;
-    const { desc, owner } = found;
-    if (desc.get) {
-      Object.defineProperty(owner, "memory", {
-        ...desc,
-        get: U.stealth(
-          function get() {
-            const original = desc.get.call(this);
-            if (!isMasking()) return original;
-            return {
-              jsHeapSizeLimit: 2197815296,
-              totalJSHeapSize: 12345678,
-              usedJSHeapSize: 9876543,
-            };
-          },
-          "get memory",
-          { length: 0, source: U.nativeSourceFor(desc.get, "get memory") }
-        ),
-      });
-    } else if ("value" in desc) {
-      Object.defineProperty(owner, "memory", {
-        ...desc,
-        get: U.stealth(
-          function get() {
-            if (!isMasking()) return desc.value;
-            return {
-              jsHeapSizeLimit: 2197815296,
-              totalJSHeapSize: 12345678,
-              usedJSHeapSize: 9876543,
-            };
-          },
-          "get memory",
-          { length: 0, source: "function get memory() { [native code] }" }
-        ),
-      });
-    }
+    patchGetter(window.performance, "memory", () => ({
+      jsHeapSizeLimit: 2197815296,
+      totalJSHeapSize: 12345678,
+      usedJSHeapSize: 9876543,
+    }));
   };
 
   const patchStorageEstimate = () => {
-    let proto = null;
     try {
-      proto = navigator.storage && Object.getPrototypeOf(navigator.storage);
+      const proto = navigator.storage && Object.getPrototypeOf(navigator.storage);
+      patchMethodOf(proto, "estimate", (orig) => ({
+        estimate() {
+          if (!isMasking()) return orig.apply(this, arguments);
+          return Promise.resolve({ quota: persona().storageQuota, usage: 0, usageDetails: {} });
+        },
+      }));
     } catch {}
-    const found = proto && U.descriptorOwnerFor(proto, "estimate");
-    const desc = found && found.desc;
-    const orig = desc && desc.value;
-    if (!found || typeof orig !== "function") return;
-    const wrapped = {
-      estimate() {
-        if (!isMasking()) return orig.apply(this, arguments);
-        return Promise.resolve({
-          quota: persona().storageQuota,
-          usage: 0,
-          usageDetails: {},
-        });
-      },
-    }.estimate;
-    Object.defineProperty(found.owner, "estimate", {
-      ...desc,
-      value: U.stealth(wrapped, "estimate", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "estimate"),
-      }),
-    });
   };
 
-  const patchWebglCtor = (Ctor) => {
+  const PLAUSIBLE_WEBGL_EXTENSIONS = [
+    "ANGLE_instanced_arrays",
+    "EXT_blend_minmax",
+    "EXT_color_buffer_half_float",
+    "EXT_disjoint_timer_query",
+    "EXT_float_blend",
+    "EXT_frag_depth",
+    "EXT_shader_texture_lod",
+    "EXT_texture_compression_bptc",
+    "EXT_texture_compression_rgtc",
+    "EXT_texture_filter_anisotropic",
+    "EXT_sRGB",
+    "OES_element_index_uint",
+    "OES_fbo_render_mipmap",
+    "OES_standard_derivatives",
+    "OES_texture_float",
+    "OES_texture_float_linear",
+    "OES_texture_half_float",
+    "OES_texture_half_float_linear",
+    "OES_vertex_array_object",
+    "WEBGL_color_buffer_float",
+    "WEBGL_compressed_texture_astc",
+    "WEBGL_compressed_texture_etc",
+    "WEBGL_compressed_texture_etc1",
+    "WEBGL_compressed_texture_pvrtc",
+    "WEBGL_compressed_texture_s3tc",
+    "WEBGL_compressed_texture_s3tc_srgb",
+    "WEBGL_debug_renderer_info",
+    "WEBGL_debug_shaders",
+    "WEBGL_depth_texture",
+    "WEBGL_draw_buffers",
+    "WEBGL_lose_context",
+    "WEBGL_multi_draw",
+  ];
+  const PLAUSIBLE_WEBGL_EXTENSION_OBJECTS = new Set([
+    "EXT_blend_minmax",
+    "EXT_color_buffer_float",
+    "EXT_color_buffer_half_float",
+    "EXT_disjoint_timer_query",
+    "EXT_float_blend",
+    "EXT_frag_depth",
+    "EXT_shader_texture_lod",
+    "EXT_texture_compression_bptc",
+    "EXT_texture_compression_rgtc",
+    "EXT_texture_filter_anisotropic",
+    "EXT_sRGB",
+    "OES_element_index_uint",
+    "OES_fbo_render_mipmap",
+    "OES_standard_derivatives",
+    "OES_texture_float",
+    "OES_texture_float_linear",
+    "OES_texture_half_float",
+    "OES_texture_half_float_linear",
+    "OES_vertex_array_object",
+    "WEBGL_color_buffer_float",
+    "WEBGL_compressed_texture_s3tc",
+    "WEBGL_compressed_texture_s3tc_srgb",
+    "WEBGL_debug_renderer_info",
+    "WEBGL_debug_shaders",
+    "WEBGL_depth_texture",
+    "WEBGL_draw_buffers",
+    "WEBGL_lose_context",
+    "WEBGL_multi_draw",
+  ]);
+  const WEBGL_CONTEXT_ATTRIBUTES = {
+    alpha: true,
+    antialias: true,
+    depth: true,
+    desynchronized: false,
+    failIfMajorPerformanceCaveat: false,
+    powerPreference: "default",
+    premultipliedAlpha: true,
+    preserveDrawingBuffer: false,
+    stencil: false,
+  };
+
+  const patchWebglContext = (Ctor) => {
     if (typeof Ctor === "undefined" || !Ctor.prototype) return;
-    const desc = Object.getOwnPropertyDescriptor(Ctor.prototype, "getParameter");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    const proto = Ctor.prototype;
+    U.wrapMethod(proto, "getParameter", (orig) => ({
       getParameter(parameter) {
         if (isMasking()) {
           const numeric = Number(parameter);
@@ -710,19 +669,40 @@
         }
         return orig.apply(this, arguments);
       },
-    }.getParameter;
-    Object.defineProperty(Ctor.prototype, "getParameter", {
-      ...desc,
-      value: U.stealth(wrapped, "getParameter", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "getParameter"),
-      }),
-    });
+    }));
+    U.wrapMethod(proto, "getSupportedExtensions", (orig) => ({
+      getSupportedExtensions() {
+        if (!isMasking()) return orig.apply(this, arguments);
+        return PLAUSIBLE_WEBGL_EXTENSIONS.slice();
+      },
+    }));
+    U.wrapMethod(proto, "getShaderPrecisionFormat", (orig) => ({
+      getShaderPrecisionFormat(_shaderType, _precisionType) {
+        if (!isMasking()) return orig.apply(this, arguments);
+        return { rangeMin: 127, rangeMax: 127, precision: 23 };
+      },
+    }));
+    U.wrapMethod(proto, "getContextAttributes", (orig) => ({
+      getContextAttributes() {
+        if (!isMasking()) return orig.apply(this, arguments);
+        return { ...WEBGL_CONTEXT_ATTRIBUTES };
+      },
+    }));
+    U.wrapMethod(proto, "getExtension", (orig) => ({
+      getExtension(name) {
+        if (!isMasking()) return orig.apply(this, arguments);
+        const extensionName = String(name || "");
+        if (extensionName === "WEBGL_debug_renderer_info") {
+          return { UNMASKED_RENDERER_WEBGL, UNMASKED_VENDOR_WEBGL };
+        }
+        return PLAUSIBLE_WEBGL_EXTENSION_OBJECTS.has(extensionName) ? {} : null;
+      },
+    }));
   };
 
   const patchWebgl = () => {
-    patchWebglCtor(globalThis.WebGLRenderingContext);
-    patchWebglCtor(globalThis.WebGL2RenderingContext);
+    patchWebglContext(globalThis.WebGLRenderingContext);
+    patchWebglContext(globalThis.WebGL2RenderingContext);
   };
 
   const tweakPixels = (data, seed) => {
@@ -744,177 +724,85 @@
   };
 
   let nativeCanvasGetImageData = null;
-
-  const cloneCanvasWithNoise = (canvas) => {
-    const width = Math.max(1, Math.min(canvas.width || 1, 8192));
-    const height = Math.max(1, Math.min(canvas.height || 1, 8192));
-    const clone = document.createElement("canvas");
-    clone.width = width;
-    clone.height = height;
-    const ctx = clone.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return null;
-    ctx.drawImage(canvas, 0, 0, width, height);
-    const getImgData = nativeCanvasGetImageData
-      ? nativeCanvasGetImageData.bind(ctx)
-      : ctx.getImageData.bind(ctx);
-    const x = persona().canvasSeed % width;
-    const y = Math.floor(persona().canvasSeed / Math.max(1, width)) % height;
-    const imageData = getImgData(x, y, 1, 1);
-    tweakPixels(imageData.data, persona().canvasSeed);
-    ctx.putImageData(imageData, x, y);
-    return clone;
-  };
-
   let nativeOffscreenGetImageData = null;
 
-  const cloneOffscreenCanvasWithNoise = (canvas) => {
+  // Copy `canvas` (capped at 8192px per side) and nudge one seeded pixel.
+  const cloneWithNoise = (canvas, makeCanvas, nativeGetImageData) => {
     const width = Math.max(1, Math.min(canvas.width || 1, 8192));
     const height = Math.max(1, Math.min(canvas.height || 1, 8192));
-    const clone = new OffscreenCanvas(width, height);
+    const clone = makeCanvas(width, height);
     const ctx = clone.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
     ctx.drawImage(canvas, 0, 0, width, height);
-    const getImgData = nativeOffscreenGetImageData
-      ? nativeOffscreenGetImageData.bind(ctx)
-      : ctx.getImageData.bind(ctx);
-    const x = persona().canvasSeed % width;
-    const y = Math.floor(persona().canvasSeed / Math.max(1, width)) % height;
-    const imageData = getImgData(x, y, 1, 1);
-    tweakPixels(imageData.data, persona().canvasSeed);
+    const seed = persona().canvasSeed;
+    const x = seed % width;
+    const y = Math.floor(seed / Math.max(1, width)) % height;
+    const imageData = (nativeGetImageData || ctx.getImageData).call(ctx, x, y, 1, 1);
+    tweakPixels(imageData.data, seed);
     ctx.putImageData(imageData, x, y);
     return clone;
   };
+
+  const newCanvas = (width, height) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  };
+
+  const cloneCanvasWithNoise = (canvas) =>
+    cloneWithNoise(canvas, newCanvas, nativeCanvasGetImageData);
+
+  const cloneOffscreenCanvasWithNoise = (canvas) =>
+    cloneWithNoise(
+      canvas,
+      (width, height) => new OffscreenCanvas(width, height),
+      nativeOffscreenGetImageData
+    );
+
+  // Export methods (toDataURL, toBlob, convertToBlob) read a noised clone.
+  const patchCanvasExport = (proto, name, cloneFor) => {
+    U.wrapMethod(proto, name, (orig) => ({
+      [name]() {
+        if (!isMasking()) return orig.apply(this, arguments);
+        try {
+          const clone = cloneFor(this);
+          if (clone) return orig.apply(clone, arguments);
+        } catch {}
+        return orig.apply(this, arguments);
+      },
+    }));
+  };
+
+  const patchGetImageData = (proto) =>
+    U.wrapMethod(proto, "getImageData", (orig) => ({
+      getImageData() {
+        const imageData = orig.apply(this, arguments);
+        if (isMasking()) tweakPixels(imageData.data, persona().canvasSeed);
+        return imageData;
+      },
+    }));
 
   const patchOffscreenCanvas = () => {
     if (typeof OffscreenCanvas === "undefined") return;
-
-    const convertDesc = Object.getOwnPropertyDescriptor(OffscreenCanvas.prototype, "convertToBlob");
-    const origConvert = convertDesc && convertDesc.value;
-    if (typeof origConvert === "function") {
-      const wrapped = {
-        convertToBlob() {
-          if (!isMasking()) return origConvert.apply(this, arguments);
-          try {
-            const clone = cloneOffscreenCanvasWithNoise(this);
-            if (clone) return origConvert.apply(clone, arguments);
-          } catch {}
-          return origConvert.apply(this, arguments);
-        },
-      }.convertToBlob;
-      Object.defineProperty(OffscreenCanvas.prototype, "convertToBlob", {
-        ...convertDesc,
-        value: U.stealth(wrapped, "convertToBlob", {
-          length: origConvert.length,
-          source: U.nativeSourceFor(origConvert, "convertToBlob"),
-        }),
-      });
-    }
-
+    patchCanvasExport(OffscreenCanvas.prototype, "convertToBlob", cloneOffscreenCanvasWithNoise);
     try {
-      const temp = new OffscreenCanvas(1, 1);
-      const tempCtx = temp.getContext("2d");
-      if (!tempCtx || typeof tempCtx.getImageData !== "function") return;
-      const proto = Object.getPrototypeOf(tempCtx);
-      if (!proto) return;
-      const imgDesc = Object.getOwnPropertyDescriptor(proto, "getImageData");
-      const origGetImageData = imgDesc && imgDesc.value;
-      if (typeof origGetImageData !== "function") return;
-      nativeOffscreenGetImageData = origGetImageData;
-      const alreadyPatched =
+      const proto = Object.getPrototypeOf(new OffscreenCanvas(1, 1).getContext("2d"));
+      const sharesCanvasContext =
         typeof CanvasRenderingContext2D !== "undefined" &&
-        CanvasRenderingContext2D.prototype.getImageData === origGetImageData;
-      if (alreadyPatched) {
-        nativeOffscreenGetImageData =
-          nativeCanvasGetImageData && typeof nativeCanvasGetImageData === "function"
-            ? nativeCanvasGetImageData
-            : null;
-        return;
-      }
-      const wrappedGetImageData = {
-        getImageData() {
-          const imageData = origGetImageData.apply(this, arguments);
-          if (isMasking()) tweakPixels(imageData.data, persona().canvasSeed);
-          return imageData;
-        },
-      }.getImageData;
-      Object.defineProperty(proto, "getImageData", {
-        ...imgDesc,
-        value: U.stealth(wrappedGetImageData, "getImageData", {
-          length: origGetImageData.length,
-          source: U.nativeSourceFor(origGetImageData, "getImageData"),
-        }),
-      });
+        proto.getImageData === CanvasRenderingContext2D.prototype.getImageData;
+      nativeOffscreenGetImageData = sharesCanvasContext
+        ? nativeCanvasGetImageData
+        : patchGetImageData(proto);
     } catch {}
   };
 
   const patchCanvas = () => {
     if (typeof HTMLCanvasElement === "undefined") return;
-    const toDataUrlDesc = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "toDataURL");
-    const origToDataUrl = toDataUrlDesc && toDataUrlDesc.value;
-    if (typeof origToDataUrl === "function") {
-      const wrappedToDataUrl = {
-        toDataURL() {
-          if (!isMasking()) return origToDataUrl.apply(this, arguments);
-          try {
-            const clone = cloneCanvasWithNoise(this);
-            if (clone) return origToDataUrl.apply(clone, arguments);
-          } catch {}
-          return origToDataUrl.apply(this, arguments);
-        },
-      }.toDataURL;
-      Object.defineProperty(HTMLCanvasElement.prototype, "toDataURL", {
-        ...toDataUrlDesc,
-        value: U.stealth(wrappedToDataUrl, "toDataURL", {
-          length: origToDataUrl.length,
-          source: U.nativeSourceFor(origToDataUrl, "toDataURL"),
-        }),
-      });
-    }
-
-    const toBlobDesc = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "toBlob");
-    const origToBlob = toBlobDesc && toBlobDesc.value;
-    if (typeof origToBlob === "function") {
-      const wrappedToBlob = {
-        toBlob() {
-          if (!isMasking()) return origToBlob.apply(this, arguments);
-          try {
-            const clone = cloneCanvasWithNoise(this);
-            if (clone) return origToBlob.apply(clone, arguments);
-          } catch {}
-          return origToBlob.apply(this, arguments);
-        },
-      }.toBlob;
-      Object.defineProperty(HTMLCanvasElement.prototype, "toBlob", {
-        ...toBlobDesc,
-        value: U.stealth(wrappedToBlob, "toBlob", {
-          length: origToBlob.length,
-          source: U.nativeSourceFor(origToBlob, "toBlob"),
-        }),
-      });
-    }
-
+    patchCanvasExport(HTMLCanvasElement.prototype, "toDataURL", cloneCanvasWithNoise);
+    patchCanvasExport(HTMLCanvasElement.prototype, "toBlob", cloneCanvasWithNoise);
     if (typeof CanvasRenderingContext2D === "undefined") return;
-    const imageDesc = Object.getOwnPropertyDescriptor(
-      CanvasRenderingContext2D.prototype,
-      "getImageData"
-    );
-    const origGetImageData = imageDesc && imageDesc.value;
-    if (typeof origGetImageData !== "function") return;
-    nativeCanvasGetImageData = origGetImageData;
-    const wrappedGetImageData = {
-      getImageData() {
-        const imageData = origGetImageData.apply(this, arguments);
-        if (isMasking()) tweakPixels(imageData.data, persona().canvasSeed);
-        return imageData;
-      },
-    }.getImageData;
-    Object.defineProperty(CanvasRenderingContext2D.prototype, "getImageData", {
-      ...imageDesc,
-      value: U.stealth(wrappedGetImageData, "getImageData", {
-        length: origGetImageData.length,
-        source: U.nativeSourceFor(origGetImageData, "getImageData"),
-      }),
-    });
+    nativeCanvasGetImageData = patchGetImageData(CanvasRenderingContext2D.prototype);
   };
 
   const clampAudioSample = (value) => Math.max(-1, Math.min(1, value));
@@ -957,11 +845,8 @@
   };
 
   const patchAudioRendering = () => {
-    if (typeof OfflineAudioContext === "undefined" || !OfflineAudioContext.prototype) return;
-    const desc = Object.getOwnPropertyDescriptor(OfflineAudioContext.prototype, "startRendering");
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    if (typeof OfflineAudioContext === "undefined") return;
+    U.wrapMethod(OfflineAudioContext.prototype, "startRendering", (orig) => ({
       startRendering() {
         const result = orig.apply(this, arguments);
         if (!isMasking()) return result;
@@ -970,247 +855,119 @@
         }
         return poisonAudioBuffer(result);
       },
-    }.startRendering;
-    Object.defineProperty(OfflineAudioContext.prototype, "startRendering", {
-      ...desc,
-      value: U.stealth(wrapped, "startRendering", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "startRendering"),
-      }),
-    });
+    }));
   };
 
-  const patchKeyboard = () => {
+  const KEYBOARD_LAYOUT_CODES = [
+    "Backquote",
+    "Backslash",
+    "Backspace",
+    "BracketLeft",
+    "BracketRight",
+    "Comma",
+    ...Array.from({ length: 10 }, (_, digit) => `Digit${digit}`),
+    "Equal",
+    "IntlBackslash",
+    "IntlRo",
+    "IntlYen",
+    ...Array.from({ length: 26 }, (_, index) => `Key${String.fromCharCode(65 + index)}`),
+    "Minus",
+    "Period",
+    "Quote",
+    "Semicolon",
+    "Slash",
+  ];
+  const PROMPT_PERMISSIONS = new Set([
+    "camera",
+    "microphone",
+    "notifications",
+    "clipboard-read",
+    "clipboard-write",
+    "midi",
+    "midi-sysex",
+  ]);
+
+  const patchNavigatorObjects = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = U.descriptorOwnerFor(Navigator.prototype, "keyboard");
-    const desc = found && found.desc;
-    if (!desc || typeof desc.get !== "function") return;
-    const { owner } = found;
-    Object.defineProperty(owner, "keyboard", {
-      ...desc,
-      get: U.stealth(
-        function get() {
-          const original = desc.get.call(this);
-          if (!isMasking() || !original || typeof original.getLayoutMap !== "function") {
-            return original;
-          }
-          const wrappedKeyboard = new Proxy(original, {
-            get(target, prop) {
-              const value = Reflect.get(target, prop, target);
-              if (prop === "getLayoutMap") {
-                return U.stealth(
-                  function getLayoutMap() {
-                    const layout = new Map([
-                      ["Backquote", "Backquote"],
-                      ["Backslash", "Backslash"],
-                      ["Backspace", "Backspace"],
-                      ["BracketLeft", "BracketLeft"],
-                      ["BracketRight", "BracketRight"],
-                      ["Comma", "Comma"],
-                      ["Digit0", "Digit0"],
-                      ["Digit1", "Digit1"],
-                      ["Digit2", "Digit2"],
-                      ["Digit3", "Digit3"],
-                      ["Digit4", "Digit4"],
-                      ["Digit5", "Digit5"],
-                      ["Digit6", "Digit6"],
-                      ["Digit7", "Digit7"],
-                      ["Digit8", "Digit8"],
-                      ["Digit9", "Digit9"],
-                      ["Equal", "Equal"],
-                      ["IntlBackslash", "IntlBackslash"],
-                      ["IntlRo", "IntlRo"],
-                      ["IntlYen", "IntlYen"],
-                      ["KeyA", "KeyA"],
-                      ["KeyB", "KeyB"],
-                      ["KeyC", "KeyC"],
-                      ["KeyD", "KeyD"],
-                      ["KeyE", "KeyE"],
-                      ["KeyF", "KeyF"],
-                      ["KeyG", "KeyG"],
-                      ["KeyH", "KeyH"],
-                      ["KeyI", "KeyI"],
-                      ["KeyJ", "KeyJ"],
-                      ["KeyK", "KeyK"],
-                      ["KeyL", "KeyL"],
-                      ["KeyM", "KeyM"],
-                      ["KeyN", "KeyN"],
-                      ["KeyO", "KeyO"],
-                      ["KeyP", "KeyP"],
-                      ["KeyQ", "KeyQ"],
-                      ["KeyR", "KeyR"],
-                      ["KeyS", "KeyS"],
-                      ["KeyT", "KeyT"],
-                      ["KeyU", "KeyU"],
-                      ["KeyV", "KeyV"],
-                      ["KeyW", "KeyW"],
-                      ["KeyX", "KeyX"],
-                      ["KeyY", "KeyY"],
-                      ["KeyZ", "KeyZ"],
-                      ["Minus", "Minus"],
-                      ["Period", "Period"],
-                      ["Quote", "Quote"],
-                      ["Semicolon", "Semicolon"],
-                      ["Slash", "Slash"],
-                    ]);
-                    return Promise.resolve(layout);
-                  },
-                  "getLayoutMap",
-                  { length: 0, source: U.nativeSourceFor(value, "getLayoutMap") }
-                );
-              }
-              return typeof value === "function" ? value.bind(target) : value;
-            },
-          });
-          return wrappedKeyboard;
+    // Fakes resolving to a fixed primitive; array results are built per call.
+    const resolve = (value) => () => Promise.resolve(value);
+    patchGetter(Navigator.prototype, "keyboard", (original) =>
+      proxyWithFakes(original, {
+        getLayoutMap: () =>
+          Promise.resolve(new Map(KEYBOARD_LAYOUT_CODES.map((code) => [code, code]))),
+      })
+    );
+    patchGetter(Navigator.prototype, "mediaDevices", (original) =>
+      proxyWithFakes(original, {
+        enumerateDevices: () => Promise.resolve([]),
+        getSupportedConstraints: (native, target, args) => native.apply(target, args),
+      })
+    );
+    patchGetter(Navigator.prototype, "permissions", (original) =>
+      proxyWithFakes(original, {
+        query(native, target, args) {
+          const permissionDesc = args[0];
+          const name =
+            permissionDesc && typeof permissionDesc === "object"
+              ? permissionDesc.name
+              : permissionDesc;
+          if (PROMPT_PERMISSIONS.has(name)) return Promise.resolve({ name, state: "prompt" });
+          return native.apply(target, args);
         },
-        "get keyboard",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get keyboard") }
-      ),
-    });
+      })
+    );
+    const plausibleMediaInfo = () =>
+      Promise.resolve({ supported: true, smooth: true, powerEfficient: true });
+    patchGetter(Navigator.prototype, "mediaCapabilities", (original) =>
+      proxyWithFakes(original, {
+        decodingInfo: plausibleMediaInfo,
+        encodingInfo: plausibleMediaInfo,
+      })
+    );
+    patchGetter(Navigator.prototype, "gpu", (original) =>
+      proxyWithFakes(original, { requestAdapter: resolve(null) })
+    );
+    patchGetter(Navigator.prototype, "credentials", (original) =>
+      proxyWithFakes(original, {
+        get: resolve(null),
+        create: resolve(null),
+        store: resolve(null),
+        preventSilentAccess: resolve(undefined),
+      })
+    );
+    patchGetter(Navigator.prototype, "clipboard", (original) =>
+      proxyWithFakes(original, {
+        read: () => Promise.resolve([]),
+        readText: resolve(""),
+        write: resolve(undefined),
+        writeText: resolve(undefined),
+      })
+    );
   };
 
-  const patchMediaDevices = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = U.descriptorOwnerFor(Navigator.prototype, "mediaDevices");
-    const desc = found && found.desc;
-    if (!desc || typeof desc.get !== "function") return;
-    const { owner } = found;
-    Object.defineProperty(owner, "mediaDevices", {
-      ...desc,
-      get: U.stealth(
-        function get() {
-          const original = desc.get.call(this);
-          if (!isMasking() || !original) return original;
-          const hasEnumerate = typeof original.enumerateDevices === "function";
-          const hasConstraints = typeof original.getSupportedConstraints === "function";
-          if (!hasEnumerate && !hasConstraints) return original;
-          const wrappedDevices = new Proxy(original, {
-            get(target, prop) {
-              const value = Reflect.get(target, prop, target);
-              if (prop === "enumerateDevices") {
-                return U.stealth(
-                  function enumerateDevices() {
-                    return Promise.resolve([]);
-                  },
-                  "enumerateDevices",
-                  { length: 0, source: U.nativeSourceFor(value, "enumerateDevices") }
-                );
-              }
-              if (prop === "getSupportedConstraints") {
-                return U.stealth(
-                  function getSupportedConstraints() {
-                    return value.apply(target, arguments);
-                  },
-                  "getSupportedConstraints",
-                  { length: 0, source: U.nativeSourceFor(value, "getSupportedConstraints") }
-                );
-              }
-              return typeof value === "function" ? value.bind(target) : value;
-            },
-          });
-          return wrappedDevices;
-        },
-        "get mediaDevices",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get mediaDevices") }
-      ),
-    });
-  };
-
-  const patchPermissions = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = U.descriptorOwnerFor(Navigator.prototype, "permissions");
-    const desc = found && found.desc;
-    if (!desc || typeof desc.get !== "function") return;
-    const { owner } = found;
-    Object.defineProperty(owner, "permissions", {
-      ...desc,
-      get: U.stealth(
-        function get() {
-          const original = desc.get.call(this);
-          if (!isMasking() || !original || typeof original.query !== "function") {
-            return original;
-          }
-          const wrappedPermissions = new Proxy(original, {
-            get(target, prop) {
-              const value = Reflect.get(target, prop, target);
-              if (prop === "query") {
-                return U.stealth(
-                  function query(permissionDesc) {
-                    const name =
-                      permissionDesc && typeof permissionDesc === "object"
-                        ? permissionDesc.name
-                        : permissionDesc;
-                    if (name === "camera" || name === "microphone") {
-                      return Promise.resolve({
-                        name,
-                        state: "prompt",
-                      });
-                    }
-                    if (name === "notifications") {
-                      return Promise.resolve({
-                        name: "notifications",
-                        state: "prompt",
-                      });
-                    }
-                    if (name === "clipboard-read" || name === "clipboard-write") {
-                      return Promise.resolve({
-                        name,
-                        state: "prompt",
-                      });
-                    }
-                    if (name === "midi" || name === "midi-sysex") {
-                      return Promise.resolve({
-                        name,
-                        state: "prompt",
-                      });
-                    }
-                    return value.apply(target, arguments);
-                  },
-                  "query",
-                  { length: 1, source: U.nativeSourceFor(value, "query") }
-                );
-              }
-              return typeof value === "function" ? value.bind(target) : value;
-            },
-          });
-          return wrappedPermissions;
-        },
-        "get permissions",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get permissions") }
-      ),
-    });
+  const MEDIA_QUERY_OVERRIDES = {
+    "(prefers-color-scheme:dark)": false,
+    "(prefers-color-scheme:light)": true,
+    "(hover:hover)": true,
+    "(hover:none)": false,
+    "(pointer:fine)": true,
+    "(pointer:coarse)": false,
+    "(any-hover:hover)": true,
+    "(any-hover:none)": false,
+    "(any-pointer:fine)": true,
+    "(any-pointer:coarse)": false,
   };
 
   const patchMatchMedia = () => {
-    if (typeof window.matchMedia !== "function") return;
-    const orig = window.matchMedia;
-    const personaMatchesFor = (query) => {
-      const normalized = String(query || "")
-        .toLowerCase()
-        .replace(/\s+/g, "");
-      const overrides = {
-        "(prefers-color-scheme:dark)": false,
-        "(prefers-color-scheme:light)": true,
-        "(hover:hover)": true,
-        "(hover:none)": false,
-        "(pointer:fine)": true,
-        "(pointer:coarse)": false,
-        "(any-hover:hover)": true,
-        "(any-hover:none)": false,
-        "(any-pointer:fine)": true,
-        "(any-pointer:coarse)": false,
-      };
-      return Object.prototype.hasOwnProperty.call(overrides, normalized)
-        ? overrides[normalized]
-        : undefined;
-    };
-    const wrapped = {
+    U.wrapMethod(window, "matchMedia", (orig) => ({
       matchMedia(query) {
         const result = orig.apply(this, arguments);
         if (!isMasking() || !result) return result;
-        const override = personaMatchesFor(query);
-        if (override === undefined) return result;
+        const normalized = String(query || "")
+          .toLowerCase()
+          .replace(/\s+/g, "");
+        if (!Object.prototype.hasOwnProperty.call(MEDIA_QUERY_OVERRIDES, normalized)) return result;
+        const override = MEDIA_QUERY_OVERRIDES[normalized];
         return new Proxy(result, {
           get(target, prop) {
             if (prop === "matches") return override;
@@ -1219,201 +976,14 @@
           },
         });
       },
-    }.matchMedia;
-    window.matchMedia = U.stealth(wrapped, "matchMedia", {
-      length: orig.length,
-      source: U.nativeSourceFor(orig, "matchMedia"),
-    });
-  };
-
-  const patchMediaCapabilities = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = U.descriptorOwnerFor(Navigator.prototype, "mediaCapabilities");
-    const desc = found && found.desc;
-    if (!desc || typeof desc.get !== "function") return;
-    const { owner } = found;
-    const plausibleMediaInfo = () =>
-      Promise.resolve({
-        supported: true,
-        smooth: true,
-        powerEfficient: true,
-      });
-    Object.defineProperty(owner, "mediaCapabilities", {
-      ...desc,
-      get: U.stealth(
-        function get() {
-          const original = desc.get.call(this);
-          if (!isMasking() || !original) return original;
-          return new Proxy(original, {
-            get(target, prop) {
-              const value = Reflect.get(target, prop, target);
-              if (prop === "decodingInfo" || prop === "encodingInfo") {
-                return U.stealth(
-                  function mediaInfo() {
-                    return plausibleMediaInfo();
-                  },
-                  prop,
-                  { length: 1, source: U.nativeSourceFor(value, prop) }
-                );
-              }
-              return typeof value === "function" ? value.bind(target) : value;
-            },
-          });
-        },
-        "get mediaCapabilities",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get mediaCapabilities") }
-      ),
-    });
-  };
-
-  const patchGpu = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = U.descriptorOwnerFor(Navigator.prototype, "gpu");
-    const desc = found && found.desc;
-    if (!desc || typeof desc.get !== "function") return;
-    const { owner } = found;
-    Object.defineProperty(owner, "gpu", {
-      ...desc,
-      get: U.stealth(
-        function get() {
-          const original = desc.get.call(this);
-          if (!isMasking() || !original) return original;
-          return new Proxy(original, {
-            get(target, prop) {
-              const value = Reflect.get(target, prop, target);
-              if (prop === "requestAdapter") {
-                return U.stealth(
-                  function requestAdapter() {
-                    return Promise.resolve(null);
-                  },
-                  "requestAdapter",
-                  { length: 0, source: U.nativeSourceFor(value, "requestAdapter") }
-                );
-              }
-              return typeof value === "function" ? value.bind(target) : value;
-            },
-          });
-        },
-        "get gpu",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get gpu") }
-      ),
-    });
+    }));
   };
 
   const patchHardwareAvailability = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
     for (const prop of ["bluetooth", "hid", "presentation", "serial", "usb", "wakeLock", "xr"]) {
-      const found = U.descriptorOwnerFor(Navigator.prototype, prop);
-      const desc = found && found.desc;
-      if (!desc || typeof desc.get !== "function") continue;
-      const { owner } = found;
-      Object.defineProperty(owner, prop, {
-        ...desc,
-        get: U.stealth(
-          function get() {
-            if (isMasking()) return undefined;
-            return desc.get.call(this);
-          },
-          `get ${prop}`,
-          { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
-        ),
-      });
+      patchGetter(Navigator.prototype, prop, () => undefined);
     }
-  };
-
-  const patchCredentials = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = U.descriptorOwnerFor(Navigator.prototype, "credentials");
-    const desc = found && found.desc;
-    if (!desc || typeof desc.get !== "function") return;
-    const { owner } = found;
-    Object.defineProperty(owner, "credentials", {
-      ...desc,
-      get: U.stealth(
-        function get() {
-          const original = desc.get.call(this);
-          if (!isMasking() || !original) return original;
-          return new Proxy(original, {
-            get(target, prop) {
-              if (prop === "get" || prop === "create") {
-                return U.stealth(
-                  function credentialOp() {
-                    return Promise.resolve(null);
-                  },
-                  prop,
-                  { length: 0, source: `function ${prop}() { [native code] }` }
-                );
-              }
-              if (prop === "store") {
-                return U.stealth(
-                  function store() {
-                    return Promise.resolve(null);
-                  },
-                  "store",
-                  { length: 1, source: "function store() { [native code] }" }
-                );
-              }
-              if (prop === "preventSilentAccess") {
-                return U.stealth(
-                  function preventSilentAccess() {
-                    return Promise.resolve(undefined);
-                  },
-                  "preventSilentAccess",
-                  { length: 0, source: "function preventSilentAccess() { [native code] }" }
-                );
-              }
-              const value = Reflect.get(target, prop, target);
-              return typeof value === "function" ? value.bind(target) : value;
-            },
-          });
-        },
-        "get credentials",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get credentials") }
-      ),
-    });
-  };
-
-  const patchClipboard = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = U.descriptorOwnerFor(Navigator.prototype, "clipboard");
-    const desc = found && found.desc;
-    if (!desc || typeof desc.get !== "function") return;
-    const { owner } = found;
-    Object.defineProperty(owner, "clipboard", {
-      ...desc,
-      get: U.stealth(
-        function get() {
-          const original = desc.get.call(this);
-          if (!isMasking() || !original) return original;
-          return new Proxy(original, {
-            get(target, prop) {
-              if (prop === "read" || prop === "readText") {
-                return U.stealth(
-                  function read() {
-                    return Promise.resolve(prop === "read" ? [] : "");
-                  },
-                  prop,
-                  { length: 0, source: `function ${prop}() { [native code] }` }
-                );
-              }
-              if (prop === "write" || prop === "writeText") {
-                return U.stealth(
-                  function write() {
-                    return Promise.resolve();
-                  },
-                  prop,
-                  { length: 1, source: `function ${prop}() { [native code] }` }
-                );
-              }
-              const value = Reflect.get(target, prop, target);
-              return typeof value === "function" ? value.bind(target) : value;
-            },
-          });
-        },
-        "get clipboard",
-        { length: 0, source: U.nativeSourceFor(desc.get, "get clipboard") }
-      ),
-    });
   };
 
   const patchRtcPeerConnection = () => {
@@ -1450,41 +1020,20 @@
     });
   };
 
+  const AUDIO_CONTEXT_VALUES = { sampleRate: 48000, baseLatency: 0.005, outputLatency: 0.01 };
+
   const patchAudioContextProperties = () => {
-    const targets = [globalThis.AudioContext, globalThis.webkitAudioContext].filter(Boolean);
-    for (const Ctor of targets) {
-      if (!Ctor.prototype) continue;
-      for (const prop of ["sampleRate", "baseLatency", "outputLatency"]) {
-        const found = U.descriptorOwnerFor(Ctor.prototype, prop);
-        if (!found || !found.desc || typeof found.desc.get !== "function") continue;
-        const { desc, owner } = found;
-        const DEFAULT_VALUES = {
-          sampleRate: 48000,
-          baseLatency: 0.005,
-          outputLatency: 0.01,
-        };
-        Object.defineProperty(owner, prop, {
-          ...desc,
-          get: U.stealth(
-            function get() {
-              if (isMasking()) return DEFAULT_VALUES[prop];
-              return desc.get.call(this);
-            },
-            `get ${prop}`,
-            { length: 0, source: U.nativeSourceFor(desc.get, `get ${prop}`) }
-          ),
-        });
+    for (const Ctor of [globalThis.AudioContext, globalThis.webkitAudioContext]) {
+      if (!Ctor || !Ctor.prototype) continue;
+      for (const [prop, value] of Object.entries(AUDIO_CONTEXT_VALUES)) {
+        patchGetter(Ctor.prototype, prop, () => value);
       }
     }
   };
 
   const patchCanvasTextMetrics = () => {
-    const ctor = globalThis.CanvasRenderingContext2D;
-    if (!ctor || !ctor.prototype) return;
-    const desc = Object.getOwnPropertyDescriptor(ctor.prototype, "measureText");
-    if (!desc || typeof desc.value !== "function") return;
-    const orig = desc.value;
-    const wrapped = {
+    if (typeof CanvasRenderingContext2D === "undefined") return;
+    U.wrapMethod(CanvasRenderingContext2D.prototype, "measureText", (orig) => ({
       measureText(_text) {
         const metrics = orig.apply(this, arguments);
         if (!isMasking()) return metrics;
@@ -1502,34 +1051,23 @@
         }
         return metrics;
       },
-    }.measureText;
-    Object.defineProperty(ctor.prototype, "measureText", {
-      ...desc,
-      value: U.stealth(wrapped, "measureText", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "measureText"),
-      }),
-    });
+    }));
+  };
+
+  const PLAUSIBLE_CODECS = {
+    "audio/mpeg": "probably",
+    "audio/ogg": "probably",
+    "audio/wav": "probably",
+    "audio/webm": "probably",
+    "audio/aac": "probably",
+    "audio/flac": "probably",
+    "video/mp4": "probably",
+    "video/webm": "probably",
+    "video/ogg": "probably",
   };
 
   const patchMediaCanPlayType = () => {
-    const proto = HTMLMediaElement && HTMLMediaElement.prototype;
-    if (!proto) return;
-    const desc = Object.getOwnPropertyDescriptor(proto, "canPlayType");
-    if (!desc || typeof desc.value !== "function") return;
-    const orig = desc.value;
-    const PLAUSIBLE_CODECS = {
-      "audio/mpeg": "probably",
-      "audio/ogg": "probably",
-      "audio/wav": "probably",
-      "audio/webm": "probably",
-      "audio/aac": "probably",
-      "audio/flac": "probably",
-      "video/mp4": "probably",
-      "video/webm": "probably",
-      "video/ogg": "probably",
-    };
-    const wrapped = {
+    U.wrapMethod(HTMLMediaElement.prototype, "canPlayType", (orig) => ({
       canPlayType(type) {
         if (!isMasking()) return orig.apply(this, arguments);
         const key = String(type || "")
@@ -1538,32 +1076,23 @@
           .split(";")[0];
         return PLAUSIBLE_CODECS[key] || "";
       },
-    }.canPlayType;
-    Object.defineProperty(proto, "canPlayType", {
-      ...desc,
-      value: U.stealth(wrapped, "canPlayType", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "canPlayType"),
-      }),
-    });
+    }));
   };
 
+  const PLAUSIBLE_SUPPORTS = new Set([
+    "display:grid",
+    "display:flex",
+    "display:inline-grid",
+    "display:inline-flex",
+    "grid",
+    "flex",
+    "gap",
+    "aspect-ratio",
+  ]);
+
   const patchCssSupports = () => {
-    if (typeof CSS === "undefined" || typeof CSS.supports !== "function") return;
-    const desc = Object.getOwnPropertyDescriptor(CSS, "supports");
-    if (!desc || typeof desc.value !== "function") return;
-    const orig = desc.value;
-    const PLAUSIBLE_SUPPORTS = new Set([
-      "display:grid",
-      "display:flex",
-      "display:inline-grid",
-      "display:inline-flex",
-      "grid",
-      "flex",
-      "gap",
-      "aspect-ratio",
-    ]);
-    const wrapped = {
+    if (typeof CSS === "undefined") return;
+    U.wrapMethod(CSS, "supports", (orig) => ({
       supports() {
         if (!isMasking()) return orig.apply(this, arguments);
         const prop = String(arguments[0] || "")
@@ -1578,152 +1107,40 @@
         const hash = stringHash(key) >>> 0;
         return hash % 3 !== 0;
       },
-    }.supports;
-    Object.defineProperty(CSS, "supports", {
-      ...desc,
-      value: U.stealth(wrapped, "supports", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "supports"),
-      }),
-    });
+    }));
   };
 
   const patchOuterWindow = () => {
-    for (const prop of ["outerWidth", "outerHeight"]) {
-      patchGetter(window, prop, `get ${prop}`, (original) => {
-        if (!isMasking() || typeof original !== "number") return original;
-        if (prop === "outerWidth") return 1920;
-        return 1080;
-      });
+    for (const [prop, value] of [
+      ["outerWidth", 1920],
+      ["outerHeight", 1080],
+    ]) {
+      patchGetter(window, prop, (original) => (typeof original === "number" ? value : original));
     }
   };
 
-  const patchProductSub = () => {
-    try {
-      if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-      const found = U.descriptorOwnerFor(Navigator.prototype, "productSub");
-      if (found && found.desc && typeof found.desc.get === "function") {
-        patchGetter(Navigator.prototype, "productSub", "get productSub", () => "20030107");
-      }
-    } catch {}
-  };
-
-  const patchWebglContextAttributes = () => {
-    const maskCtorAttrs = (Ctor) => {
-      if (typeof Ctor === "undefined" || !Ctor.prototype) return;
-      const desc = Object.getOwnPropertyDescriptor(Ctor.prototype, "getContextAttributes");
-      if (!desc || typeof desc.value !== "function") return;
-      const orig = desc.value;
-      const wrapped = {
-        getContextAttributes() {
-          if (!isMasking()) return orig.apply(this, arguments);
-          return {
-            alpha: true,
-            antialias: true,
-            depth: true,
-            desynchronized: false,
-            failIfMajorPerformanceCaveat: false,
-            powerPreference: "default",
-            premultipliedAlpha: true,
-            preserveDrawingBuffer: false,
-            stencil: false,
-          };
-        },
-      }.getContextAttributes;
-      Object.defineProperty(Ctor.prototype, "getContextAttributes", {
-        ...desc,
-        value: U.stealth(wrapped, "getContextAttributes", {
-          length: orig.length,
-          source: U.nativeSourceFor(orig, "getContextAttributes"),
-        }),
-      });
-    };
-    maskCtorAttrs(globalThis.WebGLRenderingContext);
-    maskCtorAttrs(globalThis.WebGL2RenderingContext);
-  };
-
-  const patchWebglGetExtension = () => {
-    const maskCtorExt = (Ctor) => {
-      if (typeof Ctor === "undefined" || !Ctor.prototype) return;
-      const desc = Object.getOwnPropertyDescriptor(Ctor.prototype, "getExtension");
-      if (!desc || typeof desc.value !== "function") return;
-      const orig = desc.value;
-      const PLAUSIBLE_EXTENSION_OBJECTS = new Set([
-        "EXT_blend_minmax",
-        "EXT_color_buffer_float",
-        "EXT_color_buffer_half_float",
-        "EXT_disjoint_timer_query",
-        "EXT_float_blend",
-        "EXT_frag_depth",
-        "EXT_shader_texture_lod",
-        "EXT_texture_compression_bptc",
-        "EXT_texture_compression_rgtc",
-        "EXT_texture_filter_anisotropic",
-        "EXT_sRGB",
-        "OES_element_index_uint",
-        "OES_fbo_render_mipmap",
-        "OES_standard_derivatives",
-        "OES_texture_float",
-        "OES_texture_float_linear",
-        "OES_texture_half_float",
-        "OES_texture_half_float_linear",
-        "OES_vertex_array_object",
-        "WEBGL_color_buffer_float",
-        "WEBGL_compressed_texture_s3tc",
-        "WEBGL_compressed_texture_s3tc_srgb",
-        "WEBGL_debug_renderer_info",
-        "WEBGL_debug_shaders",
-        "WEBGL_depth_texture",
-        "WEBGL_draw_buffers",
-        "WEBGL_lose_context",
-        "WEBGL_multi_draw",
-      ]);
-      const wrapped = {
-        getExtension(name) {
-          if (!isMasking()) return orig.apply(this, arguments);
-          const extensionName = String(name || "");
-          if (extensionName === "WEBGL_debug_renderer_info") {
-            return {
-              UNMASKED_RENDERER_WEBGL,
-              UNMASKED_VENDOR_WEBGL,
-            };
-          }
-          if (PLAUSIBLE_EXTENSION_OBJECTS.has(extensionName)) {
-            return {};
-          }
-          return null;
-        },
-      }.getExtension;
-      Object.defineProperty(Ctor.prototype, "getExtension", {
-        ...desc,
-        value: U.stealth(wrapped, "getExtension", {
-          length: orig.length,
-          source: U.nativeSourceFor(orig, "getExtension"),
-        }),
-      });
-    };
-    maskCtorExt(globalThis.WebGLRenderingContext);
-    maskCtorExt(globalThis.WebGL2RenderingContext);
+  const patchNavigatorConstants = () => {
+    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
+    for (const [prop, value] of [
+      ["productSub", "20030107"],
+      ["oscpu", ""],
+      ["buildID", ""],
+      ["cookieEnabled", true],
+      ["onLine", true],
+    ]) {
+      patchGetter(Navigator.prototype, prop, () => value);
+    }
+    patchMethodOf(Navigator.prototype, "javaEnabled", (orig) => ({
+      javaEnabled() {
+        if (isMasking()) return false;
+        return orig.apply(this, arguments);
+      },
+    }));
   };
 
   const patchNotificationPermission = () => {
     if (typeof Notification === "undefined") return;
-    const found = U.descriptorOwnerFor(Notification, "permission");
-    if (found && found.desc && typeof found.desc.get === "function") {
-      patchGetter(Notification, "permission", "get permission", () => "default");
-    }
-  };
-
-  const patchOscpuBuildId = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    for (const prop of ["oscpu", "buildID"]) {
-      try {
-        const found = U.descriptorOwnerFor(Navigator.prototype, prop);
-        if (found && found.desc && typeof found.desc.get === "function") {
-          patchGetter(Navigator.prototype, prop, `get ${prop}`, () => "");
-        }
-      } catch {}
-    }
+    patchGetter(Notification, "permission", () => "default");
   };
 
   const stringHash = (str) => {
@@ -1784,36 +1201,6 @@
     "wingdings",
   ]);
 
-  const patchFontFaceSet = () => {
-    if (typeof FontFaceSet === "undefined" || !FontFaceSet.prototype) return;
-    const desc = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, "check");
-    const origCheck = desc && desc.value;
-    if (typeof origCheck !== "function") return;
-    const extractFontFamily = (font) => {
-      const str = String(font || "").trim();
-      const match = str.match(/^(?:"([^"]+)"|'([^']+)'|([^,]+))/i);
-      const family = (match[1] || match[2] || match[3] || "").toLowerCase();
-      return { family, full: str };
-    };
-    const wrappedCheck = {
-      check(font, _text) {
-        if (!isMasking()) return origCheck.apply(this, arguments);
-        const { family, full } = extractFontFamily(font);
-        if (!family) return origCheck.apply(this, arguments);
-        if (PLAUSIBLE_COMMON_FONTS.has(family)) return true;
-        const hash = (Math.imul(hashString(full, persona().canvasSeed), 0x01000193) >>> 0) % 100;
-        return hash < 55;
-      },
-    }.check;
-    Object.defineProperty(FontFaceSet.prototype, "check", {
-      ...desc,
-      value: U.stealth(wrappedCheck, "check", {
-        length: origCheck.length,
-        source: U.nativeSourceFor(origCheck, "check"),
-      }),
-    });
-  };
-
   const hashString = (str, seed) => {
     let hash = seed >>> 0;
     const s = String(str || "");
@@ -1823,172 +1210,74 @@
     return hash >>> 0;
   };
 
-  const maskWebglCtorExtensions = (Ctor) => {
-    if (typeof Ctor === "undefined" || !Ctor.prototype) return;
-    const supportedDesc = Object.getOwnPropertyDescriptor(Ctor.prototype, "getSupportedExtensions");
-    const origSupported = supportedDesc && supportedDesc.value;
-    if (typeof origSupported === "function") {
-      const PLAUSIBLE_EXTENSIONS = [
-        "ANGLE_instanced_arrays",
-        "EXT_blend_minmax",
-        "EXT_color_buffer_half_float",
-        "EXT_disjoint_timer_query",
-        "EXT_float_blend",
-        "EXT_frag_depth",
-        "EXT_shader_texture_lod",
-        "EXT_texture_compression_bptc",
-        "EXT_texture_compression_rgtc",
-        "EXT_texture_filter_anisotropic",
-        "EXT_sRGB",
-        "OES_element_index_uint",
-        "OES_fbo_render_mipmap",
-        "OES_standard_derivatives",
-        "OES_texture_float",
-        "OES_texture_float_linear",
-        "OES_texture_half_float",
-        "OES_texture_half_float_linear",
-        "OES_vertex_array_object",
-        "WEBGL_color_buffer_float",
-        "WEBGL_compressed_texture_astc",
-        "WEBGL_compressed_texture_etc",
-        "WEBGL_compressed_texture_etc1",
-        "WEBGL_compressed_texture_pvrtc",
-        "WEBGL_compressed_texture_s3tc",
-        "WEBGL_compressed_texture_s3tc_srgb",
-        "WEBGL_debug_renderer_info",
-        "WEBGL_debug_shaders",
-        "WEBGL_depth_texture",
-        "WEBGL_draw_buffers",
-        "WEBGL_lose_context",
-        "WEBGL_multi_draw",
-      ];
-      const wrappedSupported = {
-        getSupportedExtensions() {
-          if (!isMasking()) return origSupported.apply(this, arguments);
-          return PLAUSIBLE_EXTENSIONS.slice();
-        },
-      }.getSupportedExtensions;
-      Object.defineProperty(Ctor.prototype, "getSupportedExtensions", {
-        ...supportedDesc,
-        value: U.stealth(wrappedSupported, "getSupportedExtensions", {
-          length: origSupported.length,
-          source: U.nativeSourceFor(origSupported, "getSupportedExtensions"),
-        }),
-      });
-    }
-    const precisionDesc = Object.getOwnPropertyDescriptor(
-      Ctor.prototype,
-      "getShaderPrecisionFormat"
-    );
-    const origPrecision = precisionDesc && precisionDesc.value;
-    if (typeof origPrecision === "function") {
-      const wrappedPrecision = {
-        getShaderPrecisionFormat(_shaderType, _precisionType) {
-          if (!isMasking()) return origPrecision.apply(this, arguments);
-          return {
-            rangeMin: 127,
-            rangeMax: 127,
-            precision: 23,
-          };
-        },
-      }.getShaderPrecisionFormat;
-      Object.defineProperty(Ctor.prototype, "getShaderPrecisionFormat", {
-        ...precisionDesc,
-        value: U.stealth(wrappedPrecision, "getShaderPrecisionFormat", {
-          length: origPrecision.length,
-          source: U.nativeSourceFor(origPrecision, "getShaderPrecisionFormat"),
-        }),
-      });
-    }
+  const fontFamilyOf = (font) => {
+    const str = String(font || "").trim();
+    const match = str.match(/^(?:"([^"]+)"|'([^']+)'|([^,]+))/i);
+    return (match[1] || match[2] || match[3] || "").toLowerCase();
   };
 
-  const patchWebglExtensions = () => {
-    maskWebglCtorExtensions(globalThis.WebGLRenderingContext);
-    maskWebglCtorExtensions(globalThis.WebGL2RenderingContext);
+  const isPlausibleFontFace = (face) =>
+    PLAUSIBLE_COMMON_FONTS.has(face && face.family ? String(face.family).toLowerCase() : "");
+
+  const wrapFontIterator = (all, extractFont) => {
+    const filtered = all.filter((entry) => isPlausibleFontFace(extractFont(entry)));
+    const iterator = filtered[Symbol.iterator]();
+    const result = {};
+    for (const builtin of ["next", "return", "throw"]) {
+      const fn = iterator[builtin];
+      if (typeof fn === "function") {
+        result[builtin] = U.stealth(fn.bind(iterator), builtin, {
+          length: fn.length,
+          source: U.nativeSourceFor(fn, builtin),
+        });
+      }
+    }
+    Object.defineProperty(result, Symbol.iterator, {
+      value: U.stealth(
+        function iteratorFn() {
+          return result;
+        },
+        "iterator",
+        { length: 0 }
+      ),
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+    return result;
   };
 
-  const patchFontFaceSetFull = () => {
+  const patchFontFaceSet = () => {
     if (typeof FontFaceSet === "undefined" || !FontFaceSet.prototype) return;
     const proto = FontFaceSet.prototype;
 
-    const getFontFamily = (font) => {
-      const str = String(font || "").trim();
-      const match = str.match(/^(?:"([^"]+)"|'([^']+)'|([^,]+))/i);
-      return (match[1] || match[2] || match[3] || "").toLowerCase();
-    };
+    U.wrapMethod(proto, "check", (origCheck) => ({
+      check(font, _text) {
+        if (!isMasking()) return origCheck.apply(this, arguments);
+        const family = fontFamilyOf(font);
+        if (!family) return origCheck.apply(this, arguments);
+        if (PLAUSIBLE_COMMON_FONTS.has(family)) return true;
+        const full = String(font || "").trim();
+        const hash = (Math.imul(hashString(full, persona().canvasSeed), 0x01000193) >>> 0) % 100;
+        return hash < 55;
+      },
+    }));
 
-    const fontIsPlausible = (family) => !!family && PLAUSIBLE_COMMON_FONTS.has(family);
-
-    const isMaskingFonts = () => isMasking();
-
-    const loadDesc = Object.getOwnPropertyDescriptor(proto, "load");
-    const origLoad = loadDesc && loadDesc.value;
-    if (typeof origLoad === "function") {
-      const wrappedLoad = {
-        load(font, _text) {
-          if (!isMaskingFonts()) return origLoad.apply(this, arguments);
-          const family = getFontFamily(font);
-          if (fontIsPlausible(family)) return origLoad.apply(this, arguments);
-          return Promise.resolve([]);
-        },
-      }.load;
-      Object.defineProperty(proto, "load", {
-        ...loadDesc,
-        value: U.stealth(wrappedLoad, "load", {
-          length: origLoad.length,
-          source: U.nativeSourceFor(origLoad, "load"),
-        }),
-      });
-    }
-
-    const readyDesc = Object.getOwnPropertyDescriptor(proto, "ready");
-    if (readyDesc && readyDesc.get) {
-      Object.defineProperty(proto, "ready", {
-        configurable: true,
-        enumerable: readyDesc.enumerable,
-        get: U.stealth(
-          function get() {
-            const original = readyDesc.get.call(this);
-            if (!isMaskingFonts()) return original;
-            return Promise.resolve(original);
-          },
-          "get ready",
-          { length: 0, source: U.nativeSourceFor(readyDesc.get, "get ready") }
-        ),
-      });
-    }
-
-    const wrapFontIterator = (all, extractFont) => {
-      const filtered = all.filter((entry) => {
-        const font = extractFont(entry);
-        const family = font && font.family ? String(font.family).toLowerCase() : "";
-        return fontIsPlausible(family);
-      });
-      const iterator = filtered[Symbol.iterator]();
-      const result = { _filtered: filtered };
-      for (const builtin of ["next", "return", "throw"]) {
-        const fn = iterator[builtin];
-        if (typeof fn === "function") {
-          result[builtin] = U.stealth(fn.bind(iterator), builtin, {
-            length: fn.length,
-            source: U.nativeSourceFor(fn, builtin),
-          });
+    U.wrapMethod(proto, "load", (origLoad) => ({
+      load(font, _text) {
+        if (!isMasking() || PLAUSIBLE_COMMON_FONTS.has(fontFamilyOf(font))) {
+          return origLoad.apply(this, arguments);
         }
-      }
-      Object.defineProperty(result, Symbol.iterator, {
-        value: U.stealth(
-          function iteratorFn() {
-            return result;
-          },
-          "iterator",
-          { length: 0 }
-        ),
-        configurable: true,
-        enumerable: false,
-        writable: true,
-      });
-      return result;
-    };
+        return Promise.resolve([]);
+      },
+    }));
+
+    U.wrapGetter(proto, "ready", (nativeGet) => ({
+      get() {
+        const original = nativeGet.call(this);
+        return isMasking() ? Promise.resolve(original) : original;
+      },
+    }));
 
     for (const method of [
       "forEach",
@@ -2000,20 +1289,16 @@
       "keys",
       "values",
     ]) {
-      const desc = Object.getOwnPropertyDescriptor(proto, method);
-      const orig = desc && desc.value;
-      if (typeof orig !== "function") continue;
-      const wrapped = {
+      U.wrapMethod(proto, method, (orig) => ({
         [method](...args) {
-          if (!isMaskingFonts()) return orig.apply(this, args);
+          if (!isMasking()) return orig.apply(this, args);
           if (method === "forEach") {
             const callback = args[0];
             if (typeof callback !== "function") return orig.apply(this, args);
             return orig.call(
               this,
               (value, key, set) => {
-                const family = value && value.family ? String(value.family).toLowerCase() : "";
-                if (fontIsPlausible(family)) callback(value, key, set);
+                if (isPlausibleFontFace(value)) callback(value, key, set);
               },
               args[1]
             );
@@ -2023,181 +1308,72 @@
             const extract = method === "entries" ? (entry) => entry[1] : (entry) => entry;
             return wrapFontIterator(all, extract);
           }
-          if (method === "has") {
-            const font = args[0];
-            const family = font && font.family ? String(font.family).toLowerCase() : "";
-            if (!fontIsPlausible(family)) return false;
-          }
-          if (method === "add") {
-            const font = args[0];
-            const family = font && font.family ? String(font.family).toLowerCase() : "";
-            if (!fontIsPlausible(family)) return this;
-          }
-          if (method === "delete" || method === "clear") {
-            return this;
-          }
+          if (method === "has" && !isPlausibleFontFace(args[0])) return false;
+          if (method === "add" && !isPlausibleFontFace(args[0])) return this;
+          if (method === "delete" || method === "clear") return this;
           return orig.apply(this, args);
         },
-      }[method];
-      Object.defineProperty(proto, method, {
-        ...desc,
-        value: U.stealth(wrapped, method, {
-          length: orig.length,
-          source: U.nativeSourceFor(orig, method),
-        }),
-      });
+      }));
     }
 
-    const sizeDesc = Object.getOwnPropertyDescriptor(proto, "size");
-    if (sizeDesc && sizeDesc.get) {
-      Object.defineProperty(proto, "size", {
-        configurable: true,
-        enumerable: sizeDesc.enumerable,
-        get: U.stealth(
-          function get() {
-            if (!isMaskingFonts()) return sizeDesc.get.call(this);
-            let count = 0;
-            try {
-              this.forEach((font) => {
-                const family = font && font.family ? String(font.family).toLowerCase() : "";
-                if (fontIsPlausible(family)) count++;
-              });
-            } catch {}
-            return count;
-          },
-          "get size",
-          { length: 0, source: U.nativeSourceFor(sizeDesc.get, "get size") }
-        ),
-      });
-    }
+    U.wrapGetter(proto, "size", (nativeGet) => ({
+      get() {
+        if (!isMasking()) return nativeGet.call(this);
+        let count = 0;
+        try {
+          this.forEach((face) => {
+            if (isPlausibleFontFace(face)) count++;
+          });
+        } catch {}
+        return count;
+      },
+    }));
   };
 
   const patchGamepads = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    const found = U.descriptorOwnerFor(Navigator.prototype, "getGamepads");
-    const desc = found && found.desc;
-    const orig = desc && desc.value;
-    if (typeof orig !== "function") return;
-    const wrapped = {
+    if (typeof Navigator === "undefined") return;
+    patchMethodOf(Navigator.prototype, "getGamepads", (orig) => ({
       getGamepads() {
-        if (!isMasking()) return orig.apply(this, arguments);
         const result = orig.apply(this, arguments);
-        if (!result || !Array.isArray(result)) return result;
+        if (!isMasking() || !Array.isArray(result)) return result;
         return result.map(() => null);
       },
-    }.getGamepads;
-    Object.defineProperty(found.owner, "getGamepads", {
-      ...desc,
-      value: U.stealth(wrapped, "getGamepads", {
-        length: orig.length,
-        source: U.nativeSourceFor(orig, "getGamepads"),
-      }),
-    });
+    }));
   };
 
   const patchScreenPosition = () => {
     for (const prop of ["screenLeft", "screenTop", "availLeft", "availTop"]) {
-      patchGetter(window, prop, `get ${prop}`, () => 0);
+      patchGetter(window, prop, () => 0);
     }
-    if (typeof Screen !== "undefined" && Screen.prototype) {
-      for (const prop of ["left", "top", "availLeft", "availTop"]) {
-        patchGetter(Screen.prototype, prop, `get ${prop}`, () => 0);
-      }
-      const isExtendedDesc = Object.getOwnPropertyDescriptor(Screen.prototype, "isExtended");
-      if (isExtendedDesc && isExtendedDesc.get) {
-        patchGetter(Screen.prototype, "isExtended", "get isExtended", () => false);
-      }
+    if (typeof Screen === "undefined" || !Screen.prototype) return;
+    for (const prop of ["left", "top", "availLeft", "availTop"]) {
+      patchGetter(Screen.prototype, prop, () => 0);
     }
+    patchGetter(Screen.prototype, "isExtended", () => false);
   };
 
   const patchQueryLocalFonts = () => {
-    const origQueryLocalFonts = window.queryLocalFonts;
-    if (typeof origQueryLocalFonts === "function") {
-      try {
-        Object.defineProperty(window, "queryLocalFonts", {
-          configurable: true,
-          enumerable: false,
-          writable: true,
-          value: U.stealth(
-            function queryLocalFonts() {
-              if (isMasking()) return Promise.resolve([]);
-              return origQueryLocalFonts.apply(this, arguments);
-            },
-            "queryLocalFonts",
-            { length: 0, source: "function queryLocalFonts() { [native code] }" }
-          ),
-        });
-      } catch {}
-    }
+    U.wrapMethod(window, "queryLocalFonts", (orig) => ({
+      queryLocalFonts() {
+        if (isMasking()) return Promise.resolve([]);
+        return orig.apply(this, arguments);
+      },
+    }));
   };
 
   const patchSpeechSynthesis = () => {
-    if (typeof window.speechSynthesis === "undefined") return;
-    const synth = window.speechSynthesis;
-    const synthProto = Object.getPrototypeOf(synth);
-    if (!synthProto) return;
-    const voicesDesc = Object.getOwnPropertyDescriptor(synthProto, "getVoices");
-    const origGetVoices = voicesDesc && voicesDesc.value;
-    if (typeof origGetVoices === "function") {
-      const wrappedGetVoices = {
-        getVoices() {
-          if (!isMasking()) return origGetVoices.apply(this, arguments);
-          return [];
-        },
-      }.getVoices;
-      Object.defineProperty(synthProto, "getVoices", {
-        ...voicesDesc,
-        value: U.stealth(wrappedGetVoices, "getVoices", {
-          length: origGetVoices.length,
-          source: U.nativeSourceFor(origGetVoices, "getVoices"),
-        }),
-      });
-    }
-  };
-
-  const patchNavigatorExtraGetters = () => {
-    try {
-      if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-      const cookieFound = U.descriptorOwnerFor(Navigator.prototype, "cookieEnabled");
-      if (cookieFound && cookieFound.desc && typeof cookieFound.desc.get === "function") {
-        patchGetter(Navigator.prototype, "cookieEnabled", "get cookieEnabled", () => true);
-      }
-    } catch {}
-
-    try {
-      if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-      const onlineFound = U.descriptorOwnerFor(Navigator.prototype, "onLine");
-      if (onlineFound && onlineFound.desc && typeof onlineFound.desc.get === "function") {
-        patchGetter(Navigator.prototype, "onLine", "get onLine", () => true);
-      }
-    } catch {}
-
-    try {
-      if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-      const javaFound = U.descriptorOwnerFor(Navigator.prototype, "javaEnabled");
-      if (javaFound && javaFound.desc && typeof javaFound.desc.value === "function") {
-        const desc = javaFound.desc;
-        const orig = desc.value;
-        const wrapped = {
-          javaEnabled() {
-            if (isMasking()) return false;
-            return orig.apply(this, arguments);
-          },
-        }.javaEnabled;
-        Object.defineProperty(javaFound.owner, "javaEnabled", {
-          ...desc,
-          value: U.stealth(wrapped, "javaEnabled", {
-            length: orig.length,
-            source: U.nativeSourceFor(orig, "javaEnabled"),
-          }),
-        });
-      }
-    } catch {}
+    if (!window.speechSynthesis) return;
+    U.wrapMethod(Object.getPrototypeOf(window.speechSynthesis), "getVoices", (orig) => ({
+      getVoices() {
+        if (!isMasking()) return orig.apply(this, arguments);
+        return [];
+      },
+    }));
   };
 
   try {
     patchNavigatorGetters();
-    patchNavigatorExtraGetters();
+    patchNavigatorConstants();
     patchScreenGetters();
     patchScreenPosition();
     patchUserAgentData();
@@ -2208,32 +1384,20 @@
     patchStorageEstimate();
     patchPerformanceMemory();
     patchWebgl();
-    patchWebglExtensions();
     patchCanvas();
     patchOffscreenCanvas();
     patchAudioRendering();
-    patchKeyboard();
-    patchMediaDevices();
-    patchPermissions();
+    patchNavigatorObjects();
     patchMatchMedia();
-    patchMediaCapabilities();
-    patchGpu();
     patchHardwareAvailability();
-    patchCredentials();
-    patchClipboard();
     patchRtcPeerConnection();
     patchAudioContextProperties();
     patchCanvasTextMetrics();
     patchMediaCanPlayType();
     patchCssSupports();
     patchOuterWindow();
-    patchProductSub();
-    patchWebglContextAttributes();
-    patchWebglGetExtension();
     patchNotificationPermission();
-    patchOscpuBuildId();
     patchFontFaceSet();
-    patchFontFaceSetFull();
     patchGamepads();
     patchQueryLocalFonts();
     patchSpeechSynthesis();
