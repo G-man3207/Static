@@ -1210,10 +1210,17 @@
     return hash >>> 0;
   };
 
+  // Family list of a CSS font shorthand: whatever follows the font size
+  // (and optional /line-height), e.g. `bold 12px/1.5 "Courier New", serif`.
+  const FONT_SHORTHAND_FAMILIES_RE =
+    /(?:^|\s)(?:[\d.]+(?:px|pt|pc|r?em|ex|ch|vw|vh|vmin|vmax|cm|mm|in|q|%)|(?:xx?x?-)?(?:small|large)|medium|larger|smaller)(?:\/\S+)?\s+(.+)$/i;
+
+  // First family named by a font shorthand, lowercased and unquoted.
   const fontFamilyOf = (font) => {
-    const str = String(font || "").trim();
-    const match = str.match(/^(?:"([^"]+)"|'([^']+)'|([^,]+))/i);
-    return (match[1] || match[2] || match[3] || "").toLowerCase();
+    const text = String(font || "").trim();
+    const match = text.match(FONT_SHORTHAND_FAMILIES_RE);
+    const family = (match ? match[1] : text).split(",")[0].trim();
+    return family.replace(/^["']|["']$/g, "").toLowerCase();
   };
 
   const isPlausibleFontFace = (face) =>
