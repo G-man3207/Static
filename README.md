@@ -300,7 +300,7 @@ npm run check
 - **DOM markers to strip**: edit the regex arrays in `lists.js`.
 - **`window` globals to strip**: edit the `STRIP_GLOBALS` array in `block_globals.js`.
 - **Fingerprinting endpoints to block at the network layer**: add rules to an existing file under `rules/`, or create a new `rules/<category>.json` and register it in `manifest.json`'s `rule_resources` (and add an entry in `rules/META.json` + `popup.js`'s `RULESET_META`). Avoid general tracker or ad-tech lists; those belong in uBlock Origin / Privacy Badger.
-- **A new script-layer probe vector (some new Web API that takes a URL)**: add a wrapper in `block_vectors.js`, following the existing `guardProp` / `patchWorkerCtor` / `attrGuard` patterns. Fetch/XHR Noise-mode decoys live in `block.js`; passive element decoys live in `block_element_decoys.js`.
+- **A new script-layer probe vector (some new Web API that takes a URL)**: add a wrapper in `block_vectors.js`, following the existing `guardProp` / `patchWorkerCtor` patterns and the shared `U.wrapMethod` / `U.wrapGetter` / `U.wrapSetter` helpers in `block_utils.js`. Fetch/XHR Noise-mode decoys live in `block.js`; passive element decoys live in `block_element_decoys.js`.
 - **Style / CSSOM vectors**: add a scrubber in `block_style_vectors.js`.
 - **Iframe attribute normalization**: adjust the token allowlists in `block_iframe_attrs.js`.
 

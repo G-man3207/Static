@@ -6,6 +6,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Fixed
+
+- Pausing a site now also stops `window` global stripping there. The globals script never received the paused state because it shared a bridge channel with another script; the iframe attribute normalizer had the same race.
+- Device signal poisoning now recognizes common fonts in CSS font shorthands (`12px "Courier New"`), so `document.fonts.check()` / `load()` treat them as installed instead of falling back to the per-site hash.
+- The popup's **Protect this site** status line now updates after toggling, and a failed toggle restores the previous state.
+
+### Changed
+
+- MAIN-world scripts share `U.wrapMethod` / `U.wrapGetter` / `U.wrapSetter` helpers instead of hand-copied descriptor patching. Methods and accessors patched this way report their native `length` and `toString()` source, and patched getters no longer carry an own `prototype`. Internal cleanup across the bridge, service worker, popup, and log viewer; no settings or storage formats changed.
+
 ## [2.5.1] — 2026-09-25
 
 ### Changed
