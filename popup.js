@@ -683,24 +683,24 @@ const renderPowerDiagnostics = (resp) => {
   }
 };
 
+const renderSiteStatus = (isDisabled) => {
+  const statusText = document.getElementById("site-status-text");
+  if (isDisabled) {
+    statusText.textContent = "Paused. This site can see installed extensions again.";
+    statusText.className = "site-status-paused";
+  } else {
+    statusText.textContent = "On. Pause it if the page looks broken.";
+    statusText.className = "site-status-active";
+  }
+};
+
 const renderSiteSection = (resp) => {
   const toggle = document.getElementById("site-toggle");
-  const statusText = document.getElementById("site-status-text");
   const section = document.getElementById("site-control");
   const isDisabled = !!(resp && resp.disabled);
 
   toggle.checked = !isDisabled;
-
-  const updateUI = () => {
-    if (isDisabled) {
-      statusText.textContent = "Paused. This site can see installed extensions again.";
-      statusText.className = "site-status-paused";
-    } else {
-      statusText.textContent = "On. Pause it if the page looks broken.";
-      statusText.className = "site-status-active";
-    }
-  };
-  updateUI();
+  renderSiteStatus(isDisabled);
 
   if (!resp || !isHttpUrl(resp.origin)) {
     section.hidden = true;
@@ -708,23 +708,19 @@ const renderSiteSection = (resp) => {
   }
   section.hidden = false;
 
-  toggle.addEventListener("change", async ({ currentTarget }) => {
-    const el = currentTarget;
-    const checked = el.checked;
-    const desiredDisabled = !checked;
-    const localResp = resp;
+  toggle.addEventListener("change", async () => {
+    const enabled = toggle.checked;
     try {
       await chrome.runtime.sendMessage({
         type: "static_set_site_disabled",
-        disabled: desiredDisabled,
-        origin: localResp.origin,
+        disabled: !enabled,
+        origin: resp.origin,
       });
-      localResp.disabled = desiredDisabled;
-      updateUI();
+      renderSiteStatus(!enabled);
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] site toggle failed", e);
-      el.checked = checked;
+      toggle.checked = !enabled;
     }
   });
 };
