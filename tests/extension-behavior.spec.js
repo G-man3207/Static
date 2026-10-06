@@ -259,6 +259,33 @@ test("popup shows a plain-language recovery card on a regular site", async ({
   );
 });
 
+test("popup site toggle keeps its status line in sync", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.bringToFront();
+  const tabId = await activeHttpTabId(extension.serviceWorker);
+  const popupPage = await openPopupForTab(extension, tabId);
+  const toggle = popupPage.locator("#site-toggle");
+  const status = popupPage.locator("#site-status-text");
+  const isPaused = () =>
+    extension.serviceWorker.evaluate(
+      (origin) =>
+        chrome.storage.local
+          .get({ disabled_origins: {} })
+          .then(({ disabled_origins }) => !!disabled_origins[origin]),
+      server.origin
+    );
+
+  await expect(toggle).toBeChecked();
+  await toggle.evaluate((input) => input.click());
+  await expect(status).toHaveText("Paused. This site can see installed extensions again.");
+  await expect.poll(isPaused).toBe(true);
+
+  await toggle.evaluate((input) => input.click());
+  await expect(status).toHaveText("On. Pause it if the page looks broken.");
+  await expect.poll(isPaused).toBe(false);
+});
+
 test("popup recovery card upgrades when a compatibility warning is stored", async ({
   extension,
   server,

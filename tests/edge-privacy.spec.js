@@ -599,6 +599,27 @@ test("additional URL-bearing element surfaces do not load extension URLs", async
     });
 });
 
+test("setAttribute probes padded with extra arguments are still blocked", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(
+    (url) => {
+      const frame = document.createElement("iframe");
+      frame.setAttribute("src", url, "extra");
+      const anchor = document.createElement("a");
+      anchor.setAttribute("href", url, 0);
+      return [frame.getAttribute("src"), anchor.getAttribute("href")];
+    },
+    probedUrl(PROBED_ID, "/page.html")
+  );
+
+  expect(result).toEqual([null, null]);
+});
+
 test("CSSOM rules containing extension URLs are blocked before insertion", async ({
   extension,
   server,
