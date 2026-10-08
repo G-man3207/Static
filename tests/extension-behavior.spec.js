@@ -1,12 +1,18 @@
 /* eslint-disable max-lines -- integration coverage is easier to maintain in one fixture-backed file */
+/* global messageHandlers */
 const http = require("http");
 const { expect, test } = require("./helpers/extension-fixture");
 const { expectApiSurface, getApiSurface } = require("./helpers/api-surface");
+const { launchExtension, staticPageTraces } = require("./helpers/extension");
 const { visibleContentRatio } = require("./helpers/png");
+const { startFixtureServer } = require("./helpers/server");
 
 const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const OTHER_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const probedUrl = (id = PROBED_ID, path = "/manifest.json") => `chrome-extension://${id}${path}`;
+// The adaptive logger only loads while Research logging is on.
+const enableResearchLogging = (extension) =>
+  extension.serviceWorker.evaluate(() => chrome.storage.local.set({ research_logging: true }));
 
 const activeHttpTabId = (serviceWorker) =>
   serviceWorker.evaluate(async () => {
@@ -280,10 +286,60 @@ test("popup site toggle keeps its status line in sync", async ({ extension, serv
   await toggle.evaluate((input) => input.click());
   await expect(status).toHaveText("Paused. This site can see installed extensions again.");
   await expect.poll(isPaused).toBe(true);
+  // The toggle reloads the site tab, which then has no Static page code.
+  await expect.poll(async () => (await staticPageTraces(page)).dom).toEqual([]);
 
   await toggle.evaluate((input) => input.click());
   await expect(status).toHaveText("On. Pause it if the page looks broken.");
   await expect.poll(isPaused).toBe(false);
+  await expect.poll(async () => (await staticPageTraces(page)).dom.length).toBeGreaterThan(0);
+});
+
+test("popup site toggle reloads the tab the popup is for, not another tab on the site", async ({
+  extension,
+  server,
+}) => {
+  const first = await extension.context.newPage();
+  await first.goto(server.url("/blank.html?first"));
+  const second = await extension.context.newPage();
+  await second.goto(server.url("/blank.html?second"));
+  for (const page of [first, second]) {
+    await page.evaluate(() => {
+      window.__notReloaded = true;
+    });
+  }
+  const secondTabId = await extension.serviceWorker.evaluate(
+    async (url) => (await chrome.tabs.query({ url }))[0].id,
+    server.url("/blank.html?second")
+  );
+  const popupPage = await openPopupForTab(extension, secondTabId);
+
+  await popupPage.locator("#site-toggle").evaluate((input) => input.click());
+  await expect.poll(() => second.evaluate(() => window.__notReloaded === true)).toBe(false);
+  expect(await first.evaluate(() => window.__notReloaded === true)).toBe(true);
+});
+
+test("popup research logging toggle loads the adaptive logger", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.bringToFront();
+  const tabId = await activeHttpTabId(extension.serviceWorker);
+  const popupPage = await openPopupForTab(extension, tabId);
+  const toggle = popupPage.locator("#research-logging-toggle");
+
+  await expect(toggle).not.toBeChecked();
+  await expect(popupPage.locator("#research-desc")).toContainText("Applies when the page reloads.");
+  await toggle.evaluate((input) => input.click());
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(async () =>
+        (await chrome.scripting.getRegisteredContentScripts())
+          .find((script) => script.id === "a-main")
+          .js.includes("block_adaptive.js")
+      )
+    )
+    .toBe(true);
+  await expect(toggle).toBeChecked();
 });
 
 test("popup recovery card upgrades when a compatibility warning is stored", async ({
@@ -357,7 +413,7 @@ test("pausing a site installs a DNR allow rule for that initiator and resume rem
       const rules = await extension.serviceWorker.evaluate(() =>
         chrome.declarativeNetRequest.getDynamicRules()
       );
-      return rules.filter((rule) => rule.action && rule.action.type === "allow");
+      return rules.filter((rule) => rule.priority === 1000);
     })
     .toEqual(
       expect.arrayContaining([
@@ -365,6 +421,16 @@ test("pausing a site installs a DNR allow rule for that initiator and resume rem
           action: { type: "allow" },
           condition: expect.objectContaining({
             initiatorDomains: [hostname],
+          }),
+          priority: 1000,
+        }),
+        // Lets through everything in the site's pages, including bot-check
+        // iframes it embeds, whose own requests have another initiator.
+        expect.objectContaining({
+          action: { type: "allowAllRequests" },
+          condition: expect.objectContaining({
+            requestDomains: [hostname],
+            resourceTypes: ["main_frame", "sub_frame"],
           }),
           priority: 1000,
         }),
@@ -378,16 +444,100 @@ test("pausing a site installs a DNR allow rule for that initiator and resume rem
       const rules = await extension.serviceWorker.evaluate(() =>
         chrome.declarativeNetRequest.getDynamicRules()
       );
-      return rules.filter(
-        (rule) =>
-          rule.action &&
-          rule.action.type === "allow" &&
-          rule.condition &&
-          Array.isArray(rule.condition.initiatorDomains) &&
-          rule.condition.initiatorDomains.includes(hostname)
-      );
+      return rules.filter((rule) => JSON.stringify(rule.condition || {}).includes(`"${hostname}"`));
     })
     .toEqual([]);
+});
+
+test("pausing a site lets its embedded bot-check frames through the vendor lists", async () => {
+  const server = await startFixtureServer({
+    "/host.html": `<!doctype html><body><script>
+      window.addEventListener("message", (event) => { window.__frameResult = event.data; });
+      const frame = document.createElement("iframe");
+      frame.src = "http://vendor.test:" + location.port + "/frame.html";
+      document.body.appendChild(frame);
+    </script></body>`,
+    "/frame.html": `<!doctype html><script>
+      fetch("/probe.txt").then((response) => response.text()).then(
+        (text) => parent.postMessage({ text }, "*"),
+        (error) => parent.postMessage({ error: String(error) }, "*")
+      );
+    </script>`,
+    "/probe.txt": "reachable",
+  });
+  const extension = await launchExtension({
+    args: ["--host-resolver-rules=MAP paused.test 127.0.0.1, MAP vendor.test 127.0.0.1"],
+  });
+  try {
+    const origin = `http://paused.test:${new URL(server.origin).port}`;
+    // Stands in for the bundled vendor lists (same action and priority);
+    // tests cannot serve challenges.cloudflare.com and friends.
+    await extension.serviceWorker.evaluate(() =>
+      chrome.declarativeNetRequest.updateDynamicRules({
+        addRules: [
+          {
+            action: { type: "block" },
+            condition: {
+              resourceTypes: ["sub_frame", "xmlhttprequest", "script", "other"],
+              urlFilter: "||vendor.test^",
+            },
+            id: 99,
+            priority: 1,
+          },
+        ],
+      })
+    );
+    const page = await extension.context.newPage();
+    await page.goto(`${origin}/host.html`);
+    const blockedWhileProtected = await page.evaluate(() =>
+      fetch(`http://vendor.test:${location.port}/probe.txt`, { mode: "no-cors" }).then(
+        () => false,
+        () => true
+      )
+    );
+    expect(blockedWhileProtected).toBe(true);
+
+    await extension.serviceWorker.evaluate(
+      (target) =>
+        new Promise((resolve) => {
+          messageHandlers.static_set_site_disabled({ disabled: true, origin: target }, {}, resolve);
+        }),
+      origin
+    );
+    await page.reload();
+    await expect
+      .poll(() => page.evaluate(() => window.__frameResult))
+      .toEqual({
+        text: "reachable",
+      });
+  } finally {
+    await extension.close();
+    await server.close();
+  }
+});
+
+test("popup says the network lists skip a paused site", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.bringToFront();
+  const tabId = await activeHttpTabId(extension.serviceWorker);
+  // The lists live in the More panel, so open it the way a user would.
+  const openListsNote = async () => {
+    const popupPage = await openPopupForTab(extension, tabId);
+    await popupPage.locator("#advanced-controls > summary").click();
+    await expect(popupPage.locator("#rulesets")).toBeVisible();
+    return popupPage.locator("#rulesets-paused-note");
+  };
+
+  await expect(await openListsNote()).toBeHidden();
+
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
+  const note = await openListsNote();
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("don't apply to this site");
 });
 
 test("toolbar badge shows an attention mark for a fresh compatibility warning", async ({
@@ -1686,6 +1836,7 @@ test("Adaptive observe-only logging records multi-signal collectors without addi
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-positive.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveDone === true)).toBe(true);
@@ -1732,6 +1883,7 @@ test("Adaptive observe-only logging ignores canvas-heavy apps without corroborat
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-canvas-app.html"));
   await expect.poll(() => page.evaluate(() => window.__canvasAppDone === true)).toBe(true);
@@ -1747,6 +1899,7 @@ test("Adaptive observe-only logging records environment snapshot telemetry with 
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-environment-fingerprint.html"));
   await expect
@@ -1786,6 +1939,7 @@ test("Adaptive observe-only logging records WebSocket network corroboration", as
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
   const surface = await page.evaluate(async () => {
@@ -1859,6 +2013,7 @@ test("Adaptive observe-only logging ignores ordinary environment reads with netw
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-environment-app.html"));
   await expect
@@ -1876,6 +2031,7 @@ test("Adaptive runtime detection logs proxied vendor signatures without behavior
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveVendorDone === true)).toBe(true);
@@ -1921,6 +2077,7 @@ test("Adaptive runtime detection recognizes Fingerprint v4 start endpoints", asy
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-fingerprint-v4.html"));
   await expect
@@ -1956,6 +2113,7 @@ test("Adaptive runtime detection recognizes versioned first-party DataDome route
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-versioned-datadome.html"));
   await expect
@@ -1994,6 +2152,7 @@ test("Adaptive runtime detection recognizes custom DataDome tag paths with expli
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-custom-datadome.html"));
   await expect
@@ -2033,6 +2192,7 @@ test("Adaptive runtime detection recognizes HUMAN default first-party sensor rou
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-human-first-party.html"));
   await expect
@@ -2070,6 +2230,7 @@ test("Adaptive runtime detection recognizes HUMAN custom first-party prefixes", 
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-human-custom-prefix.html"));
   await expect
@@ -2108,6 +2269,7 @@ test("Adaptive runtime detection recognizes HUMAN ABR custom sensor endpoints fr
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-human-abr-custom-endpoint.html"));
   await expect
@@ -2146,6 +2308,7 @@ test("Adaptive runtime detection ignores HUMAN ABR lookalikes without exact jsCl
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-benign-human-abr-lookalike.html"));
   await expect
@@ -2163,6 +2326,7 @@ test("Adaptive runtime detection ignores HUMAN init.js lookalikes without matchi
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-benign-human-prefix-lookalike.html"));
   await expect
@@ -2180,6 +2344,7 @@ test("Adaptive runtime detection ignores partial vendor lookalikes", async ({
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-benign.html"));
   await expect
@@ -2197,6 +2362,7 @@ test("Adaptive behavior logging attributes external collector bundles by script 
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-module-runtime.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveModuleDone === true)).toBe(true);
@@ -2241,6 +2407,7 @@ test("Adaptive behavior logging attributes dynamic module collectors by redacted
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-dynamic-import.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveDynamicDone === true)).toBe(true);
@@ -2284,6 +2451,7 @@ test("Adaptive behavior logging falls back to runtime labels when async collecto
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-fallback.html"));
   await expect
@@ -2328,6 +2496,7 @@ test("Adaptive behavior logging attributes postMessage listener objects by regis
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-message-listener.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveMessageDone === true)).toBe(true);
@@ -2372,6 +2541,7 @@ test("Adaptive behavior logging attributes onmessage handlers through runtime so
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-onmessage-runtime.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveOnmessageDone === true)).toBe(true);
@@ -2400,6 +2570,35 @@ test("Adaptive behavior logging attributes onmessage handlers through runtime so
       .then(({ adaptive_log }) => adaptive_log[origin]);
   }, server.origin);
   expect(adaptiveEntry.sources["inline-or-runtime"]).toBeUndefined();
+});
+
+test("Adaptive behavior logging registers callbacks without formatting stack traces", async ({
+  extension,
+  server,
+}) => {
+  await enableResearchLogging(extension);
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-stack-hook.html"));
+
+  const formats = await page.evaluate(async () => {
+    await new Promise((resolve) => {
+      Promise.resolve().then(() => {});
+      Promise.reject("rejected").catch(() => {});
+      Promise.resolve().finally(() => {});
+      queueMicrotask(() => {});
+      requestAnimationFrame(() => {});
+      requestIdleCallback(() => {});
+      const interval = setInterval(() => clearInterval(interval), 0);
+      window.addEventListener("message", () => {});
+      window.onmessage = () => {};
+      new MutationObserver(() => {});
+      // Long enough for the vendor runtime scan (every 500 ms) to tick too.
+      setTimeout(resolve, 600);
+    });
+    return window.__stackFormats;
+  });
+
+  expect(formats).toBe(0);
 });
 
 test("listener wrapping preserves removeEventListener for callbacks and listener objects", async ({
@@ -2918,24 +3117,88 @@ test("DOM marker scrubber hides transient markers from page MutationObservers", 
   expect(serialized).not.toContain("onepassword-pill");
 });
 
+test("DOM markers stay hidden from page MutationObservers with Research logging on", async ({
+  extension,
+  server,
+}) => {
+  // Both the adaptive logger and the decoy script wrap MutationObserver then.
+  await enableResearchLogging(extension);
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const seen = await page.evaluate(async () => {
+    const names = [];
+    let calls = 0;
+    const observer = new MutationObserver((records) => {
+      calls += 1;
+      for (const record of records) {
+        names.push(...[...record.addedNodes].map((node) => node.nodeName));
+      }
+    });
+    observer.observe(document.body, { childList: true });
+    document.body.appendChild(document.createElement("grammarly-card"));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    const callsAfterMarkerOnly = calls;
+    document.body.appendChild(document.createElement("section"));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    observer.disconnect();
+    return { callsAfterMarkerOnly, names };
+  });
+
+  // A marker-only mutation never reaches the page callback; ordinary ones do.
+  expect(seen).toEqual({ callsAfterMarkerOnly: 0, names: ["SECTION"] });
+});
+
+test("MutationObserver takeRecords hides transient extension markers", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const taken = await page.evaluate(() => {
+    const observer = new MutationObserver(() => {});
+    observer.observe(document.body, { attributes: true, childList: true, subtree: true });
+    const marker = document.createElement("grammarly-card");
+    document.body.appendChild(marker);
+    const safe = document.createElement("div");
+    safe.id = "safe-taken";
+    document.body.appendChild(safe);
+    document.body.setAttribute("data-dashlanecreated", "1");
+    const records = observer.takeRecords().map((record) => ({
+      added: [...record.addedNodes].map((node) => node.nodeName),
+      attributeName: record.attributeName,
+      type: record.type,
+    }));
+    observer.disconnect();
+    return records;
+  });
+
+  expect(taken).toEqual([{ added: ["DIV"], attributeName: null, type: "childList" }]);
+});
+
 test("per-site disable stops blocking extension probes", async ({ extension, server }) => {
   const probedId = "nngceckbapebfimnlniiiahkandclblb";
   const probeUrl = `chrome-extension://${probedId}/manifest.json`;
 
-  // Set disabled state BEFORE navigation
+  // Pause the already-open page. After a reload a paused site gets no Static
+  // code at all (content-script-registration.spec.js); this covers the
+  // in-page pause that the open page relies on until then.
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
   await extension.serviceWorker.evaluate(
-    (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
-      }),
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
   );
 
-  // Navigate fresh — bridge should check disabled_origins on init
-  const page = await extension.context.newPage();
-  await page.goto(server.url("/blank.html"));
-
-  // Wait for bridge to initialize and propagate disabled state
+  // Wait for the bridge to propagate the disabled state
   await page.waitForTimeout(500);
 
   // Fire a probe — when disabled, the fetch passes through to origFetch
@@ -2964,13 +3227,15 @@ test("per-site disable also stops global stripping and iframe attribute normaliz
   extension,
   server,
 }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
   await extension.serviceWorker.evaluate(
     (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
   );
-
-  const page = await extension.context.newPage();
-  await page.goto(server.url("/blank.html"));
   await page.waitForTimeout(500);
 
   const result = await page.evaluate(() => {
@@ -2996,16 +3261,15 @@ test("per-site disable stops blocking active vectors and CSSOM probes", async ({
   const probedId = "nngceckbapebfimnlniiiahkandclblb";
   const probeUrl = `chrome-extension://${probedId}/manifest.json`;
 
-  await extension.serviceWorker.evaluate(
-    (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
-      }),
-    server.origin
-  );
-
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
   await page.waitForTimeout(500);
 
   const vectors = await page.evaluate(async (url) => {
@@ -3116,19 +3380,32 @@ test("per-site disable stops DOM scrubber from stripping extension markers", asy
   extension,
   server,
 }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
+  // The scrubber hears about a live pause through the persona update the
+  // worker's pause handler sends to the site's tabs, as the popup does.
   await extension.serviceWorker.evaluate(
     (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
+      new Promise((resolve) => {
+        messageHandlers.static_set_site_disabled({ disabled: true, origin }, {}, resolve);
       }),
     server.origin
   );
-
-  const page = await extension.context.newPage();
-  await page.goto(server.url("/dom.html"));
   await page.waitForTimeout(500);
 
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
+    // Same markers as /dom.html, added after the pause reached the page.
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      '<div id="target" data-grammarly-extension="1" data-lastpass-root="1" class="keep grammarly-card lastpass-panel"></div>' +
+        '<grammarly-card id="custom-card"></grammarly-card>'
+    );
+    await new Promise((resolve) => {
+      setTimeout(resolve, 300);
+    });
     const target = document.getElementById("target");
     const custom = document.getElementById("custom-card");
     return {
@@ -3150,17 +3427,16 @@ test("per-site disable stops replay poisoning while allowing detection logging",
   extension,
   server,
 }) => {
-  await extension.serviceWorker.evaluate(
-    (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
-        replay_mode: "mask",
-      }),
-    server.origin
-  );
-
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
   const page = await extension.context.newPage();
   await page.goto(server.url("/replay.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
   await page.waitForTimeout(500);
 
   const result = await page.evaluate(() => {
@@ -3178,18 +3454,19 @@ test("per-site disable stops replay poisoning while allowing detection logging",
 });
 
 test("per-site disable stops fingerprint masking", async ({ extension, server }) => {
-  await extension.serviceWorker.evaluate(
-    (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
-        fingerprint_mode: "mask",
-      }),
-    server.origin
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
   );
-
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
-  await page.waitForTimeout(300);
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
+  await page.waitForTimeout(500);
 
   const result = await page.evaluate(() => ({
     platform: navigator.platform,

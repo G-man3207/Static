@@ -19,7 +19,7 @@ const urlFiltersFor = (filePath) => {
 };
 
 const loadServiceWorkerUtils = () => {
-  const context = vm.createContext({});
+  const context = vm.createContext({ URL });
   vm.runInContext(readText("lists.js"), context);
   vm.runInContext(readText("service_worker_utils.js"), context);
   return context.__static_sw_utils__;
@@ -188,10 +188,11 @@ const expectedMainWorldScripts = [
   "block_globals.js",
 ];
 
-const addContentScriptFiles = (manifest, referencedFiles) => {
-  for (const script of manifest.content_scripts || []) {
-    for (const js of script.js || []) referencedFiles.add(js);
-  }
+// Content scripts are registered by the service worker, not the manifest.
+const addContentScriptFiles = (referencedFiles) => {
+  const utils = loadServiceWorkerUtils();
+  for (const script of utils.MAIN_WORLD_SCRIPTS) referencedFiles.add(script.file);
+  for (const file of utils.ISOLATED_WORLD_SCRIPTS) referencedFiles.add(file);
 };
 
 const addIconFiles = (icons, referencedFiles) => {
@@ -226,7 +227,7 @@ const addHtmlScriptFiles = (filePath, referencedFiles) => {
 
 const collectManifestFiles = (manifest) => {
   const referencedFiles = new Set();
-  addContentScriptFiles(manifest, referencedFiles);
+  addContentScriptFiles(referencedFiles);
   addServiceWorkerFiles(manifest, referencedFiles);
   if (manifest.action && manifest.action.default_popup) {
     referencedFiles.add(manifest.action.default_popup);
@@ -251,22 +252,131 @@ const expectManifestFilesToExist = (manifest) => {
   }
 };
 
-const expectContentScriptWorlds = (manifest) => {
-  const mainWorld = manifest.content_scripts.find((script) => script.world === "MAIN");
-  const isolatedWorld = manifest.content_scripts.find((script) => script.world === "ISOLATED");
-
-  expect(mainWorld.js).toEqual(expectedMainWorldScripts);
-  expect(isolatedWorld.js).toEqual(["lists.js", "bridge.js", "dom_scrubber.js"]);
-  expect(mainWorld.run_at).toBe("document_start");
-  expect(isolatedWorld.run_at).toBe("document_start");
-  expect(mainWorld.all_frames).toBe(true);
-  expect(isolatedWorld.all_frames).toBe(true);
+const expectOnDemandContentScripts = (manifest) => {
+  // The service worker registers content scripts (contentScriptRegistrationsFor),
+  // so paused sites and switched-off features can be left out entirely.
+  expect(manifest.content_scripts).toBeUndefined();
+  expect(manifest.minimum_chrome_version).toBe("119");
+  const utils = loadServiceWorkerUtils();
+  expect(utils.MAIN_WORLD_SCRIPTS.map((script) => script.file)).toEqual(expectedMainWorldScripts);
+  expect([...utils.ISOLATED_WORLD_SCRIPTS]).toEqual(["lists.js", "bridge.js", "dom_scrubber.js"]);
 };
 
-test("manifest references existing files and keeps content-script worlds separated", () => {
+test("manifest references existing files and leaves content scripts to the service worker", () => {
   const manifest = readJson("manifest.json");
   expectManifestFilesToExist(manifest);
-  expectContentScriptWorlds(manifest);
+  expectOnDemandContentScripts(manifest);
+});
+
+const plain = (value) => JSON.parse(JSON.stringify(value));
+const coreMainWorldScripts = [
+  "block_utils.js",
+  "block.js",
+  "block_vectors.js",
+  "block_iframe_attrs.js",
+  "block_style_vectors.js",
+  "block_element_decoys.js",
+  "block_globals.js",
+];
+
+test("content-script registrations load only switched-on page scripts", () => {
+  const utils = loadServiceWorkerUtils();
+  const defaults = plain(utils.contentScriptRegistrationsFor(utils.CONTENT_SCRIPT_SETTINGS));
+  expect(defaults.map((script) => [script.id, script.world])).toEqual([
+    ["a-main", "MAIN"],
+    ["b-isolated", "ISOLATED"],
+  ]);
+  expect(defaults[0].js).toEqual(coreMainWorldScripts);
+  expect(defaults[1].js).toEqual(["lists.js", "bridge.js", "dom_scrubber.js"]);
+  for (const script of defaults) {
+    expect(script).toMatchObject({
+      allFrames: true,
+      excludeMatches: [],
+      matchOriginAsFallback: true,
+      matches: ["<all_urls>"],
+      persistAcrossSessions: true,
+      runAt: "document_start",
+    });
+  }
+
+  const allOn = plain(
+    utils.contentScriptRegistrationsFor({
+      fingerprint_mode: "mask",
+      replay_mode: "chaos",
+      research_logging: true,
+    })
+  );
+  expect(allOn[0].js).toEqual(expectedMainWorldScripts);
+
+  const legacy = plain(
+    utils.contentScriptRegistrationsFor({
+      fingerprint_mode: "bogus",
+      replay_mode: "bogus",
+      research_logging: "yes",
+    })
+  );
+  expect(legacy[0].js).toEqual(coreMainWorldScripts);
+});
+
+test("paused origins become port-free host patterns or keep the in-page pause", () => {
+  const utils = loadServiceWorkerUtils();
+  expect(utils.pausedOriginPattern("https://chatgpt.com")).toBe("https://chatgpt.com/*");
+  expect(utils.pausedOriginPattern("http://localhost:3000")).toBe("http://localhost/*");
+  expect(utils.pausedOriginPattern("https://bücher.example")).toBe(
+    "https://xn--bcher-kva.example/*"
+  );
+  for (const origin of ["http://[::1]:8080", "null", "garbage", "file:///tmp/a.html", ""]) {
+    expect(utils.pausedOriginPattern(origin), origin).toBeNull();
+  }
+
+  const [main, isolated] = plain(
+    utils.contentScriptRegistrationsFor({
+      disabled_origins: {
+        "http://[::1]:8080": true,
+        "http://localhost:3000": true,
+        "http://localhost:8080": true,
+        "https://chatgpt.com": true,
+        "https://resumed.example": false,
+      },
+    })
+  );
+  expect(main.excludeMatches).toEqual(["http://localhost/*", "https://chatgpt.com/*"]);
+  expect(isolated.excludeMatches).toEqual(main.excludeMatches);
+});
+
+test("pause lookups treat the host as the unit and unpatternable origins as exact keys", () => {
+  const utils = loadServiceWorkerUtils();
+  const paused = {
+    "http://localhost:3000": true,
+    "http://[::1]:8080": true,
+    "https://resumed.example": false,
+  };
+  expect(utils.isOriginPaused("http://localhost:5173", paused)).toBe(true);
+  expect(utils.isOriginPaused("https://localhost", paused)).toBe(false);
+  expect(utils.isOriginPaused("http://[::1]:8080", paused)).toBe(true);
+  expect(utils.isOriginPaused("http://[::1]:9090", paused)).toBe(false);
+  expect(utils.isOriginPaused("https://resumed.example", paused)).toBe(false);
+  expect(utils.isOriginPaused(null, paused)).toBe(false);
+  expect(plain(utils.pausedOriginsLike("http://localhost:8080", paused))).toEqual([
+    "http://localhost:3000",
+  ]);
+});
+
+test("content-script sync check ignores fields the browser leaves out", () => {
+  const utils = loadServiceWorkerUtils();
+  const desired = utils.contentScriptRegistrationsFor(utils.CONTENT_SCRIPT_SETTINGS);
+  const asReported = plain(desired).map((script) => {
+    const copy = { ...script, js: script.js.map((file) => `/${file}`) };
+    delete copy.excludeMatches;
+    return copy;
+  });
+  expect(utils.contentScriptsInSync(asReported, desired)).toBe(true);
+  expect(utils.contentScriptsInSync([], desired)).toBe(false);
+  expect(utils.contentScriptsInSync(asReported.slice(0, 1), desired)).toBe(false);
+  const paused = utils.contentScriptRegistrationsFor({
+    disabled_origins: { "https://a.example": true },
+  });
+  expect(utils.contentScriptsInSync(asReported, paused)).toBe(false);
 });
 
 test("release metadata versions match the latest changelog release", () => {
@@ -292,6 +402,7 @@ test("manifest keeps privacy-sensitive exposure and permissions minimal", () => 
   expect(manifest.permissions.sort()).toEqual([
     "declarativeNetRequest",
     "declarativeNetRequestWithHostAccess",
+    "scripting",
     "storage",
   ]);
   expect(manifest.host_permissions || []).toEqual(["*://*/*"]);
@@ -340,6 +451,8 @@ test("Firefox build strips unsupported DNR types and adds event-page scripts", (
     expect(fxManifest.browser_specific_settings.gecko.data_collection_permissions).toEqual({
       required: ["none"],
     });
+    // Chrome-only key; Firefox warns about unknown manifest keys.
+    expect(fxManifest.minimum_chrome_version).toBeUndefined();
 
     const unsupported = ["webtransport", "webbundle"];
     for (const rulesFile of ["fingerprint_vendors.json", "captcha_vendors.json"]) {
@@ -926,8 +1039,7 @@ test("setupBridge.post handles both payload and null-payload consistently", () =
 });
 
 test("block_utils must load first — referenced from all block scripts via __static_block_utils__", () => {
-  const manifest = readJson("manifest.json");
-  const mainScripts = manifest.content_scripts[0].js;
+  const mainScripts = loadServiceWorkerUtils().MAIN_WORLD_SCRIPTS.map((script) => script.file);
   expect(mainScripts[0]).toBe("block_utils.js");
   for (let i = 1; i < mainScripts.length; i++) {
     const content = readText(mainScripts[i]);
@@ -939,14 +1051,14 @@ test("block_utils must load first — referenced from all block scripts via __st
 // lists.js / block_adaptive.js DOM-marker pattern sync
 // =========================================================================
 
-test("block_adaptive.js DOM_MARKER_ATTR_RE covers all domStripAttrs from lists.js", () => {
+test("block_element_decoys.js DOM_MARKER_ATTR_RE covers all domStripAttrs from lists.js", () => {
   const listsContext = vm.createContext({});
   vm.runInContext(readText("lists.js"), listsContext);
   const domStripAttrs = listsContext.__static_config__.domStripAttrs;
 
-  const adaptiveSrc = readText("block_adaptive.js");
-  const attrMatch = adaptiveSrc.match(/DOM_MARKER_ATTR_RE\s*=\s*(\/[^/]+\/[a-z]*)/);
-  expect(attrMatch, "DOM_MARKER_ATTR_RE must be found in block_adaptive.js").toBeTruthy();
+  const decoysSrc = readText("block_element_decoys.js");
+  const attrMatch = decoysSrc.match(/DOM_MARKER_ATTR_RE\s*=\s*(\/[^/]+\/[a-z]*)/);
+  expect(attrMatch, "DOM_MARKER_ATTR_RE must be found in block_element_decoys.js").toBeTruthy();
   const regexStr = attrMatch[1];
   const lastSlash = regexStr.lastIndexOf("/");
   const pattern = regexStr.slice(1, lastSlash);
@@ -954,7 +1066,7 @@ test("block_adaptive.js DOM_MARKER_ATTR_RE covers all domStripAttrs from lists.j
   const combinedRe = new RegExp(pattern, flags);
 
   // For each pattern in lists.js, generate a test string the pattern would
-  // match, then verify the combined block_adaptive.js regex also matches it.
+  // match, then verify the combined block_element_decoys.js regex also matches it.
   const testStringFor = (pattern) => {
     const src = String(pattern);
     if (src.includes("lp-(ignore") || src.includes("gr-c-s")) return null;
@@ -973,14 +1085,14 @@ test("block_adaptive.js DOM_MARKER_ATTR_RE covers all domStripAttrs from lists.j
   }
 });
 
-test("block_adaptive.js DOM_MARKER_TAG_RE covers all domStripTags from lists.js", () => {
+test("block_element_decoys.js DOM_MARKER_TAG_RE covers all domStripTags from lists.js", () => {
   const listsContext = vm.createContext({});
   vm.runInContext(readText("lists.js"), listsContext);
   const domStripTags = listsContext.__static_config__.domStripTags;
 
-  const adaptiveSrc = readText("block_adaptive.js");
-  const tagMatch = adaptiveSrc.match(/DOM_MARKER_TAG_RE\s*=\s*(\/[^/]+\/[a-z]*)/);
-  expect(tagMatch, "DOM_MARKER_TAG_RE must be found in block_adaptive.js").toBeTruthy();
+  const decoysSrc = readText("block_element_decoys.js");
+  const tagMatch = decoysSrc.match(/DOM_MARKER_TAG_RE\s*=\s*(\/[^/]+\/[a-z]*)/);
+  expect(tagMatch, "DOM_MARKER_TAG_RE must be found in block_element_decoys.js").toBeTruthy();
   const tagRegexStr = tagMatch[1];
   const tagLastSlash = tagRegexStr.lastIndexOf("/");
   const combinedRe = new RegExp(
@@ -997,14 +1109,14 @@ test("block_adaptive.js DOM_MARKER_TAG_RE covers all domStripTags from lists.js"
   }
 });
 
-test("block_adaptive.js DOM_MARKER_CLASS_RE covers all domStripClasses from lists.js", () => {
+test("block_element_decoys.js DOM_MARKER_CLASS_RE covers all domStripClasses from lists.js", () => {
   const listsContext = vm.createContext({});
   vm.runInContext(readText("lists.js"), listsContext);
   const domStripClasses = listsContext.__static_config__.domStripClasses;
 
-  const adaptiveSrc = readText("block_adaptive.js");
-  const classMatch = adaptiveSrc.match(/DOM_MARKER_CLASS_RE\s*=\s*(\/[^/]+\/[a-z]*)/);
-  expect(classMatch, "DOM_MARKER_CLASS_RE must be found in block_adaptive.js").toBeTruthy();
+  const decoysSrc = readText("block_element_decoys.js");
+  const classMatch = decoysSrc.match(/DOM_MARKER_CLASS_RE\s*=\s*(\/[^/]+\/[a-z]*)/);
+  expect(classMatch, "DOM_MARKER_CLASS_RE must be found in block_element_decoys.js").toBeTruthy();
   const classRegexStr = classMatch[1];
   const classLastSlash = classRegexStr.lastIndexOf("/");
   const combinedRe = new RegExp(

@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- fingerprint masking tests are easier to maintain in one file */
 const { expect, test } = require("./helpers/extension-fixture");
+const { enableFingerprintMask } = require("./helpers/extension");
 
 const ALLOWED_PLATFORMS = new Set(["Linux x86_64", "MacIntel", "Win32"]);
 const ALLOWED_SCREEN_KEYS = new Set([
@@ -331,24 +332,14 @@ test("Fingerprint masking returns a stable plausible per-origin device persona",
   });
 });
 
-test("Fingerprint masking can be enabled live through the extension bridge", async ({
+test("Fingerprint masking applies to an open page once it reloads", async ({
   extension,
   server,
 }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   await expect
     .poll(async () => {
@@ -370,17 +361,7 @@ test("Fingerprint masking perturbs offline audio fingerprints without blocking r
   test.skip(!plain, "OfflineAudioContext is unavailable in this browser");
   expect(await collectAudioFingerprint(page)).toEqual(plain);
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   await expect
     .poll(async () => {
@@ -408,17 +389,7 @@ test("Fingerprint masking perturbs OffscreenCanvas getImageData and convertToBlo
   const plainOffscreen2 = await collectOffscreenCanvasFingerprint(page);
   expect(plainOffscreen2).toEqual(plainOffscreen);
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   await expect
     .poll(async () => {
@@ -462,17 +433,7 @@ test("Fingerprint masking applies multi-pixel canvas noise, not single-pixel", a
   });
   expect(plainSignature.changed).toBe(0);
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   await expect
     .poll(async () => {
@@ -530,17 +491,7 @@ test("Fingerprint masking multi-pixel canvas noise is stable across reads", asyn
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   await expect
     .poll(async () => {
@@ -588,17 +539,7 @@ test("Fingerprint masking handles getHighEntropyValues string hint", async ({
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   const result = await page.evaluate(async () => {
     if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) {
@@ -623,17 +564,7 @@ test("Fingerprint masking empties navigator.plugins and mimeTypes", async ({
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   const result = await page.evaluate(() => {
     const plugins = navigator.plugins;
@@ -670,17 +601,7 @@ test("Fingerprint masking masks performance.memory", async ({ extension, server 
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   const result = await page.evaluate(() => {
     const memory = performance.memory;
@@ -703,17 +624,7 @@ test("Fingerprint masking masks navigator.credentials", async ({ extension, serv
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   const result = await page.evaluate(async () => {
     const creds = navigator.credentials;
@@ -800,17 +711,7 @@ test("Fingerprint masking masks navigator.clipboard", async ({ extension, server
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
-  await extension.serviceWorker.evaluate(async () => {
-    await chrome.storage.local.set({ fingerprint_mode: "mask" });
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? null
-          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
-      )
-    );
-  });
+  await enableFingerprintMask(extension, page);
 
   const result = await page.evaluate(async () => {
     const clipboard = navigator.clipboard;

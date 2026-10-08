@@ -340,7 +340,113 @@ globalThis.__static_sw_utils__ = (() => {
     return driftResultFor(state.score, latestKey, state.reasons);
   };
 
+  // ─── On-demand content scripts ───────────────────────────────────────────
+  // Page-world scripts in injection order. A script with `when` loads only
+  // while that feature is on. block_utils.js must stay first (it defines the
+  // shared utils global) and block_globals.js last (it deletes that global).
+  const MAIN_WORLD_SCRIPTS = [
+    { file: "block_utils.js" },
+    { file: "block_adaptive.js", when: (s) => s.research_logging === true },
+    { file: "block.js" },
+    { file: "block_vectors.js" },
+    { file: "block_iframe_attrs.js" },
+    { file: "block_style_vectors.js" },
+    { file: "block_fingerprint.js", when: (s) => s.fingerprint_mode === "mask" },
+    { file: "block_replay.js", when: (s) => ["mask", "noise", "chaos"].includes(s.replay_mode) },
+    { file: "block_element_decoys.js" },
+    { file: "block_globals.js" },
+  ];
+  const ISOLATED_WORLD_SCRIPTS = ["lists.js", "bridge.js", "dom_scrubber.js"];
+  // Storage keys, with defaults, that decide what gets registered.
+  const CONTENT_SCRIPT_SETTINGS = {
+    disabled_origins: {},
+    fingerprint_mode: "off",
+    replay_mode: "off",
+    research_logging: false,
+  };
+  const PATTERN_HOST_RE = /^[a-z0-9.-]+$/;
+
+  // Firefox never matches patterns with ports, and one malformed pattern makes
+  // the browser reject the whole registration. Only plain http(s) hostnames
+  // become patterns; any other paused origin keeps the in-page pause.
+  const pausedOriginPattern = (origin) => {
+    let url;
+    try {
+      url = new URL(origin);
+    } catch {
+      return null;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!PATTERN_HOST_RE.test(url.hostname)) return null;
+    return `${url.protocol}//${url.hostname}/*`;
+  };
+
+  // Pausing works per host (patterns carry no port), so an origin's pause
+  // entries are its own key plus any paused origin with the same pattern.
+  const pausedOriginsLike = (origin, disabledOrigins) => {
+    const pattern = pausedOriginPattern(origin);
+    return Object.keys(disabledOrigins || {}).filter(
+      (key) =>
+        disabledOrigins[key] &&
+        (key === origin || (!!pattern && pausedOriginPattern(key) === pattern))
+    );
+  };
+  const isOriginPaused = (origin, disabledOrigins) =>
+    !!origin && pausedOriginsLike(origin, disabledOrigins).length > 0;
+
+  const contentScriptRegistrationsFor = (settings) => {
+    const disabled = settings.disabled_origins || {};
+    const patterns = Object.keys(disabled)
+      .filter((origin) => disabled[origin])
+      .map(pausedOriginPattern)
+      .filter(Boolean);
+    const shared = {
+      allFrames: true,
+      excludeMatches: [...new Set(patterns)].sort(),
+      matchOriginAsFallback: true,
+      matches: ["<all_urls>"],
+      persistAcrossSessions: true,
+      runAt: "document_start",
+    };
+    return [
+      {
+        ...shared,
+        id: "a-main",
+        js: MAIN_WORLD_SCRIPTS.filter((s) => !s.when || s.when(settings)).map((s) => s.file),
+        world: "MAIN",
+      },
+      { ...shared, id: "b-isolated", js: [...ISOLATED_WORLD_SCRIPTS], world: "ISOLATED" },
+    ];
+  };
+
+  // getRegisteredContentScripts() can omit empty lists and default flags, so
+  // compare only the fields Static sets, normalized.
+  const registrationKey = (script) =>
+    JSON.stringify([
+      script.id,
+      (script.js || []).map((file) => file.replace(/^\//, "")),
+      script.matches || [],
+      [...(script.excludeMatches || [])].sort(),
+      script.runAt || "document_idle",
+      !!script.allFrames,
+      script.world || "ISOLATED",
+      !!script.matchOriginAsFallback,
+      script.persistAcrossSessions !== false,
+    ]);
+
+  const contentScriptsInSync = (registered, desired) =>
+    JSON.stringify((registered || []).map(registrationKey).sort()) ===
+    JSON.stringify(desired.map(registrationKey).sort());
+
   return {
+    CONTENT_SCRIPT_SETTINGS,
+    ISOLATED_WORLD_SCRIPTS,
+    MAIN_WORLD_SCRIPTS,
+    contentScriptRegistrationsFor,
+    contentScriptsInSync,
+    isOriginPaused,
+    pausedOriginPattern,
+    pausedOriginsLike,
     enforceCaps,
     ensurePlaybookWeek,
     latestPlaybookComparison,

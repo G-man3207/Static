@@ -825,6 +825,9 @@ test("Noise decoys work for moz-extension and safari-web-extension UUID IDs", as
 });
 
 test("adaptive logs redact high-entropy endpoint path segments", async ({ extension, server }) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ research_logging: true })
+  );
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-private.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptivePrivateDone === true)).toBe(true);

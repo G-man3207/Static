@@ -5,6 +5,7 @@ tests/network-header-spoof.spec.js
 tests/globals-stealth.spec.js
 tests/bridge-flush.spec.js
 tests/extension-behavior.spec.js
+tests/content-script-registration.spec.js
 tests/fingerprint-masking.spec.js
 tests/fingerprint-depth.spec.js
 tests/fingerprint-vectors.spec.js

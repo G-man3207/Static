@@ -10,6 +10,14 @@
   const attrNodeOriginals = new WeakMap();
   const elementOriginals = new WeakMap();
   const mutationOldValueOriginals = new WeakMap();
+  // Extension DOM markers that dom_scrubber.js strips; page MutationObservers
+  // must not see them come and go. Kept in sync with lists.js by static tests.
+  const DOM_MARKER_ATTR_RE =
+    /^(?:data-(?:1password(?:-|$)|1p(?:-|$)|onepassword(?:-|$)|op(?:-|$)|lastpass(?:-|$)|lp-(?:ignore|id|tab)|dashlane(?:-|$)|dashlanecreated|grammarly(?:-|$)|gramm(?:-|$)|gr-c-s-(?:loaded|check-loaded)$|honey(?:-|$)|honeyextension(?:-|$)|keeper(?:-|$)|roboform(?:-|$)|nordpass(?:-|$)|bitwarden(?:-|$)|protonpass(?:-|$)|keepassxc(?:-|$)|darkreader(?:-|$)|bw(?:-|$)|lt(?:-|$)|languagetool(?:-|$))|__lpform_)/i;
+  const DOM_MARKER_TAG_RE =
+    /^(?:grammarly-|lastpass-|dashlane-|honey-|onepassword-|protonpass-|keepassxc-|darkreader-|bitwarden-)/i;
+  const DOM_MARKER_CLASS_RE =
+    /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-)|protonpass(?:$|-)|keepassxc(?:$|-)|darkreader(?:$|-)|bitwarden(?:$|-))/i;
   const MAX_QUEUED_PROBES = 1000;
   const noise = U.noisePersona();
   let disabled = false;
@@ -158,15 +166,66 @@
     });
   };
 
+  const classStringHasMarker = (value) =>
+    String(value || "")
+      .split(/\s+/)
+      .some((className) => DOM_MARKER_CLASS_RE.test(className));
+  const elementHasMarkerClass = (node) => {
+    try {
+      if (!node || !node.classList) return false;
+      for (const className of node.classList) {
+        if (DOM_MARKER_CLASS_RE.test(className)) return true;
+      }
+    } catch {}
+    return false;
+  };
+  const isDomMarkerElement = (node) => {
+    try {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+      const tagName = String(node.tagName || "").toLowerCase();
+      if (DOM_MARKER_TAG_RE.test(tagName)) return true;
+      if (elementHasMarkerClass(node)) return true;
+      for (const attr of node.attributes || []) {
+        if (DOM_MARKER_ATTR_RE.test(attr.name)) return true;
+      }
+    } catch {}
+    return false;
+  };
+  const nodeListHasMarker = (nodes) => {
+    try {
+      for (const node of nodes || []) {
+        if (isDomMarkerElement(node)) return true;
+      }
+    } catch {}
+    return false;
+  };
+  const shouldHideMutationRecord = (record) => {
+    try {
+      if (!record) return false;
+      if (record.type === "childList") {
+        return nodeListHasMarker(record.addedNodes) || nodeListHasMarker(record.removedNodes);
+      }
+      if (record.type !== "attributes") return false;
+      const name = U.attrLocalName(null, record.attributeName);
+      if (DOM_MARKER_ATTR_RE.test(name)) return true;
+      if (name !== "class") return false;
+      return classStringHasMarker(record.oldValue) || elementHasMarkerClass(record.target);
+    } catch {
+      return false;
+    }
+  };
+
+  // Drops records about extension markers and restores decoyed URLs in the
+  // rest. Returns the original list untouched when nothing changes.
   const mutationRecordsForPage = (records) => {
     let filtered = null;
     for (let index = 0; index < records.length; index++) {
       const record = records[index];
-      const nextRecord = mutationRecordForPage(record);
+      const nextRecord = shouldHideMutationRecord(record) ? null : mutationRecordForPage(record);
       if (nextRecord !== record && !filtered) {
         filtered = Array.prototype.slice.call(records, 0, index);
       }
-      if (filtered) filtered.push(nextRecord);
+      if (filtered && nextRecord) filtered.push(nextRecord);
     }
     return filtered || records;
   };
@@ -1127,11 +1186,14 @@
       const callbackForPage =
         typeof callback === "function"
           ? function mutationObserverCallback(records, observer) {
-              return callback.call(this, mutationRecordsForPage(records), observer);
+              const pageRecords = mutationRecordsForPage(records);
+              // A native observer never fires with an empty list.
+              if (!pageRecords.length) return undefined;
+              return callback.call(this, pageRecords, observer);
             }
           : callback;
-      // Chain through any already-patched MutationObserver (e.g. block_adaptive.js
-      // which loads before this script per manifest.json ordering).
+      // Chain through any already-patched MutationObserver (e.g. block_adaptive.js,
+      // which loads before this script when Research logging is on).
       const observer = Reflect.construct(OrigMutationObserver, [callbackForPage], new.target);
       const origTakeRecords = observer.takeRecords;
       if (typeof origTakeRecords === "function") {

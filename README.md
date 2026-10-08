@@ -34,6 +34,7 @@ Static asks for these permissions in `manifest.json`:
 
 - **`declarativeNetRequest`** — needed to load the static fingerprinting/CAPTCHA vendor rulesets under `rules/`.
 - **`declarativeNetRequestWithHostAccess`** — needed for Dynamic Declarative Net Request rules that modify outgoing request headers (User-Agent and `Sec-CH-UA`) when Device signal poisoning is active. Static does not use this to broadly block or redirect traffic; it is scoped to the header-spoofing path.
+- **`scripting`** — the service worker registers Static's content scripts itself instead of declaring them in the manifest, so paused sites get none of Static's page code and switched-off features stay unloaded. It adds no install warning.
 - **`storage`** — local settings, probe logs, playbook summaries, and disabled-site list. Nothing leaves the device unless you explicitly export it.
 - **`host_permissions: *://*/*`** — required so content scripts can run on all sites and block extension-enumeration probes. Host access is also used by the narrow DNR rulesets so they can match requests to the listed fingerprinting/CAPTCHA domains.
 
@@ -65,6 +66,8 @@ You can inspect every ruleset in `rules/` and toggle the fingerprinting/CAPTCHA 
 
 Temporary add-ons unload when Firefox restarts. Prefer the [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/privacystatic/) listing for a permanent install.
 
+Chrome needs version 119 or later, for service-worker-registered MAIN-world content scripts that also cover `about:blank` and `srcdoc` frames.
+
 Firefox needs MAIN-world content scripts (128+) and built-in data-collection consent keys (140+). The package declares `strict_min_version: 140.0` and states that Static collects no remote data (`data_collection_permissions.required: ["none"]`).
 
 ---
@@ -85,7 +88,7 @@ Firefox needs MAIN-world content scripts (128+) and built-in data-collection con
 7. **Replay poisoning (opt-in).** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
 8. **Iframe attribute hardening.** Extension probes and fingerprinting scripts can infer browser capabilities from the shape of `<iframe allow>` / `sandbox` / `allowfullscreen` / `allowpaymentrequest>` attributes. Static normalizes these attributes: it drops unsupported `allow` tokens, keeps only valid `sandbox` tokens, coerces legacy `allowfullscreen` / `allowpaymentrequest` into modern `allow` syntax, and works on pages with Trusted Types `require-trusted-types-for 'script'` CSP by creating a dedicated policy.
 9. **Style / CSSOM vector blocking.** Extension URLs can be smuggled into `<style>` text nodes, inline `style` attributes, `CSSStyleSheet.cssText`, `CSSStyleDeclaration.setProperty` / `cssText`, and `insertRule` / `replace` / `replaceSync` / `addRule` calls. Static scrubs these sources before the browser can issue a request, and does it synchronously so the URL cannot be read back.
-10. **Per-site disable.** You can turn Static off for individual sites from the popup, including a plain-language **Page not working?** card with one-click pause and reload. When a site is disabled, all extension-probe blocking, DOM scrubbing, global stripping, and opt-in poisoning modes are bypassed for that origin, and Static also allows that origin's requests through the fingerprint/CAPTCHA network lists. The disabled state persists in `chrome.storage.local` and updates instantly on the current page. The **Disabled sites** page lists every paused origin with search, per-origin enable, and **Enable All**.
+10. **Per-site disable.** You can turn Static off for individual sites from the popup, including a plain-language **Page not working?** card with one-click pause and reload. When a site is disabled, all extension-probe blocking, DOM scrubbing, global stripping, and opt-in poisoning modes are bypassed for that origin, and Static lets that site's pages through the fingerprint/CAPTCHA network lists, including bot-check frames they embed (Cloudflare Turnstile, Arkose, hCaptcha), whose own requests would otherwise still be blocked. The popup's network-lists section says when they are skipped for the current site. Once the page reloads, a paused site gets none of Static's page code: the service worker registers the content scripts with paused origins excluded, including the `about:blank`, `srcdoc`, `data:`, and `blob:` frames those sites create. Pausing ignores ports, so pausing `localhost:3000` pauses every `localhost` port, and resuming any of them resumes the host. The disabled state persists in `chrome.storage.local`; the page that is open when you pause stops acting at once, and the reload removes Static from it. The **Disabled sites** page lists every paused origin with search, per-origin enable, and **Enable All**.
 
 The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds. The popup's diagnostics also include an **Exposed browser profile** view showing the JavaScript-visible user agent, platform, locale/language, timezone, screen, hardware buckets, WebGL, network, storage, and battery signals the current site can read; when Device signal poisoning is active, this view shows Static's stable per-site persona.
 
@@ -95,8 +98,8 @@ Static watches for a high-confidence breakage signal: a Static-blocked extension
 
 Casual recovery does not depend on that signal. The popup always keeps a **Page not working?** card on the current site, with one button: **Pause this site and reload**. That pause:
 
-- turns off Static's page-layer defenses for that origin
-- lets the site's own requests through Static's fingerprint/CAPTCHA network lists (those lists are otherwise global)
+- removes Static's page scripts from that origin entirely, so even a bot check that looks for patched browser functions finds none
+- lets the site's pages, including the bot-check frames they embed, through Static's fingerprint/CAPTCHA network lists (those lists are otherwise global)
 - reloads the tab so an already-broken page can recover
 
 Static does not auto-disable itself, does not inject an in-page banner (that would be another fingerprint), and keeps the warning evidence local. After a pause, the card becomes **Static is paused here** with **Turn protection back on**. The **Disabled sites** page lists every paused origin so a site can be re-enabled later.
@@ -116,7 +119,7 @@ The probe log viewer ranks origins by **Severity** first, then shows a **Probe b
 - **Changed**: the origin changed how it checks for extensions.
 - **High drift**: multiple signals shifted at once, such as new probe vectors plus path strategy or ID dictionary changes.
 
-Expanding an origin shows the concrete ranking reasons. Adaptive reason tokens such as `dom_observer`, `listener.keydown`, or `navigator.deviceMemory` include a local explanation of what browser surface was observed. The popup also shows a compact warning when the active site has recent `Changed` or `High drift` behavior.
+Expanding an origin shows the concrete ranking reasons. Adaptive reason tokens such as `dom_observer`, `listener.keydown`, or `navigator.deviceMemory` include a local explanation of what browser surface was observed. They only appear while Research logging is on. The popup also shows a compact warning when the active site has recent `Changed` or `High drift` behavior.
 
 This is an early-warning system, not attribution. It means "this origin changed how it checks for extensions," not necessarily "this origin adapted to Static."
 
@@ -126,7 +129,7 @@ QA diagnostics mode is available from the popup for compatibility testing. When 
 
 ## Adaptive behavior log (observe-only)
 
-Static also has a local-only adaptive behavior logger for future dynamic blocking work. It watches for correlated behavior windows such as canvas/WebGL/audio readback plus navigator reads and network transmission, environment snapshots plus crypto and network transmission, or document-wide mutation observation plus aggressive input hooks.
+Static also has a local-only adaptive behavior logger for future dynamic blocking work. It is **off by default**: turn on **Research logging** in the popup's **More** panel. While it is on, it wraps page timers, promises, and listeners to attribute data collection to its source, which slows script-heavy pages and puts Static's frames in page error stacks, where sites can see them. It takes effect when the page reloads. The logger watches for correlated behavior windows such as canvas/WebGL/audio readback plus navigator reads and network transmission, environment snapshots plus crypto and network transmission, or document-wide mutation observation plus aggressive input hooks.
 
 It also records strong runtime vendor signatures for documented client-side integrations served through first-party or proxied routes. Examples include `window.ddjskey` + `/tags.js` or versioned `/vX.Y.Z/tags.js` routes with the documented `/js/` collector inference, plus explicit `window.ddoptions.endpoint` deployments even when the DataDome tag is served from a custom path. Other signatures: `window._pxAppId` / `window._pxHostUrl` (HUMAN/PerimeterX), `window._sift.push(["_setAccount", ...])` (Sift), and current `window.Fingerprint.start(...)` / legacy `window.FingerprintJS.load(...)` (Fingerprint).
 
@@ -181,7 +184,7 @@ BrowserGate documents fingerprint collection beyond extension scans: user-agent 
 - **Weakening instead of blocking.** Reads still complete, but high-entropy values are decoyed or subtly perturbed so collectors cannot rely on the raw machine profile as confidently.
 - **Opt-in.** It is off by default because some sites use these APIs for legitimate compatibility decisions.
 
-Toggle Device signal poisoning from the popup.
+Toggle Device signal poisoning from the popup. Turning it on takes effect when the page reloads, since its script only loads while the feature is on; turning it off applies immediately.
 
 ## Replay poisoning (opt-in)
 
@@ -189,12 +192,12 @@ Replay poisoning is an opt-in behavior-level defense for replay SDKs that still 
 
 Replay poisoning detects likely replay code from script URLs, known globals, and replay-looking listener sources, then wraps only those listeners:
 
-- **Off**: detect and log replay SDK signals locally, but do not alter events.
+- **Off**: the replay script is not loaded, so nothing is detected or altered.
 - **Mask**: replay listeners see redacted input values (`redacted`, `redacted@example.invalid`, `0`) and generic key/input data. Normal page listeners still see the real value.
 - **Noise**: Mask plus small per-event coordinate and rectangle jitter, so pointer paths and element geometry become less stable.
 - **Chaos**: Noise plus local decoy click/focus/input/blur events delivered directly to detected replay listeners. These synthetic events are not dispatched through the DOM, so normal page handlers do not receive them.
 
-The feature is scoped to replay listeners rather than the whole page. It does not originate network requests, does not call replay vendor APIs, and does not store form contents. Replay detection signals are stored locally by origin so the popup can show when a site has active replay behavior.
+The feature is scoped to replay listeners rather than the whole page. It does not originate network requests, does not call replay vendor APIs, and does not store form contents. Replay detection signals are stored locally by origin so the popup can show when a site has active replay behavior. Detection runs only while a replay mode is on, and a new mode takes effect when the page reloads.
 
 Sentry Replay. Static looks for replay-specific Sentry signatures such as `replayIntegration`, `replayCanvasIntegration`, replay sample-rate options, `@sentry/replay`, `rrweb`, and Sentry CDN bundle paths containing `replay`. It intentionally does not block all `*.ingest.sentry.io` traffic because regular Sentry error monitoring and Session Replay share envelope transport URLs.
 
@@ -303,6 +306,7 @@ npm run check
 - **A new script-layer probe vector (some new Web API that takes a URL)**: add a wrapper in `block_vectors.js`, following the existing `guardProp` / `patchWorkerCtor` patterns and the shared `U.wrapMethod` / `U.wrapGetter` / `U.wrapSetter` helpers in `block_utils.js`. Fetch/XHR Noise-mode decoys live in `block.js`; passive element decoys live in `block_element_decoys.js`.
 - **Style / CSSOM vectors**: add a scrubber in `block_style_vectors.js`.
 - **Iframe attribute normalization**: adjust the token allowlists in `block_iframe_attrs.js`.
+- **A new content-script file**: list it in `MAIN_WORLD_SCRIPTS` or `ISOLATED_WORLD_SCRIPTS` in `service_worker_utils.js`, not in `manifest.json`. The service worker registers those lists; give a script a `when` condition if it should only load while its feature is on.
 
 ## Layout
 
@@ -323,7 +327,7 @@ static/
 ├── dom_scrubber.js        # ISOLATED-world DOM MutationObserver
 ├── bridge.js              # MessageChannel → service-worker relay
 ├── service_worker.js      # per-tab badge, storage, and message routing
-├── service_worker_utils.js # service-worker caps, playbook drift, and utility helpers
+├── service_worker_utils.js # service-worker caps, playbook drift, content-script lists
 ├── popup.html, popup.js   # popup showing count + ruleset toggles
 ├── disabled.html          # manage paused origins
 ├── icons/                 # 16/32/48/128 px icon set + original
@@ -335,7 +339,8 @@ static/
 
 ## Caveats
 
-- JS-layer patches run only where content scripts run. Pages served from `chrome://`, `about:`, the Chrome Web Store, and a handful of other restricted schemes are not covered.
+- JS-layer patches run only where content scripts run. Pages served from `chrome://`, `about:`, the Chrome Web Store, and a handful of other restricted schemes are not covered. In Chrome, local `file://` pages are not covered either, because service-worker-registered content scripts only run where Static's `*://*/*` host access reaches.
+- Browsers drop service-worker-registered content scripts whenever an extension updates. Static registers them again as soon as its service worker starts, but a page that loads in that moment, or a tab Chrome restores while applying an update at startup, runs without Static until it reloads.
 - The DOM scrubber ships with a default list of extensions whose markers are stripped. If one of those is an extension you use, its in-page UI (autofill icons, inline suggestions, etc.) may not render. Remove that extension's patterns from `lists.js` to keep it working.
 - Some sites use anti-bot vendors (PerimeterX, DataDome) as part of their login / checkout flow. If a site breaks, use **Pause this site and reload** in the popup first. That pauses Static on that origin, including the fingerprinting vendor network rules. You can also disable `fingerprint_vendors` globally from **More**.
 - `captcha_vendors` is disabled by default because Arkose/FunCAPTCHA, DataDome, and Cloudflare Turnstile / Challenge Platform are served as CAPTCHA or device-check flows on some logins and protected forms (X signup, Roblox, some crypto exchanges, Cloudflare-protected forms); enabling it will break sign-in there.

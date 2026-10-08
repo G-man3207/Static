@@ -537,6 +537,19 @@ const fixtureFiles = {
       }, 0);
     </script>
   `,
+  "/adaptive-stack-hook.html": `
+    <!doctype html>
+    <meta charset="utf-8">
+    <script>
+      // V8 calls the page's Error.prepareStackTrace for every stack trace
+      // formatted in this realm, including inside Static's MAIN-world scripts.
+      window.__stackFormats = 0;
+      Error.prepareStackTrace = (error) => {
+        window.__stackFormats++;
+        return String(error);
+      };
+    </script>
+  `,
   "/tags.js": `
     window.__tagScriptLoaded = true;
   `,

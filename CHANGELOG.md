@@ -6,14 +6,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added
+
+- **Research logging** switch in the popup's **More** panel, off by default. It loads the adaptive behavior logger, which wraps page timers, promises, and listeners to attribute data collection to its source; adaptive signals and their reason tokens only record while it is on.
+
 ### Fixed
 
+- **Pause this site and reload** reloads the tab the popup was opened for, instead of the first tab on that site.
+- Pausing a site now also lets the bot-check frames it embeds (Cloudflare Turnstile, Arkose, hCaptcha…) through the fingerprint/CAPTCHA lists. Their own requests used to stay blocked, so a login on a paused site could hang on verification. The popup's network-lists section now says when they are skipped for the current site, and pausing waits for the exception to be in place before the reload.
+- `MutationObserver.takeRecords()` no longer returns records for transient extension DOM markers that observer callbacks already hid.
 - Pausing a site now also stops `window` global stripping there. The globals script never received the paused state because it shared a bridge channel with another script; the iframe attribute normalizer had the same race.
 - Device signal poisoning now recognizes common fonts in CSS font shorthands (`12px "Courier New"`), so `document.fonts.check()` / `load()` treat them as installed instead of falling back to the per-site hash.
 - The popup's **Protect this site** status line now updates after toggling, and a failed toggle restores the previous state.
+- The observe-only adaptive logger no longer formats a stack trace every time a page registers a promise, timer, or event-listener callback. It keeps the caller's stack unformatted and labels it only if an adaptive signal fires in that callback, which removes thousands of stack formats per load on script-heavy sites and stops page-installed `Error.prepareStackTrace` hooks from seeing Static's frames on ordinary registrations.
 
 ### Changed
 
+- The service worker now registers Static's content scripts (`chrome.scripting`) instead of the manifest declaring them, and loads only what is switched on. Device signal poisoning, Replay poisoning, and Research logging each add their script only while on. With default settings, pages no longer see the poisoning script's `RTCPeerConnection` wrapper, and errors in timer callbacks no longer carry `chrome-extension://…/block_adaptive.js` frames that identified Static.
+- Pausing a site removes Static from it entirely once the page reloads: no content scripts are injected there, so bot checks that react to patched browser functions find none. Frames a paused site creates (`about:blank`, `srcdoc`, `data:`, `blob:`) are paused with it. Pausing ignores ports: pausing `localhost:3000` pauses every `localhost` port, the popup and badge show those ports as paused, and resuming any of them resumes the host.
+- The **Protect this site** toggle now reloads the site's tab, like **Pause this site and reload**.
+- Turning on Device signal poisoning, Replay poisoning, or Research logging applies when the page reloads. Turning poisoning or Replay off still applies immediately.
+- Replay SDK detection only runs while Replay poisoning is on, so the **Replay SDK detected here** notice no longer appears with Replay off.
+- Hiding transient extension DOM markers from page `MutationObserver`s moved from the adaptive logger into the always-loaded `block_element_decoys.js`, so it keeps working with Research logging off.
+- Static now requires Chrome 119 or later and adds the `scripting` permission (no new install warning). In Chrome it no longer runs on local `file://` pages. After an extension update, a page that loads before Static re-registers its content scripts runs without Static until it reloads.
 - MAIN-world scripts share `U.wrapMethod` / `U.wrapGetter` / `U.wrapSetter` helpers instead of hand-copied descriptor patching. Methods and accessors patched this way report their native `length` and `toString()` source, and patched getters no longer carry an own `prototype`. Internal cleanup across the bridge, service worker, popup, and log viewer; no settings or storage formats changed.
 
 ## [2.5.1] — 2026-09-25

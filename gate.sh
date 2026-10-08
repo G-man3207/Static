@@ -61,14 +61,10 @@ node -e "
     if (m.manifest_version !== 3) { console.log('manifest_version must be 3'); errors++; }
     if (!m.name)                   { console.log('manifest missing name'); errors++; }
     if (!m.version)                { console.log('manifest missing version'); errors++; }
-    if (!Array.isArray(m.content_scripts) || m.content_scripts.length === 0) {
-      console.log('manifest missing content_scripts'); errors++;
-    }
-    // Verify all content script files exist
-    for (const cs of m.content_scripts) {
-      for (const js of (cs.js || [])) {
-        if (!fs.existsSync(js)) { console.log('missing content script: ' + js); errors++; }
-      }
+    // Content scripts are registered by the service worker (static validation
+    // checks their files), which needs the scripting permission.
+    if (!(m.permissions || []).includes('scripting')) {
+      console.log('manifest missing scripting permission'); errors++;
     }
     // Verify service worker exists
     if (!m.background || !fs.existsSync(m.background.service_worker || '')) {

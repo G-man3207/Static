@@ -40,6 +40,9 @@ async function startFixtureServer(files) {
       return `${this.origin}${filePath}`;
     },
     async close() {
+      // A browser that is still open can hold sockets close() would wait on
+      // (e.g. pre-connects without a request); drop them so close() returns.
+      server.closeAllConnections();
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });

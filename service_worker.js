@@ -13,9 +13,12 @@
 //   7. Generate stable per-origin device personas for opt-in signal poisoning.
 //   8. Answer popup queries (`static_get_details`, `static_export_log`,
 //      `static_set_noise`, `static_set_replay`, `static_set_fingerprint`,
-//      `static_set_diagnostics`) and bridge queries (`static_get_persona`).
+//      `static_set_diagnostics`, `static_set_research_logging`) and bridge
+//      queries (`static_get_persona`).
 //   9. When a site is paused, install initiator-scoped DNR allow rules so
 //      global fingerprint/CAPTCHA lists do not keep blocking that origin.
+//  10. Register the content scripts: paused sites and switched-off features
+//      get none of Static's page code.
 
 // In the event-page fallback path (Firefox background.scripts), the deps
 // are loaded as sequential <script> tags before this file, so importScripts
@@ -26,7 +29,12 @@ if (typeof importScripts === "function") {
 const CFG = globalThis.__static_config__;
 const SW_HELPERS = CFG.helpers;
 const {
+  CONTENT_SCRIPT_SETTINGS,
+  contentScriptRegistrationsFor,
+  contentScriptsInSync,
   enforceCaps,
+  isOriginPaused,
+  pausedOriginsLike,
   ensurePlaybookWeek,
   latestPlaybookSnapshot,
   mergeCounts,
@@ -261,7 +269,12 @@ const cleanupStaleHeaderRules = async () => {
 // Static's fingerprint/CAPTCHA rulesets are global. Pausing a site must also
 // let that origin's requests through those lists, otherwise "pause and reload"
 // would not fix login/checkout breakage caused by vendor blocking.
-const originPauseAllowRules = new Map(); // hostname -> ruleId
+// Each paused host gets two rules: "initiator" lets through requests the site
+// starts itself (including from its workers); "frames" lets through everything
+// inside its pages, because bot-check iframes it embeds (Turnstile, Arkose…)
+// make their own requests with their own origin as the initiator.
+const PAUSE_ALLOW_KINDS = ["initiator", "frames"];
+const originPauseAllowRules = new Map(); // "<kind>:<hostname>" -> ruleId
 let pauseAllowNextRuleId = PAUSE_ALLOW_RULE_ID_BASE;
 
 const hostnameForPauseAllow = (origin) => {
@@ -292,15 +305,24 @@ const nextPauseAllowRuleId = (usedIds) => {
   return null;
 };
 
-const pauseAllowRuleForHostname = (ruleId, hostname) => ({
-  action: { type: "allow" },
-  condition: {
-    initiatorDomains: [hostname],
-    resourceTypes: ALL_RESOURCE_TYPES,
-  },
-  id: ruleId,
-  priority: 1000,
-});
+const pauseAllowRuleFor = (ruleId, key) => {
+  const kind = key.slice(0, key.indexOf(":"));
+  const hostname = key.slice(key.indexOf(":") + 1);
+  if (kind === "frames") {
+    return {
+      action: { type: "allowAllRequests" },
+      condition: { requestDomains: [hostname], resourceTypes: ["main_frame", "sub_frame"] },
+      id: ruleId,
+      priority: 1000,
+    };
+  }
+  return {
+    action: { type: "allow" },
+    condition: { initiatorDomains: [hostname], resourceTypes: ALL_RESOURCE_TYPES },
+    id: ruleId,
+    priority: 1000,
+  };
+};
 
 const addDynamicRule = async (rule) => {
   try {
@@ -323,30 +345,36 @@ const addDynamicRule = async (rule) => {
   }
 };
 
-const wantedPauseAllowHostnames = (disabledOrigins) => {
+const wantedPauseAllowKeys = (disabledOrigins) => {
   const wanted = new Set();
   for (const [origin, disabled] of Object.entries(disabledOrigins || {})) {
     if (!disabled) continue;
     const hostname = hostnameForPauseAllow(origin);
-    if (hostname) wanted.add(hostname);
+    if (!hostname) continue;
+    for (const kind of PAUSE_ALLOW_KINDS) wanted.add(`${kind}:${hostname}`);
   }
   return wanted;
 };
 
-const pauseAllowHostnameFromRule = (rule) =>
-  rule.condition && Array.isArray(rule.condition.initiatorDomains)
-    ? rule.condition.initiatorDomains[0]
+const pauseAllowKeyFromRule = (rule) => {
+  const condition = rule.condition || {};
+  if (rule.action && rule.action.type === "allowAllRequests") {
+    return Array.isArray(condition.requestDomains) ? `frames:${condition.requestDomains[0]}` : null;
+  }
+  return Array.isArray(condition.initiatorDomains)
+    ? `initiator:${condition.initiatorDomains[0]}`
     : null;
+};
 
 const keepOrDropLivePauseAllowRule = (rule, wanted, state) => {
-  const hostname = pauseAllowHostnameFromRule(rule);
-  if (!hostname || !wanted.has(hostname) || state.seenHostnames.has(hostname)) {
+  const key = pauseAllowKeyFromRule(rule);
+  if (!key || !wanted.has(key) || state.seenKeys.has(key)) {
     state.removeRuleIds.push(rule.id);
     state.usedIds.delete(rule.id);
     return;
   }
-  state.seenHostnames.add(hostname);
-  originPauseAllowRules.set(hostname, rule.id);
+  state.seenKeys.add(key);
+  originPauseAllowRules.set(key, rule.id);
   if (rule.id >= pauseAllowNextRuleId) {
     pauseAllowNextRuleId =
       rule.id >= PAUSE_ALLOW_RULE_ID_MAX ? PAUSE_ALLOW_RULE_ID_BASE : rule.id + 1;
@@ -354,19 +382,19 @@ const keepOrDropLivePauseAllowRule = (rule, wanted, state) => {
 };
 
 const addMissingPauseAllowRules = async (wanted, usedIds) => {
-  for (const hostname of wanted) {
-    if (originPauseAllowRules.has(hostname)) continue;
+  for (const key of wanted) {
+    if (originPauseAllowRules.has(key)) continue;
     const ruleId = nextPauseAllowRuleId(usedIds);
     if (ruleId == null) break;
-    const added = await addDynamicRule(pauseAllowRuleForHostname(ruleId, hostname));
+    const added = await addDynamicRule(pauseAllowRuleFor(ruleId, key));
     if (!added) continue;
     usedIds.add(ruleId);
-    originPauseAllowRules.set(hostname, ruleId);
+    originPauseAllowRules.set(key, ruleId);
   }
 };
 
 const reconcilePauseAllowRules = async (disabledOrigins) => {
-  const wanted = wantedPauseAllowHostnames(disabledOrigins);
+  const wanted = wantedPauseAllowKeys(disabledOrigins);
   let live;
   try {
     live = await chrome.declarativeNetRequest.getDynamicRules();
@@ -377,7 +405,7 @@ const reconcilePauseAllowRules = async (disabledOrigins) => {
 
   const state = {
     removeRuleIds: [],
-    seenHostnames: new Set(),
+    seenKeys: new Set(),
     usedIds: new Set(live.map((rule) => rule.id)),
   };
   originPauseAllowRules.clear();
@@ -466,7 +494,7 @@ const updateBadgeForTab = async (tabId, tabUrl) => {
       compat_log: {},
       disabled_origins: {},
     });
-    if (disabled_origins[origin]) {
+    if (isOriginPaused(origin, disabled_origins)) {
       chrome.action.setBadgeText({ tabId, text: "OFF" }).catch(() => {});
       chrome.action.setBadgeBackgroundColor({ tabId, color: DISABLED_BADGE_COLOR }).catch(() => {});
       return;
@@ -504,6 +532,41 @@ let writeChain = Promise.resolve();
 const serialize = (fn) => {
   writeChain = writeChain.then(fn).catch(() => {});
   return writeChain;
+};
+
+// ─── On-demand content scripts ────────────────────────────────────────────
+// Registered here instead of in the manifest so paused sites get no Static
+// code at all and switched-off features stay unloaded. Browsers drop these
+// registrations on every extension update, so they are re-checked on worker
+// start, install/update, browser startup, and relevant setting changes.
+let contentScriptChain = Promise.resolve();
+
+const applyContentScriptRegistrations = async () => {
+  const settings = await chrome.storage.local.get(CONTENT_SCRIPT_SETTINGS);
+  const desired = contentScriptRegistrationsFor(settings);
+  const registered = await chrome.scripting.getRegisteredContentScripts();
+  if (contentScriptsInSync(registered, desired)) return;
+  const registeredIds = registered.map((script) => script.id);
+  const sameIds =
+    registeredIds.length === desired.length &&
+    desired.every((script) => registeredIds.includes(script.id));
+  if (sameIds) {
+    await chrome.scripting.updateContentScripts(desired);
+    return;
+  }
+  // Fresh install, update, or leftovers: register both in one call so Chrome
+  // keeps ID order (page world first).
+  if (registeredIds.length) await chrome.scripting.unregisterContentScripts();
+  await chrome.scripting.registerContentScripts(desired);
+};
+
+// Overlapping register/update calls fail, so runs are queued. Each run
+// re-reads storage and does nothing when the registrations already match.
+const syncContentScripts = () => {
+  contentScriptChain = contentScriptChain
+    .then(applyContentScriptRegistrations)
+    .catch((err) => safeLog(err, "content script sync"));
+  return contentScriptChain;
 };
 
 const addToCumulative = async (delta) => {
@@ -1168,7 +1231,7 @@ const detailsResponseFor = async (tabId, stored) => {
   );
   const loggedOrigins = loggedOriginsFor(stored);
   const disabledOrigins = stored.disabled_origins || {};
-  const disabled = !!(origin && disabledOrigins[origin]);
+  const disabled = isOriginPaused(origin, disabledOrigins);
   const fingerprintMode = stored.fingerprint_mode === "mask" ? "mask" : "off";
   const fingerprintPersona = await fingerprintPersonaForDetails(origin, fingerprintMode, disabled);
 
@@ -1194,6 +1257,7 @@ const detailsResponseFor = async (tabId, stored) => {
     diagnosticEvents: diagnosticEventCountFor(diagnosticEntry),
     diagnosticOrigins: Object.keys(stored.diagnostic_log).length,
     diagnosticsMode: stored.diagnostics_mode,
+    researchLogging: !!stored.research_logging,
     origin,
     drift: originProbeEntry ? playbookDriftForEntry(originProbeEntry) : null,
     noiseDiagnostics: originProbeEntry
@@ -1219,6 +1283,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
       adaptive_log: {},
       compat_log: {},
       replay_mode: "off",
+      research_logging: false,
     });
     sendResponse(await detailsResponseFor(msg.tabId, stored));
   })();
@@ -1235,7 +1300,7 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
       replay_mode: "off",
     });
     const origin = rememberSenderOrigin(sender);
-    const disabled = !!(origin && stored.disabled_origins[origin]);
+    const disabled = isOriginPaused(origin, stored.disabled_origins);
     const fingerprintMode = stored.fingerprint_mode === "mask" ? "mask" : "off";
     const fingerprintPersona =
       fingerprintMode === "mask" ? await fingerprintPersonaFor(origin) : null;
@@ -1295,8 +1360,19 @@ const handleSetReplay = (msg, _sender, sendResponse) => {
     const allowed = new Set(["off", "mask", "noise", "chaos"]);
     const mode = allowed.has(msg.mode) ? msg.mode : "off";
     await chrome.storage.local.set({ replay_mode: mode });
+    await syncContentScripts();
     await broadcastConfigUpdate();
     sendResponse({ ok: true, mode });
+  })();
+  return true;
+};
+
+const handleSetResearchLogging = (msg, _sender, sendResponse) => {
+  (async () => {
+    const enabled = !!msg.enabled;
+    await chrome.storage.local.set({ research_logging: enabled });
+    await syncContentScripts();
+    sendResponse({ enabled, ok: true });
   })();
   return true;
 };
@@ -1306,6 +1382,7 @@ const handleSetFingerprint = (msg, _sender, sendResponse) => {
     const allowed = new Set(["off", "mask"]);
     const mode = allowed.has(msg.mode) ? msg.mode : "off";
     await chrome.storage.local.set({ fingerprint_mode: mode });
+    await syncContentScripts();
     if (mode !== "mask") {
       await clearAllHeaderRules();
     }
@@ -1327,19 +1404,23 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
     if (disabled) {
       disabled_origins[origin] = true;
     } else {
-      delete disabled_origins[origin];
+      // Pausing works per host, so resuming clears every entry for this host.
+      for (const key of pausedOriginsLike(origin, disabled_origins)) delete disabled_origins[key];
     }
     await chrome.storage.local.set({ disabled_origins });
+    // Both must be in place before the popup reloads the tab.
+    await syncContentScripts();
+    await reconcilePauseAllowRulesFromStorage();
     if (disabled) {
       await removeOriginHeaderRule(origin);
     }
-    // Notify the tab for this origin so content scripts can update immediately
+    // Notify tabs on this host (any port) so content scripts update immediately
     const tabs = await chrome.tabs.query({});
     await Promise.all(
       tabs.map((tab) => {
         if (tab.id == null) return null;
         updateBadgeForTab(tab.id, tab.url).catch(() => {});
-        if (originFromUrl(tab.url) === origin) {
+        if (isOriginPaused(originFromUrl(tab.url), { [origin]: true })) {
           // Send direct disabled update to MAIN world scripts AND persona update to bridge
           return Promise.all([
             chrome.tabs
@@ -1430,6 +1511,7 @@ const messageHandlers = {
   static_set_fingerprint: handleSetFingerprint,
   static_set_noise: handleSetNoise,
   static_set_replay: handleSetReplay,
+  static_set_research_logging: handleSetResearchLogging,
   static_set_site_disabled: handleSetSiteDisabled,
 };
 
@@ -1481,7 +1563,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
     reconcilePauseAllowRulesFromStorage();
   }
   if (changes.disabled_origins || changes.compat_log) refreshAllBadges();
+  if (Object.keys(CONTENT_SCRIPT_SETTINGS).some((key) => changes[key])) syncContentScripts();
 });
+
+chrome.runtime.onInstalled.addListener(() => {
+  syncContentScripts();
+});
+chrome.runtime.onStartup.addListener(() => {
+  syncContentScripts();
+});
+syncContentScripts();
 
 // ─── Startup: reconcile persisted DNR header rules against live state ────
 cleanupStaleHeaderRules()

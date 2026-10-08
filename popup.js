@@ -225,10 +225,15 @@ const resolvePopupTab = async () => {
   return active || null;
 };
 
+// The tab this popup is for, resolved at startup.
+let popupTabId = null;
+
 const reloadOriginTab = async (origin) => {
   if (!origin) return;
   const tabs = await chrome.tabs.query({}).catch(() => []);
-  const match = tabs.find((tab) => tabOrigin(tab) === origin && isHttpUrl(tab.url));
+  // Reload the tab the popup is for; fall back to another tab on that origin.
+  const onOrigin = (tab) => tabOrigin(tab) === origin && isHttpUrl(tab.url);
+  const match = tabs.find((tab) => tab.id === popupTabId && onOrigin(tab)) || tabs.find(onOrigin);
   if (match && match.id != null) await chrome.tabs.reload(match.id);
 };
 
@@ -717,7 +722,9 @@ const renderSiteSection = (resp) => {
         origin: resp.origin,
       });
       renderSiteStatus(!enabled);
-      await pushConfigUpdateToActiveTab();
+      // A paused site has no Static code left to update, so both directions
+      // take effect on reload. The handler re-registered the scripts first.
+      await reloadOriginTab(resp.origin);
     } catch (e) {
       console.error("[Static] site toggle failed", e);
       toggle.checked = !enabled;
@@ -798,6 +805,25 @@ const renderDiagnosticsSection = (resp) => {
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] diagnostics toggle failed", e);
+      toggle.checked = !desired;
+    }
+  });
+};
+
+const renderResearchLoggingSection = (resp) => {
+  const toggle = document.getElementById("research-logging-toggle");
+  toggle.checked = !!(resp && resp.researchLogging);
+
+  toggle.addEventListener("change", async () => {
+    const desired = toggle.checked;
+    try {
+      const saved = await chrome.runtime.sendMessage({
+        enabled: desired,
+        type: "static_set_research_logging",
+      });
+      toggle.checked = !!(saved && saved.enabled);
+    } catch (e) {
+      console.error("[Static] research logging toggle failed", e);
       toggle.checked = !desired;
     }
   });
@@ -982,6 +1008,7 @@ const renderRulesets = (enabledArr, counts) => {
 (async () => {
   const queriedTabId = tabIdFromQuery();
   const tab = queriedTabId != null ? { id: queriedTabId } : await resolvePopupTab();
+  popupTabId = tab ? tab.id : null;
   const detailsPromise = tab
     ? chrome.runtime.sendMessage({ type: "static_get_details", tabId: tab.id }).catch(() => null)
     : Promise.resolve(null);
@@ -998,9 +1025,11 @@ const renderRulesets = (enabledArr, counts) => {
   renderSiteSection(details);
   renderNoiseSection(details);
   renderDiagnosticsSection(details);
+  renderResearchLoggingSection(details);
   renderFingerprintSection(details);
   renderReplaySection(details);
   renderRulesets(enabledArr, counts);
+  document.getElementById("rulesets-paused-note").hidden = !(details && details.disabled);
   await renderExposedProfile(details);
   renderDisabledSitesLink();
   setupHelpTips();
