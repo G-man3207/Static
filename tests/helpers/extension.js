@@ -84,7 +84,7 @@ const enableFingerprintMask = async (extension, page) => {
   });
 };
 
-async function launchExtension() {
+async function launchExtension({ args = [] } = {}) {
   const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "static-profile-"));
   const context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
@@ -92,6 +92,7 @@ async function launchExtension() {
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
       "--no-sandbox",
+      ...args,
     ],
   });
 

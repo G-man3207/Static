@@ -1029,6 +1029,7 @@ const renderRulesets = (enabledArr, counts) => {
   renderFingerprintSection(details);
   renderReplaySection(details);
   renderRulesets(enabledArr, counts);
+  document.getElementById("rulesets-paused-note").hidden = !(details && details.disabled);
   await renderExposedProfile(details);
   renderDisabledSitesLink();
   setupHelpTips();

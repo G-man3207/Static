@@ -3,8 +3,9 @@
 const http = require("http");
 const { expect, test } = require("./helpers/extension-fixture");
 const { expectApiSurface, getApiSurface } = require("./helpers/api-surface");
-const { staticPageTraces } = require("./helpers/extension");
+const { launchExtension, staticPageTraces } = require("./helpers/extension");
 const { visibleContentRatio } = require("./helpers/png");
+const { startFixtureServer } = require("./helpers/server");
 
 const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const OTHER_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -412,7 +413,7 @@ test("pausing a site installs a DNR allow rule for that initiator and resume rem
       const rules = await extension.serviceWorker.evaluate(() =>
         chrome.declarativeNetRequest.getDynamicRules()
       );
-      return rules.filter((rule) => rule.action && rule.action.type === "allow");
+      return rules.filter((rule) => rule.priority === 1000);
     })
     .toEqual(
       expect.arrayContaining([
@@ -420,6 +421,16 @@ test("pausing a site installs a DNR allow rule for that initiator and resume rem
           action: { type: "allow" },
           condition: expect.objectContaining({
             initiatorDomains: [hostname],
+          }),
+          priority: 1000,
+        }),
+        // Lets through everything in the site's pages, including bot-check
+        // iframes it embeds, whose own requests have another initiator.
+        expect.objectContaining({
+          action: { type: "allowAllRequests" },
+          condition: expect.objectContaining({
+            requestDomains: [hostname],
+            resourceTypes: ["main_frame", "sub_frame"],
           }),
           priority: 1000,
         }),
@@ -433,16 +444,100 @@ test("pausing a site installs a DNR allow rule for that initiator and resume rem
       const rules = await extension.serviceWorker.evaluate(() =>
         chrome.declarativeNetRequest.getDynamicRules()
       );
-      return rules.filter(
-        (rule) =>
-          rule.action &&
-          rule.action.type === "allow" &&
-          rule.condition &&
-          Array.isArray(rule.condition.initiatorDomains) &&
-          rule.condition.initiatorDomains.includes(hostname)
-      );
+      return rules.filter((rule) => JSON.stringify(rule.condition || {}).includes(`"${hostname}"`));
     })
     .toEqual([]);
+});
+
+test("pausing a site lets its embedded bot-check frames through the vendor lists", async () => {
+  const server = await startFixtureServer({
+    "/host.html": `<!doctype html><body><script>
+      window.addEventListener("message", (event) => { window.__frameResult = event.data; });
+      const frame = document.createElement("iframe");
+      frame.src = "http://vendor.test:" + location.port + "/frame.html";
+      document.body.appendChild(frame);
+    </script></body>`,
+    "/frame.html": `<!doctype html><script>
+      fetch("/probe.txt").then((response) => response.text()).then(
+        (text) => parent.postMessage({ text }, "*"),
+        (error) => parent.postMessage({ error: String(error) }, "*")
+      );
+    </script>`,
+    "/probe.txt": "reachable",
+  });
+  const extension = await launchExtension({
+    args: ["--host-resolver-rules=MAP paused.test 127.0.0.1, MAP vendor.test 127.0.0.1"],
+  });
+  try {
+    const origin = `http://paused.test:${new URL(server.origin).port}`;
+    // Stands in for the bundled vendor lists (same action and priority);
+    // tests cannot serve challenges.cloudflare.com and friends.
+    await extension.serviceWorker.evaluate(() =>
+      chrome.declarativeNetRequest.updateDynamicRules({
+        addRules: [
+          {
+            action: { type: "block" },
+            condition: {
+              resourceTypes: ["sub_frame", "xmlhttprequest", "script", "other"],
+              urlFilter: "||vendor.test^",
+            },
+            id: 99,
+            priority: 1,
+          },
+        ],
+      })
+    );
+    const page = await extension.context.newPage();
+    await page.goto(`${origin}/host.html`);
+    const blockedWhileProtected = await page.evaluate(() =>
+      fetch(`http://vendor.test:${location.port}/probe.txt`, { mode: "no-cors" }).then(
+        () => false,
+        () => true
+      )
+    );
+    expect(blockedWhileProtected).toBe(true);
+
+    await extension.serviceWorker.evaluate(
+      (target) =>
+        new Promise((resolve) => {
+          messageHandlers.static_set_site_disabled({ disabled: true, origin: target }, {}, resolve);
+        }),
+      origin
+    );
+    await page.reload();
+    await expect
+      .poll(() => page.evaluate(() => window.__frameResult))
+      .toEqual({
+        text: "reachable",
+      });
+  } finally {
+    await extension.close();
+    await server.close();
+  }
+});
+
+test("popup says the network lists skip a paused site", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.bringToFront();
+  const tabId = await activeHttpTabId(extension.serviceWorker);
+  // The lists live in the More panel, so open it the way a user would.
+  const openListsNote = async () => {
+    const popupPage = await openPopupForTab(extension, tabId);
+    await popupPage.locator("#advanced-controls > summary").click();
+    await expect(popupPage.locator("#rulesets")).toBeVisible();
+    return popupPage.locator("#rulesets-paused-note");
+  };
+
+  await expect(await openListsNote()).toBeHidden();
+
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
+  const note = await openListsNote();
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("don't apply to this site");
 });
 
 test("toolbar badge shows an attention mark for a fresh compatibility warning", async ({

@@ -13,6 +13,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Fixed
 
 - **Pause this site and reload** reloads the tab the popup was opened for, instead of the first tab on that site.
+- Pausing a site now also lets the bot-check frames it embeds (Cloudflare Turnstile, Arkose, hCaptcha…) through the fingerprint/CAPTCHA lists. Their own requests used to stay blocked, so a login on a paused site could hang on verification. The popup's network-lists section now says when they are skipped for the current site, and pausing waits for the exception to be in place before the reload.
 - `MutationObserver.takeRecords()` no longer returns records for transient extension DOM markers that observer callbacks already hid.
 - Pausing a site now also stops `window` global stripping there. The globals script never received the paused state because it shared a bridge channel with another script; the iframe attribute normalizer had the same race.
 - Device signal poisoning now recognizes common fonts in CSS font shorthands (`12px "Courier New"`), so `document.fonts.check()` / `load()` treat them as installed instead of falling back to the per-site hash.

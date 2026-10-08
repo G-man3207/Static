@@ -376,7 +376,8 @@
         letter-spacing: 0.8px;
         margin: 0 0 10px;
       }
-      .section-note {
+      .section-note,
+      .paused-note {
         margin: -4px 0 10px;
         color: var(--text-muted);
         font-size: 10px;
@@ -1080,6 +1081,9 @@
         <p class="section-note">
           Static stays focused on probing and fingerprinting. Keep uBlock Origin or Privacy Badger
           alongside it for broad tracker blocking.
+        </p>
+        <p class="paused-note" id="rulesets-paused-note" hidden>
+          Static is paused on this site, so these lists don't apply to this site.
         </p>
         <div id="rulesets"></div>
       </div>

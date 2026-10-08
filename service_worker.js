@@ -269,7 +269,12 @@ const cleanupStaleHeaderRules = async () => {
 // Static's fingerprint/CAPTCHA rulesets are global. Pausing a site must also
 // let that origin's requests through those lists, otherwise "pause and reload"
 // would not fix login/checkout breakage caused by vendor blocking.
-const originPauseAllowRules = new Map(); // hostname -> ruleId
+// Each paused host gets two rules: "initiator" lets through requests the site
+// starts itself (including from its workers); "frames" lets through everything
+// inside its pages, because bot-check iframes it embeds (Turnstile, Arkose…)
+// make their own requests with their own origin as the initiator.
+const PAUSE_ALLOW_KINDS = ["initiator", "frames"];
+const originPauseAllowRules = new Map(); // "<kind>:<hostname>" -> ruleId
 let pauseAllowNextRuleId = PAUSE_ALLOW_RULE_ID_BASE;
 
 const hostnameForPauseAllow = (origin) => {
@@ -300,15 +305,24 @@ const nextPauseAllowRuleId = (usedIds) => {
   return null;
 };
 
-const pauseAllowRuleForHostname = (ruleId, hostname) => ({
-  action: { type: "allow" },
-  condition: {
-    initiatorDomains: [hostname],
-    resourceTypes: ALL_RESOURCE_TYPES,
-  },
-  id: ruleId,
-  priority: 1000,
-});
+const pauseAllowRuleFor = (ruleId, key) => {
+  const kind = key.slice(0, key.indexOf(":"));
+  const hostname = key.slice(key.indexOf(":") + 1);
+  if (kind === "frames") {
+    return {
+      action: { type: "allowAllRequests" },
+      condition: { requestDomains: [hostname], resourceTypes: ["main_frame", "sub_frame"] },
+      id: ruleId,
+      priority: 1000,
+    };
+  }
+  return {
+    action: { type: "allow" },
+    condition: { initiatorDomains: [hostname], resourceTypes: ALL_RESOURCE_TYPES },
+    id: ruleId,
+    priority: 1000,
+  };
+};
 
 const addDynamicRule = async (rule) => {
   try {
@@ -331,30 +345,36 @@ const addDynamicRule = async (rule) => {
   }
 };
 
-const wantedPauseAllowHostnames = (disabledOrigins) => {
+const wantedPauseAllowKeys = (disabledOrigins) => {
   const wanted = new Set();
   for (const [origin, disabled] of Object.entries(disabledOrigins || {})) {
     if (!disabled) continue;
     const hostname = hostnameForPauseAllow(origin);
-    if (hostname) wanted.add(hostname);
+    if (!hostname) continue;
+    for (const kind of PAUSE_ALLOW_KINDS) wanted.add(`${kind}:${hostname}`);
   }
   return wanted;
 };
 
-const pauseAllowHostnameFromRule = (rule) =>
-  rule.condition && Array.isArray(rule.condition.initiatorDomains)
-    ? rule.condition.initiatorDomains[0]
+const pauseAllowKeyFromRule = (rule) => {
+  const condition = rule.condition || {};
+  if (rule.action && rule.action.type === "allowAllRequests") {
+    return Array.isArray(condition.requestDomains) ? `frames:${condition.requestDomains[0]}` : null;
+  }
+  return Array.isArray(condition.initiatorDomains)
+    ? `initiator:${condition.initiatorDomains[0]}`
     : null;
+};
 
 const keepOrDropLivePauseAllowRule = (rule, wanted, state) => {
-  const hostname = pauseAllowHostnameFromRule(rule);
-  if (!hostname || !wanted.has(hostname) || state.seenHostnames.has(hostname)) {
+  const key = pauseAllowKeyFromRule(rule);
+  if (!key || !wanted.has(key) || state.seenKeys.has(key)) {
     state.removeRuleIds.push(rule.id);
     state.usedIds.delete(rule.id);
     return;
   }
-  state.seenHostnames.add(hostname);
-  originPauseAllowRules.set(hostname, rule.id);
+  state.seenKeys.add(key);
+  originPauseAllowRules.set(key, rule.id);
   if (rule.id >= pauseAllowNextRuleId) {
     pauseAllowNextRuleId =
       rule.id >= PAUSE_ALLOW_RULE_ID_MAX ? PAUSE_ALLOW_RULE_ID_BASE : rule.id + 1;
@@ -362,19 +382,19 @@ const keepOrDropLivePauseAllowRule = (rule, wanted, state) => {
 };
 
 const addMissingPauseAllowRules = async (wanted, usedIds) => {
-  for (const hostname of wanted) {
-    if (originPauseAllowRules.has(hostname)) continue;
+  for (const key of wanted) {
+    if (originPauseAllowRules.has(key)) continue;
     const ruleId = nextPauseAllowRuleId(usedIds);
     if (ruleId == null) break;
-    const added = await addDynamicRule(pauseAllowRuleForHostname(ruleId, hostname));
+    const added = await addDynamicRule(pauseAllowRuleFor(ruleId, key));
     if (!added) continue;
     usedIds.add(ruleId);
-    originPauseAllowRules.set(hostname, ruleId);
+    originPauseAllowRules.set(key, ruleId);
   }
 };
 
 const reconcilePauseAllowRules = async (disabledOrigins) => {
-  const wanted = wantedPauseAllowHostnames(disabledOrigins);
+  const wanted = wantedPauseAllowKeys(disabledOrigins);
   let live;
   try {
     live = await chrome.declarativeNetRequest.getDynamicRules();
@@ -385,7 +405,7 @@ const reconcilePauseAllowRules = async (disabledOrigins) => {
 
   const state = {
     removeRuleIds: [],
-    seenHostnames: new Set(),
+    seenKeys: new Set(),
     usedIds: new Set(live.map((rule) => rule.id)),
   };
   originPauseAllowRules.clear();
@@ -1388,7 +1408,9 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
       for (const key of pausedOriginsLike(origin, disabled_origins)) delete disabled_origins[key];
     }
     await chrome.storage.local.set({ disabled_origins });
+    // Both must be in place before the popup reloads the tab.
     await syncContentScripts();
+    await reconcilePauseAllowRulesFromStorage();
     if (disabled) {
       await removeOriginHeaderRule(origin);
     }
