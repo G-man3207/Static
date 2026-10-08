@@ -717,7 +717,9 @@ const renderSiteSection = (resp) => {
         origin: resp.origin,
       });
       renderSiteStatus(!enabled);
-      await pushConfigUpdateToActiveTab();
+      // A paused site has no Static code left to update, so both directions
+      // take effect on reload. The handler re-registered the scripts first.
+      await reloadOriginTab(resp.origin);
     } catch (e) {
       console.error("[Static] site toggle failed", e);
       toggle.checked = !enabled;
@@ -798,6 +800,25 @@ const renderDiagnosticsSection = (resp) => {
       await pushConfigUpdateToActiveTab();
     } catch (e) {
       console.error("[Static] diagnostics toggle failed", e);
+      toggle.checked = !desired;
+    }
+  });
+};
+
+const renderResearchLoggingSection = (resp) => {
+  const toggle = document.getElementById("research-logging-toggle");
+  toggle.checked = !!(resp && resp.researchLogging);
+
+  toggle.addEventListener("change", async () => {
+    const desired = toggle.checked;
+    try {
+      const saved = await chrome.runtime.sendMessage({
+        enabled: desired,
+        type: "static_set_research_logging",
+      });
+      toggle.checked = !!(saved && saved.enabled);
+    } catch (e) {
+      console.error("[Static] research logging toggle failed", e);
       toggle.checked = !desired;
     }
   });
@@ -998,6 +1019,7 @@ const renderRulesets = (enabledArr, counts) => {
   renderSiteSection(details);
   renderNoiseSection(details);
   renderDiagnosticsSection(details);
+  renderResearchLoggingSection(details);
   renderFingerprintSection(details);
   renderReplaySection(details);
   renderRulesets(enabledArr, counts);

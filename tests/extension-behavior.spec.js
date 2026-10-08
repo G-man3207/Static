@@ -2,6 +2,7 @@
 const http = require("http");
 const { expect, test } = require("./helpers/extension-fixture");
 const { expectApiSurface, getApiSurface } = require("./helpers/api-surface");
+const { staticPageTraces } = require("./helpers/extension");
 const { visibleContentRatio } = require("./helpers/png");
 
 const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
@@ -280,10 +281,36 @@ test("popup site toggle keeps its status line in sync", async ({ extension, serv
   await toggle.evaluate((input) => input.click());
   await expect(status).toHaveText("Paused. This site can see installed extensions again.");
   await expect.poll(isPaused).toBe(true);
+  // The toggle reloads the site tab, which then has no Static page code.
+  await expect.poll(async () => (await staticPageTraces(page)).dom).toEqual([]);
 
   await toggle.evaluate((input) => input.click());
   await expect(status).toHaveText("On. Pause it if the page looks broken.");
   await expect.poll(isPaused).toBe(false);
+  await expect.poll(async () => (await staticPageTraces(page)).dom.length).toBeGreaterThan(0);
+});
+
+test("popup research logging toggle loads the adaptive logger", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.bringToFront();
+  const tabId = await activeHttpTabId(extension.serviceWorker);
+  const popupPage = await openPopupForTab(extension, tabId);
+  const toggle = popupPage.locator("#research-logging-toggle");
+
+  await expect(toggle).not.toBeChecked();
+  await expect(popupPage.locator("#research-desc")).toContainText("Applies when the page reloads.");
+  await toggle.evaluate((input) => input.click());
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate(async () =>
+        (await chrome.scripting.getRegisteredContentScripts())
+          .find((script) => script.id === "a-main")
+          .js.includes("block_adaptive.js")
+      )
+    )
+    .toBe(true);
+  await expect(toggle).toBeChecked();
 });
 
 test("popup recovery card upgrades when a compatibility warning is stored", async ({

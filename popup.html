@@ -925,7 +925,7 @@
             </div>
             <div class="desc" id="fingerprint-desc">
               Weaken fingerprint reads with a plausible per-site persona instead of blocking them.
-              Stable for each origin, different across origins.
+              Stable for each origin, different across origins. Applies when the page reloads.
             </div>
           </div>
           <select
@@ -959,7 +959,8 @@
             </div>
             <div class="desc" id="replay-desc">
               When a replay SDK is detected, mask what its listeners see and optionally add local
-              motion noise. No fake traffic is sent to replay vendors.
+              motion noise. No fake traffic is sent to replay vendors. Applies when the page
+              reloads.
             </div>
           </div>
           <select
@@ -1006,6 +1007,42 @@
               id="diagnostics-toggle"
               aria-labelledby="diagnostics-title-text"
               aria-describedby="diagnostics-desc"
+            />
+            <span class="switch-bg"></span>
+          </label>
+        </div>
+        <div class="diagnostics-row">
+          <div class="col">
+            <div class="ttl" id="research-title">
+              <span id="research-title-text">Research logging</span>
+              <button
+                class="help-tip"
+                id="research-help"
+                type="button"
+                data-tip="Wraps page timers, promises, and listeners to attribute data collection to its source. Pages can detect the wrappers, so leave it off unless you are investigating a site."
+                aria-label="Research logging details"
+                aria-describedby="research-help-text"
+              >
+                ?
+              </button>
+              <span class="sr-only" id="research-help-text"
+                >Wraps page timers, promises, and listeners to attribute data collection to its
+                source. Pages can detect the wrappers, so leave it off unless you are investigating
+                a site.</span
+              >
+            </div>
+            <div class="desc" id="research-desc">
+              Record how sites watch the page, for the adaptive signals in the probe log. Off by
+              default: it slows heavy pages and lets sites detect Static. Applies when the page
+              reloads.
+            </div>
+          </div>
+          <label class="switch">
+            <input
+              type="checkbox"
+              id="research-logging-toggle"
+              aria-labelledby="research-title-text"
+              aria-describedby="research-desc"
             />
             <span class="switch-bg"></span>
           </label>
