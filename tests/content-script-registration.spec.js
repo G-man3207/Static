@@ -3,6 +3,7 @@
 // docs/superpowers/specs/2026-10-08-on-demand-content-scripts-design.md).
 const { expect, test } = require("./helpers/extension-fixture");
 const { staticPageTraces } = require("./helpers/extension");
+const { startFixtureServer } = require("./helpers/server");
 
 const registeredMain = (extension) =>
   extension.serviceWorker.evaluate(async () =>
@@ -73,6 +74,58 @@ test("a paused site gets no Static page code while other sites keep it", async (
   const traces = await staticPageTraces(other);
   expect(traces.dom.length).toBeGreaterThan(0);
   expect(traces.timer).toContain("block_adaptive.js");
+});
+
+test("pausing one port pauses the host, and the popup state and resume follow the host", async ({
+  extension,
+  server,
+}) => {
+  const other = await startFixtureServer({ "/blank.html": "<!doctype html><body>other</body>" });
+  try {
+    await extension.serviceWorker.evaluate(
+      (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+      server.origin
+    );
+    const page = await extension.context.newPage();
+    await page.goto(other.url("/blank.html"));
+    expect((await staticPageTraces(page)).dom).toEqual([]);
+
+    const tabId = await extension.serviceWorker.evaluate(
+      async (url) => (await chrome.tabs.query({ url }))[0].id,
+      other.url("/blank.html")
+    );
+    const details = await extension.serviceWorker.evaluate(
+      (id) =>
+        new Promise((resolve) => {
+          messageHandlers.static_get_details({ tabId: id }, {}, resolve);
+        }),
+      tabId
+    );
+    expect(details.disabled).toBe(true);
+    await expect
+      .poll(() =>
+        extension.serviceWorker.evaluate((id) => chrome.action.getBadgeText({ tabId: id }), tabId)
+      )
+      .toBe("OFF");
+
+    // Resuming from the other port resumes the whole host.
+    await extension.serviceWorker.evaluate(
+      (origin) =>
+        new Promise((resolve) => {
+          messageHandlers.static_set_site_disabled({ disabled: false, origin }, {}, resolve);
+        }),
+      other.origin
+    );
+    expect(
+      await extension.serviceWorker.evaluate(
+        async () => (await chrome.storage.local.get({ disabled_origins: {} })).disabled_origins
+      )
+    ).toEqual({});
+    await page.reload();
+    expect((await staticPageTraces(page)).dom.length).toBeGreaterThan(0);
+  } finally {
+    await other.close();
+  }
 });
 
 test("the sync restores registrations after the browser drops them", async ({ extension }) => {

@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Fixed
 
+- **Pause this site and reload** reloads the tab the popup was opened for, instead of the first tab on that site.
 - `MutationObserver.takeRecords()` no longer returns records for transient extension DOM markers that observer callbacks already hid.
 - Pausing a site now also stops `window` global stripping there. The globals script never received the paused state because it shared a bridge channel with another script; the iframe attribute normalizer had the same race.
 - Device signal poisoning now recognizes common fonts in CSS font shorthands (`12px "Courier New"`), so `document.fonts.check()` / `load()` treat them as installed instead of falling back to the per-site hash.
@@ -20,7 +21,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Changed
 
 - The service worker now registers Static's content scripts (`chrome.scripting`) instead of the manifest declaring them, and loads only what is switched on. Device signal poisoning, Replay poisoning, and Research logging each add their script only while on. With default settings, pages no longer see the poisoning script's `RTCPeerConnection` wrapper, and errors in timer callbacks no longer carry `chrome-extension://…/block_adaptive.js` frames that identified Static.
-- Pausing a site removes Static from it entirely once the page reloads: no content scripts are injected there, so bot checks that react to patched browser functions find none. Frames a paused site creates (`about:blank`, `srcdoc`, `data:`, `blob:`) are paused with it, and pausing ignores ports (`localhost:3000` pauses every `localhost` port).
+- Pausing a site removes Static from it entirely once the page reloads: no content scripts are injected there, so bot checks that react to patched browser functions find none. Frames a paused site creates (`about:blank`, `srcdoc`, `data:`, `blob:`) are paused with it. Pausing ignores ports: pausing `localhost:3000` pauses every `localhost` port, the popup and badge show those ports as paused, and resuming any of them resumes the host.
 - The **Protect this site** toggle now reloads the site's tab, like **Pause this site and reload**.
 - Turning on Device signal poisoning, Replay poisoning, or Research logging applies when the page reloads. Turning poisoning or Replay off still applies immediately.
 - Replay SDK detection only runs while Replay poisoning is on, so the **Replay SDK detected here** notice no longer appears with Replay off.

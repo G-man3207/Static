@@ -225,10 +225,15 @@ const resolvePopupTab = async () => {
   return active || null;
 };
 
+// The tab this popup is for, resolved at startup.
+let popupTabId = null;
+
 const reloadOriginTab = async (origin) => {
   if (!origin) return;
   const tabs = await chrome.tabs.query({}).catch(() => []);
-  const match = tabs.find((tab) => tabOrigin(tab) === origin && isHttpUrl(tab.url));
+  // Reload the tab the popup is for; fall back to another tab on that origin.
+  const onOrigin = (tab) => tabOrigin(tab) === origin && isHttpUrl(tab.url);
+  const match = tabs.find((tab) => tab.id === popupTabId && onOrigin(tab)) || tabs.find(onOrigin);
   if (match && match.id != null) await chrome.tabs.reload(match.id);
 };
 
@@ -1003,6 +1008,7 @@ const renderRulesets = (enabledArr, counts) => {
 (async () => {
   const queriedTabId = tabIdFromQuery();
   const tab = queriedTabId != null ? { id: queriedTabId } : await resolvePopupTab();
+  popupTabId = tab ? tab.id : null;
   const detailsPromise = tab
     ? chrome.runtime.sendMessage({ type: "static_get_details", tabId: tab.id }).catch(() => null)
     : Promise.resolve(null);

@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- integration coverage is easier to maintain in one fixture-backed file */
+/* global messageHandlers */
 const http = require("http");
 const { expect, test } = require("./helpers/extension-fixture");
 const { expectApiSurface, getApiSurface } = require("./helpers/api-surface");
@@ -291,6 +292,30 @@ test("popup site toggle keeps its status line in sync", async ({ extension, serv
   await expect(status).toHaveText("On. Pause it if the page looks broken.");
   await expect.poll(isPaused).toBe(false);
   await expect.poll(async () => (await staticPageTraces(page)).dom.length).toBeGreaterThan(0);
+});
+
+test("popup site toggle reloads the tab the popup is for, not another tab on the site", async ({
+  extension,
+  server,
+}) => {
+  const first = await extension.context.newPage();
+  await first.goto(server.url("/blank.html?first"));
+  const second = await extension.context.newPage();
+  await second.goto(server.url("/blank.html?second"));
+  for (const page of [first, second]) {
+    await page.evaluate(() => {
+      window.__notReloaded = true;
+    });
+  }
+  const secondTabId = await extension.serviceWorker.evaluate(
+    async (url) => (await chrome.tabs.query({ url }))[0].id,
+    server.url("/blank.html?second")
+  );
+  const popupPage = await openPopupForTab(extension, secondTabId);
+
+  await popupPage.locator("#site-toggle").evaluate((input) => input.click());
+  await expect.poll(() => second.evaluate(() => window.__notReloaded === true)).toBe(false);
+  expect(await first.evaluate(() => window.__notReloaded === true)).toBe(true);
 });
 
 test("popup research logging toggle loads the adaptive logger", async ({ extension, server }) => {
@@ -3000,20 +3025,17 @@ test("per-site disable stops blocking extension probes", async ({ extension, ser
   const probedId = "nngceckbapebfimnlniiiahkandclblb";
   const probeUrl = `chrome-extension://${probedId}/manifest.json`;
 
-  // Set disabled state BEFORE navigation
+  // Pause the already-open page. After a reload a paused site gets no Static
+  // code at all (content-script-registration.spec.js); this covers the
+  // in-page pause that the open page relies on until then.
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
   await extension.serviceWorker.evaluate(
-    (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
-      }),
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
   );
 
-  // Navigate fresh — bridge should check disabled_origins on init
-  const page = await extension.context.newPage();
-  await page.goto(server.url("/blank.html"));
-
-  // Wait for bridge to initialize and propagate disabled state
+  // Wait for the bridge to propagate the disabled state
   await page.waitForTimeout(500);
 
   // Fire a probe — when disabled, the fetch passes through to origFetch
@@ -3042,13 +3064,12 @@ test("per-site disable also stops global stripping and iframe attribute normaliz
   extension,
   server,
 }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
   await extension.serviceWorker.evaluate(
     (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
   );
-
-  const page = await extension.context.newPage();
-  await page.goto(server.url("/blank.html"));
   await page.waitForTimeout(500);
 
   const result = await page.evaluate(() => {
@@ -3074,16 +3095,12 @@ test("per-site disable stops blocking active vectors and CSSOM probes", async ({
   const probedId = "nngceckbapebfimnlniiiahkandclblb";
   const probeUrl = `chrome-extension://${probedId}/manifest.json`;
 
-  await extension.serviceWorker.evaluate(
-    (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
-      }),
-    server.origin
-  );
-
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
   await page.waitForTimeout(500);
 
   const vectors = await page.evaluate(async (url) => {
@@ -3194,19 +3211,29 @@ test("per-site disable stops DOM scrubber from stripping extension markers", asy
   extension,
   server,
 }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  // The scrubber hears about a live pause through the persona update the
+  // worker's pause handler sends to the site's tabs, as the popup does.
   await extension.serviceWorker.evaluate(
     (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
+      new Promise((resolve) => {
+        messageHandlers.static_set_site_disabled({ disabled: true, origin }, {}, resolve);
       }),
     server.origin
   );
-
-  const page = await extension.context.newPage();
-  await page.goto(server.url("/dom.html"));
   await page.waitForTimeout(500);
 
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
+    // Same markers as /dom.html, added after the pause reached the page.
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      '<div id="target" data-grammarly-extension="1" data-lastpass-root="1" class="keep grammarly-card lastpass-panel"></div>' +
+        '<grammarly-card id="custom-card"></grammarly-card>'
+    );
+    await new Promise((resolve) => {
+      setTimeout(resolve, 300);
+    });
     const target = document.getElementById("target");
     const custom = document.getElementById("custom-card");
     return {
@@ -3228,17 +3255,13 @@ test("per-site disable stops replay poisoning while allowing detection logging",
   extension,
   server,
 }) => {
-  await extension.serviceWorker.evaluate(
-    (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
-        replay_mode: "mask",
-      }),
-    server.origin
-  );
-
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
   const page = await extension.context.newPage();
   await page.goto(server.url("/replay.html"));
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
   await page.waitForTimeout(500);
 
   const result = await page.evaluate(() => {
@@ -3256,18 +3279,16 @@ test("per-site disable stops replay poisoning while allowing detection logging",
 });
 
 test("per-site disable stops fingerprint masking", async ({ extension, server }) => {
-  await extension.serviceWorker.evaluate(
-    (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
-        fingerprint_mode: "mask",
-      }),
-    server.origin
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
   );
-
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
-  await page.waitForTimeout(300);
+  await extension.serviceWorker.evaluate(
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
+    server.origin
+  );
+  await page.waitForTimeout(500);
 
   const result = await page.evaluate(() => ({
     platform: navigator.platform,

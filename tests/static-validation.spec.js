@@ -344,6 +344,24 @@ test("paused origins become port-free host patterns or keep the in-page pause", 
   expect(isolated.excludeMatches).toEqual(main.excludeMatches);
 });
 
+test("pause lookups treat the host as the unit and unpatternable origins as exact keys", () => {
+  const utils = loadServiceWorkerUtils();
+  const paused = {
+    "http://localhost:3000": true,
+    "http://[::1]:8080": true,
+    "https://resumed.example": false,
+  };
+  expect(utils.isOriginPaused("http://localhost:5173", paused)).toBe(true);
+  expect(utils.isOriginPaused("https://localhost", paused)).toBe(false);
+  expect(utils.isOriginPaused("http://[::1]:8080", paused)).toBe(true);
+  expect(utils.isOriginPaused("http://[::1]:9090", paused)).toBe(false);
+  expect(utils.isOriginPaused("https://resumed.example", paused)).toBe(false);
+  expect(utils.isOriginPaused(null, paused)).toBe(false);
+  expect(plain(utils.pausedOriginsLike("http://localhost:8080", paused))).toEqual([
+    "http://localhost:3000",
+  ]);
+});
+
 test("content-script sync check ignores fields the browser leaves out", () => {
   const utils = loadServiceWorkerUtils();
   const desired = utils.contentScriptRegistrationsFor(utils.CONTENT_SCRIPT_SETTINGS);

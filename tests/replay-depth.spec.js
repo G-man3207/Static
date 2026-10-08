@@ -4,17 +4,15 @@ const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const probedUrl = (path = "/manifest.json") => `chrome-extension://${PROBED_ID}${path}`;
 
 test("replay detection does not fire while per-site disabled", async ({ extension, server }) => {
+  // Pause the open page live; /blank.html has no recorder of its own, so any
+  // replay_log entry could only come from the probe below.
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
   await extension.serviceWorker.evaluate(
-    (origin) =>
-      chrome.storage.local.set({
-        disabled_origins: { [origin]: true },
-        replay_mode: "mask",
-      }),
+    (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
   );
-
-  const page = await extension.context.newPage();
-  await page.goto(server.url("/replay.html"));
   await page.waitForTimeout(500);
 
   // Script src setter should not trigger replay detection when disabled

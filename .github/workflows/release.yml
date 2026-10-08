@@ -74,11 +74,23 @@ jobs:
           node -e '
             const fs = require("fs");
             const path = require("path");
+            const vm = require("vm");
             const root = process.argv[1];
-            const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-            const required = new Set(["manifest.json"]);
-            for (const cs of manifest.content_scripts || []) {
-              for (const js of cs.js || []) required.add(js);
+            const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
+            const manifest = JSON.parse(read("manifest.json"));
+            const required = new Set(["manifest.json", "lists.js", "service_worker_utils.js"]);
+            // The service worker registers the content scripts from these lists;
+            // a missing file would leave every site unprotected at runtime.
+            try {
+              const context = vm.createContext({ URL });
+              vm.runInContext(read("lists.js"), context);
+              vm.runInContext(read("service_worker_utils.js"), context);
+              const utils = context.__static_sw_utils__;
+              for (const script of utils.MAIN_WORLD_SCRIPTS) required.add(script.file);
+              for (const file of utils.ISOLATED_WORLD_SCRIPTS) required.add(file);
+            } catch (error) {
+              console.error("Cannot read the content-script lists:", error.message);
+              process.exit(1);
             }
             if (manifest.background && manifest.background.service_worker) {
               required.add(manifest.background.service_worker);

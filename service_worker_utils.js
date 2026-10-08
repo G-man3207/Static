@@ -381,6 +381,19 @@ globalThis.__static_sw_utils__ = (() => {
     return `${url.protocol}//${url.hostname}/*`;
   };
 
+  // Pausing works per host (patterns carry no port), so an origin's pause
+  // entries are its own key plus any paused origin with the same pattern.
+  const pausedOriginsLike = (origin, disabledOrigins) => {
+    const pattern = pausedOriginPattern(origin);
+    return Object.keys(disabledOrigins || {}).filter(
+      (key) =>
+        disabledOrigins[key] &&
+        (key === origin || (!!pattern && pausedOriginPattern(key) === pattern))
+    );
+  };
+  const isOriginPaused = (origin, disabledOrigins) =>
+    !!origin && pausedOriginsLike(origin, disabledOrigins).length > 0;
+
   const contentScriptRegistrationsFor = (settings) => {
     const disabled = settings.disabled_origins || {};
     const patterns = Object.keys(disabled)
@@ -431,7 +444,9 @@ globalThis.__static_sw_utils__ = (() => {
     MAIN_WORLD_SCRIPTS,
     contentScriptRegistrationsFor,
     contentScriptsInSync,
+    isOriginPaused,
     pausedOriginPattern,
+    pausedOriginsLike,
     enforceCaps,
     ensurePlaybookWeek,
     latestPlaybookComparison,

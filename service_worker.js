@@ -33,6 +33,8 @@ const {
   contentScriptRegistrationsFor,
   contentScriptsInSync,
   enforceCaps,
+  isOriginPaused,
+  pausedOriginsLike,
   ensurePlaybookWeek,
   latestPlaybookSnapshot,
   mergeCounts,
@@ -472,7 +474,7 @@ const updateBadgeForTab = async (tabId, tabUrl) => {
       compat_log: {},
       disabled_origins: {},
     });
-    if (disabled_origins[origin]) {
+    if (isOriginPaused(origin, disabled_origins)) {
       chrome.action.setBadgeText({ tabId, text: "OFF" }).catch(() => {});
       chrome.action.setBadgeBackgroundColor({ tabId, color: DISABLED_BADGE_COLOR }).catch(() => {});
       return;
@@ -1209,7 +1211,7 @@ const detailsResponseFor = async (tabId, stored) => {
   );
   const loggedOrigins = loggedOriginsFor(stored);
   const disabledOrigins = stored.disabled_origins || {};
-  const disabled = !!(origin && disabledOrigins[origin]);
+  const disabled = isOriginPaused(origin, disabledOrigins);
   const fingerprintMode = stored.fingerprint_mode === "mask" ? "mask" : "off";
   const fingerprintPersona = await fingerprintPersonaForDetails(origin, fingerprintMode, disabled);
 
@@ -1278,7 +1280,7 @@ const handleGetPersona = (_msg, sender, sendResponse) => {
       replay_mode: "off",
     });
     const origin = rememberSenderOrigin(sender);
-    const disabled = !!(origin && stored.disabled_origins[origin]);
+    const disabled = isOriginPaused(origin, stored.disabled_origins);
     const fingerprintMode = stored.fingerprint_mode === "mask" ? "mask" : "off";
     const fingerprintPersona =
       fingerprintMode === "mask" ? await fingerprintPersonaFor(origin) : null;
@@ -1382,20 +1384,21 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
     if (disabled) {
       disabled_origins[origin] = true;
     } else {
-      delete disabled_origins[origin];
+      // Pausing works per host, so resuming clears every entry for this host.
+      for (const key of pausedOriginsLike(origin, disabled_origins)) delete disabled_origins[key];
     }
     await chrome.storage.local.set({ disabled_origins });
     await syncContentScripts();
     if (disabled) {
       await removeOriginHeaderRule(origin);
     }
-    // Notify the tab for this origin so content scripts can update immediately
+    // Notify tabs on this host (any port) so content scripts update immediately
     const tabs = await chrome.tabs.query({});
     await Promise.all(
       tabs.map((tab) => {
         if (tab.id == null) return null;
         updateBadgeForTab(tab.id, tab.url).catch(() => {});
-        if (originFromUrl(tab.url) === origin) {
+        if (isOriginPaused(originFromUrl(tab.url), { [origin]: true })) {
           // Send direct disabled update to MAIN world scripts AND persona update to bridge
           return Promise.all([
             chrome.tabs
