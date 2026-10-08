@@ -9,6 +9,9 @@ test("replay detection does not fire while per-site disabled", async ({ extensio
   await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
   await extension.serviceWorker.evaluate(
     (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin

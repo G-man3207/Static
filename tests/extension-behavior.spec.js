@@ -3030,6 +3030,9 @@ test("per-site disable stops blocking extension probes", async ({ extension, ser
   // in-page pause that the open page relies on until then.
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
   await extension.serviceWorker.evaluate(
     (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
@@ -3066,6 +3069,9 @@ test("per-site disable also stops global stripping and iframe attribute normaliz
 }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
   await extension.serviceWorker.evaluate(
     (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
@@ -3097,6 +3103,9 @@ test("per-site disable stops blocking active vectors and CSSOM probes", async ({
 
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
   await extension.serviceWorker.evaluate(
     (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
@@ -3213,6 +3222,9 @@ test("per-site disable stops DOM scrubber from stripping extension markers", asy
 }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
   // The scrubber hears about a live pause through the persona update the
   // worker's pause handler sends to the site's tabs, as the popup does.
   await extension.serviceWorker.evaluate(
@@ -3258,6 +3270,9 @@ test("per-site disable stops replay poisoning while allowing detection logging",
   await extension.serviceWorker.evaluate(() => chrome.storage.local.set({ replay_mode: "mask" }));
   const page = await extension.context.newPage();
   await page.goto(server.url("/replay.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
   await extension.serviceWorker.evaluate(
     (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
@@ -3284,6 +3299,9 @@ test("per-site disable stops fingerprint masking", async ({ extension, server })
   );
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
+  // Let the bridge finish its startup config first; a late reply to its
+  // first request would otherwise undo the pause below.
+  await page.waitForTimeout(500);
   await extension.serviceWorker.evaluate(
     (origin) => chrome.storage.local.set({ disabled_origins: { [origin]: true } }),
     server.origin
