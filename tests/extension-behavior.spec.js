@@ -3117,6 +3117,42 @@ test("DOM marker scrubber hides transient markers from page MutationObservers", 
   expect(serialized).not.toContain("onepassword-pill");
 });
 
+test("DOM markers stay hidden from page MutationObservers with Research logging on", async ({
+  extension,
+  server,
+}) => {
+  // Both the adaptive logger and the decoy script wrap MutationObserver then.
+  await enableResearchLogging(extension);
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const seen = await page.evaluate(async () => {
+    const names = [];
+    let calls = 0;
+    const observer = new MutationObserver((records) => {
+      calls += 1;
+      for (const record of records) {
+        names.push(...[...record.addedNodes].map((node) => node.nodeName));
+      }
+    });
+    observer.observe(document.body, { childList: true });
+    document.body.appendChild(document.createElement("grammarly-card"));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    const callsAfterMarkerOnly = calls;
+    document.body.appendChild(document.createElement("section"));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    observer.disconnect();
+    return { callsAfterMarkerOnly, names };
+  });
+
+  // A marker-only mutation never reaches the page callback; ordinary ones do.
+  expect(seen).toEqual({ callsAfterMarkerOnly: 0, names: ["SECTION"] });
+});
+
 test("MutationObserver takeRecords hides transient extension markers", async ({
   extension,
   server,

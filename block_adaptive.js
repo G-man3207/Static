@@ -48,12 +48,6 @@
     "focus",
     "blur",
   ]);
-  const DOM_MARKER_ATTR_RE =
-    /^(?:data-(?:1password(?:-|$)|1p(?:-|$)|onepassword(?:-|$)|op(?:-|$)|lastpass(?:-|$)|lp-(?:ignore|id|tab)|dashlane(?:-|$)|dashlanecreated|grammarly(?:-|$)|gramm(?:-|$)|gr-c-s-(?:loaded|check-loaded)$|honey(?:-|$)|honeyextension(?:-|$)|keeper(?:-|$)|roboform(?:-|$)|nordpass(?:-|$)|bitwarden(?:-|$)|protonpass(?:-|$)|keepassxc(?:-|$)|darkreader(?:-|$)|bw(?:-|$)|lt(?:-|$)|languagetool(?:-|$))|__lpform_)/i;
-  const DOM_MARKER_TAG_RE =
-    /^(?:grammarly-|lastpass-|dashlane-|honey-|onepassword-|protonpass-|keepassxc-|darkreader-|bitwarden-)/i;
-  const DOM_MARKER_CLASS_RE =
-    /^(?:grammarly(?:$|-)|lastpass(?:$|-)|__lpform|lpform|dashlane(?:$|-)|honey(?:$|-)|onepassword(?:$|-)|protonpass(?:$|-)|keepassxc(?:$|-)|darkreader(?:$|-)|bitwarden(?:$|-))/i;
   const reportedVendorSignals = new Set();
   const instrumentedFingerprintGlobals = new WeakSet();
   const instrumentedSiftQueues = new WeakSet();
@@ -1066,80 +1060,14 @@
   const patchMutationObserver = () => {
     if (typeof MutationObserver !== "function") return;
     const OrigMutationObserver = MutationObserver;
-    const classStringHasMarker = (value) =>
-      String(value || "")
-        .split(/\s+/)
-        .some((className) => DOM_MARKER_CLASS_RE.test(className));
-    const elementHasMarkerClass = (node) => {
-      try {
-        if (!node || !node.classList) return false;
-        for (const className of node.classList) {
-          if (DOM_MARKER_CLASS_RE.test(className)) return true;
-        }
-      } catch {}
-      return false;
-    };
-    const isDomMarkerElement = (node) => {
-      try {
-        if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
-        const tagName = String(node.tagName || "").toLowerCase();
-        if (DOM_MARKER_TAG_RE.test(tagName)) return true;
-        if (elementHasMarkerClass(node)) return true;
-        for (const attr of node.attributes || []) {
-          if (DOM_MARKER_ATTR_RE.test(attr.name)) return true;
-        }
-      } catch {}
-      return false;
-    };
-    const nodeListHasMarker = (nodes) => {
-      try {
-        for (const node of nodes || []) {
-          if (isDomMarkerElement(node)) return true;
-        }
-      } catch {}
-      return false;
-    };
-    const shouldHideMutationRecord = (record) => {
-      try {
-        if (!record) return false;
-        if (record.type === "childList") {
-          return nodeListHasMarker(record.addedNodes) || nodeListHasMarker(record.removedNodes);
-        }
-        if (record.type !== "attributes") return false;
-        const name = U.attrLocalName(null, record.attributeName);
-        if (DOM_MARKER_ATTR_RE.test(name)) return true;
-        if (name !== "class") return false;
-        return classStringHasMarker(record.oldValue) || elementHasMarkerClass(record.target);
-      } catch {
-        return false;
-      }
-    };
-    const filteredMutationRecordsFor = (records) => {
-      let filtered = null;
-      for (let index = 0; index < records.length; index++) {
-        const record = records[index];
-        if (shouldHideMutationRecord(record)) {
-          if (!filtered) filtered = Array.prototype.slice.call(records, 0, index);
-          continue;
-        }
-        if (filtered) filtered.push(record);
-      }
-      return filtered || records;
-    };
     const WrappedMutationObserver = function MutationObserver(callback) {
       if (!new.target) return Reflect.apply(OrigMutationObserver, this, arguments);
+      // Hiding extension DOM-marker records from page observers is done by
+      // block_element_decoys.js, which wraps this constructor in turn.
       const callbackSource = captureAdaptiveSource();
-      const callbackForPage =
-        typeof callback === "function"
-          ? function mutationObserverCallback(records, observerForCallback) {
-              const filteredRecords = filteredMutationRecordsFor(records);
-              if (!filteredRecords.length) return undefined;
-              return callback.call(this, filteredRecords, observerForCallback);
-            }
-          : callback;
       const observer = Reflect.construct(
         OrigMutationObserver,
-        [wrapAsyncCallback(callbackForPage, callbackSource, "mutation-observer")],
+        [wrapAsyncCallback(callback, callbackSource, "mutation-observer")],
         new.target
       );
       const origObserve = observer.observe;

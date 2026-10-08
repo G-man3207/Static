@@ -117,7 +117,7 @@ The `static_set_site_disabled`, `static_set_fingerprint` and `static_set_replay`
 
 ## Implementation note (2026-10-08)
 
-`block_adaptive.js` turned out not to be purely observing. Its `MutationObserver` wrapper also hid extension DOM-marker records from page observers, which is part of the DOM-marker defense. That filter now also lives in the always-loaded `block_element_decoys.js` wrapper and covers `takeRecords()` too, so it keeps working with Research logging off. `block_adaptive.js` keeps its identical copy for now, to avoid conflicting with uncommitted work on the same wrapper, and a static test keeps the two regex sets identical.
+`block_adaptive.js` turned out not to be purely observing. Its `MutationObserver` wrapper also hid extension DOM-marker records from page observers, which is part of the DOM-marker defense. That filter moved into the always-loaded `block_element_decoys.js` wrapper (which also covers `takeRecords()`), so it keeps working with Research logging off. `block_adaptive.js` first kept an identical copy, to avoid conflicting with then-uncommitted work on the same wrapper; the copy was removed once that work landed on this branch.
 
 ## Risks
 
