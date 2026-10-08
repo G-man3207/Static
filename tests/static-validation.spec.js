@@ -19,7 +19,7 @@ const urlFiltersFor = (filePath) => {
 };
 
 const loadServiceWorkerUtils = () => {
-  const context = vm.createContext({});
+  const context = vm.createContext({ URL });
   vm.runInContext(readText("lists.js"), context);
   vm.runInContext(readText("service_worker_utils.js"), context);
   return context.__static_sw_utils__;
@@ -267,6 +267,99 @@ test("manifest references existing files and keeps content-script worlds separat
   const manifest = readJson("manifest.json");
   expectManifestFilesToExist(manifest);
   expectContentScriptWorlds(manifest);
+});
+
+const plain = (value) => JSON.parse(JSON.stringify(value));
+const coreMainWorldScripts = [
+  "block_utils.js",
+  "block.js",
+  "block_vectors.js",
+  "block_iframe_attrs.js",
+  "block_style_vectors.js",
+  "block_element_decoys.js",
+  "block_globals.js",
+];
+
+test("content-script registrations load only switched-on page scripts", () => {
+  const utils = loadServiceWorkerUtils();
+  const defaults = plain(utils.contentScriptRegistrationsFor(utils.CONTENT_SCRIPT_SETTINGS));
+  expect(defaults.map((script) => [script.id, script.world])).toEqual([
+    ["a-main", "MAIN"],
+    ["b-isolated", "ISOLATED"],
+  ]);
+  expect(defaults[0].js).toEqual(coreMainWorldScripts);
+  expect(defaults[1].js).toEqual(["lists.js", "bridge.js", "dom_scrubber.js"]);
+  for (const script of defaults) {
+    expect(script).toMatchObject({
+      allFrames: true,
+      excludeMatches: [],
+      matchOriginAsFallback: true,
+      matches: ["<all_urls>"],
+      persistAcrossSessions: true,
+      runAt: "document_start",
+    });
+  }
+
+  const allOn = plain(
+    utils.contentScriptRegistrationsFor({
+      fingerprint_mode: "mask",
+      replay_mode: "chaos",
+      research_logging: true,
+    })
+  );
+  expect(allOn[0].js).toEqual(expectedMainWorldScripts);
+
+  const legacy = plain(
+    utils.contentScriptRegistrationsFor({
+      fingerprint_mode: "bogus",
+      replay_mode: "bogus",
+      research_logging: "yes",
+    })
+  );
+  expect(legacy[0].js).toEqual(coreMainWorldScripts);
+});
+
+test("paused origins become port-free host patterns or keep the in-page pause", () => {
+  const utils = loadServiceWorkerUtils();
+  expect(utils.pausedOriginPattern("https://chatgpt.com")).toBe("https://chatgpt.com/*");
+  expect(utils.pausedOriginPattern("http://localhost:3000")).toBe("http://localhost/*");
+  expect(utils.pausedOriginPattern("https://bücher.example")).toBe(
+    "https://xn--bcher-kva.example/*"
+  );
+  for (const origin of ["http://[::1]:8080", "null", "garbage", "file:///tmp/a.html", ""]) {
+    expect(utils.pausedOriginPattern(origin), origin).toBeNull();
+  }
+
+  const [main, isolated] = plain(
+    utils.contentScriptRegistrationsFor({
+      disabled_origins: {
+        "http://[::1]:8080": true,
+        "http://localhost:3000": true,
+        "http://localhost:8080": true,
+        "https://chatgpt.com": true,
+        "https://resumed.example": false,
+      },
+    })
+  );
+  expect(main.excludeMatches).toEqual(["http://localhost/*", "https://chatgpt.com/*"]);
+  expect(isolated.excludeMatches).toEqual(main.excludeMatches);
+});
+
+test("content-script sync check ignores fields the browser leaves out", () => {
+  const utils = loadServiceWorkerUtils();
+  const desired = utils.contentScriptRegistrationsFor(utils.CONTENT_SCRIPT_SETTINGS);
+  const asReported = plain(desired).map((script) => {
+    const copy = { ...script, js: script.js.map((file) => `/${file}`) };
+    delete copy.excludeMatches;
+    return copy;
+  });
+  expect(utils.contentScriptsInSync(asReported, desired)).toBe(true);
+  expect(utils.contentScriptsInSync([], desired)).toBe(false);
+  expect(utils.contentScriptsInSync(asReported.slice(0, 1), desired)).toBe(false);
+  const paused = utils.contentScriptRegistrationsFor({
+    disabled_origins: { "https://a.example": true },
+  });
+  expect(utils.contentScriptsInSync(asReported, paused)).toBe(false);
 });
 
 test("release metadata versions match the latest changelog release", () => {
