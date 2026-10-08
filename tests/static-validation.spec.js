@@ -1033,6 +1033,16 @@ test("block_utils must load first — referenced from all block scripts via __st
 // lists.js / block_adaptive.js DOM-marker pattern sync
 // =========================================================================
 
+test("block_element_decoys.js hides the same DOM markers as block_adaptive.js", () => {
+  // block_element_decoys.js always loads and filters page MutationObserver
+  // records; block_adaptive.js keeps its own copy for Research logging. Both
+  // copies are checked against lists.js through block_adaptive.js below.
+  const patternsIn = (file) =>
+    readText(file).match(/DOM_MARKER_(?:ATTR|TAG|CLASS)_RE\s*=\s*\/[^/]+\/[a-z]*/g);
+  expect(patternsIn("block_element_decoys.js")).toHaveLength(3);
+  expect(patternsIn("block_element_decoys.js")).toEqual(patternsIn("block_adaptive.js"));
+});
+
 test("block_adaptive.js DOM_MARKER_ATTR_RE covers all domStripAttrs from lists.js", () => {
   const listsContext = vm.createContext({});
   vm.runInContext(readText("lists.js"), listsContext);

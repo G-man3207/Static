@@ -64,6 +64,26 @@ const staticPageTraces = (page) =>
     };
   });
 
+// Device signal poisoning loads its script on the next page load and gets its
+// persona asynchronously. Reload, then ask every tab to refresh its persona:
+// the bridge replies only after the page scripts have the new config.
+const enableFingerprintMask = async (extension, page) => {
+  await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.set({ fingerprint_mode: "mask" })
+  );
+  await page.reload();
+  await extension.serviceWorker.evaluate(async () => {
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? null
+          : chrome.tabs.sendMessage(tab.id, { type: "static_persona_update" }).catch(() => {})
+      )
+    );
+  });
+};
+
 async function launchExtension() {
   const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "static-profile-"));
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -107,6 +127,7 @@ async function launchExtension() {
 }
 
 module.exports = {
+  enableFingerprintMask,
   extensionPath,
   launchExtension,
   staticPageTraces,

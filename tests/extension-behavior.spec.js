@@ -8,6 +8,9 @@ const { visibleContentRatio } = require("./helpers/png");
 const PROBED_ID = "nngceckbapebfimnlniiiahkandclblb";
 const OTHER_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const probedUrl = (id = PROBED_ID, path = "/manifest.json") => `chrome-extension://${id}${path}`;
+// The adaptive logger only loads while Research logging is on.
+const enableResearchLogging = (extension) =>
+  extension.serviceWorker.evaluate(() => chrome.storage.local.set({ research_logging: true }));
 
 const activeHttpTabId = (serviceWorker) =>
   serviceWorker.evaluate(async () => {
@@ -1713,6 +1716,7 @@ test("Adaptive observe-only logging records multi-signal collectors without addi
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-positive.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveDone === true)).toBe(true);
@@ -1759,6 +1763,7 @@ test("Adaptive observe-only logging ignores canvas-heavy apps without corroborat
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-canvas-app.html"));
   await expect.poll(() => page.evaluate(() => window.__canvasAppDone === true)).toBe(true);
@@ -1774,6 +1779,7 @@ test("Adaptive observe-only logging records environment snapshot telemetry with 
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-environment-fingerprint.html"));
   await expect
@@ -1813,6 +1819,7 @@ test("Adaptive observe-only logging records WebSocket network corroboration", as
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
   const surface = await page.evaluate(async () => {
@@ -1886,6 +1893,7 @@ test("Adaptive observe-only logging ignores ordinary environment reads with netw
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-environment-app.html"));
   await expect
@@ -1903,6 +1911,7 @@ test("Adaptive runtime detection logs proxied vendor signatures without behavior
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveVendorDone === true)).toBe(true);
@@ -1948,6 +1957,7 @@ test("Adaptive runtime detection recognizes Fingerprint v4 start endpoints", asy
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-fingerprint-v4.html"));
   await expect
@@ -1983,6 +1993,7 @@ test("Adaptive runtime detection recognizes versioned first-party DataDome route
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-versioned-datadome.html"));
   await expect
@@ -2021,6 +2032,7 @@ test("Adaptive runtime detection recognizes custom DataDome tag paths with expli
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-custom-datadome.html"));
   await expect
@@ -2060,6 +2072,7 @@ test("Adaptive runtime detection recognizes HUMAN default first-party sensor rou
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-human-first-party.html"));
   await expect
@@ -2097,6 +2110,7 @@ test("Adaptive runtime detection recognizes HUMAN custom first-party prefixes", 
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-human-custom-prefix.html"));
   await expect
@@ -2135,6 +2149,7 @@ test("Adaptive runtime detection recognizes HUMAN ABR custom sensor endpoints fr
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-signatures-human-abr-custom-endpoint.html"));
   await expect
@@ -2173,6 +2188,7 @@ test("Adaptive runtime detection ignores HUMAN ABR lookalikes without exact jsCl
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-benign-human-abr-lookalike.html"));
   await expect
@@ -2190,6 +2206,7 @@ test("Adaptive runtime detection ignores HUMAN init.js lookalikes without matchi
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-benign-human-prefix-lookalike.html"));
   await expect
@@ -2207,6 +2224,7 @@ test("Adaptive runtime detection ignores partial vendor lookalikes", async ({
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-benign.html"));
   await expect
@@ -2224,6 +2242,7 @@ test("Adaptive behavior logging attributes external collector bundles by script 
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-module-runtime.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveModuleDone === true)).toBe(true);
@@ -2268,6 +2287,7 @@ test("Adaptive behavior logging attributes dynamic module collectors by redacted
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-dynamic-import.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveDynamicDone === true)).toBe(true);
@@ -2311,6 +2331,7 @@ test("Adaptive behavior logging falls back to runtime labels when async collecto
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-runtime-fallback.html"));
   await expect
@@ -2355,6 +2376,7 @@ test("Adaptive behavior logging attributes postMessage listener objects by regis
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-message-listener.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveMessageDone === true)).toBe(true);
@@ -2399,6 +2421,7 @@ test("Adaptive behavior logging attributes onmessage handlers through runtime so
   extension,
   server,
 }) => {
+  await enableResearchLogging(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/adaptive-onmessage-runtime.html"));
   await expect.poll(() => page.evaluate(() => window.__adaptiveOnmessageDone === true)).toBe(true);
@@ -2943,6 +2966,34 @@ test("DOM marker scrubber hides transient markers from page MutationObservers", 
   expect(serialized).not.toContain("data-dashlanecreated");
   expect(serialized).not.toContain("grammarly-card");
   expect(serialized).not.toContain("onepassword-pill");
+});
+
+test("MutationObserver takeRecords hides transient extension markers", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const taken = await page.evaluate(() => {
+    const observer = new MutationObserver(() => {});
+    observer.observe(document.body, { attributes: true, childList: true, subtree: true });
+    const marker = document.createElement("grammarly-card");
+    document.body.appendChild(marker);
+    const safe = document.createElement("div");
+    safe.id = "safe-taken";
+    document.body.appendChild(safe);
+    document.body.setAttribute("data-dashlanecreated", "1");
+    const records = observer.takeRecords().map((record) => ({
+      added: [...record.addedNodes].map((node) => node.nodeName),
+      attributeName: record.attributeName,
+      type: record.type,
+    }));
+    observer.disconnect();
+    return records;
+  });
+
+  expect(taken).toEqual([{ added: ["DIV"], attributeName: null, type: "childList" }]);
 });
 
 test("per-site disable stops blocking extension probes", async ({ extension, server }) => {
