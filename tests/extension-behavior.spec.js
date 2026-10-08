@@ -2572,6 +2572,35 @@ test("Adaptive behavior logging attributes onmessage handlers through runtime so
   expect(adaptiveEntry.sources["inline-or-runtime"]).toBeUndefined();
 });
 
+test("Adaptive behavior logging registers callbacks without formatting stack traces", async ({
+  extension,
+  server,
+}) => {
+  await enableResearchLogging(extension);
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/adaptive-stack-hook.html"));
+
+  const formats = await page.evaluate(async () => {
+    await new Promise((resolve) => {
+      Promise.resolve().then(() => {});
+      Promise.reject("rejected").catch(() => {});
+      Promise.resolve().finally(() => {});
+      queueMicrotask(() => {});
+      requestAnimationFrame(() => {});
+      requestIdleCallback(() => {});
+      const interval = setInterval(() => clearInterval(interval), 0);
+      window.addEventListener("message", () => {});
+      window.onmessage = () => {};
+      new MutationObserver(() => {});
+      // Long enough for the vendor runtime scan (every 500 ms) to tick too.
+      setTimeout(resolve, 600);
+    });
+    return window.__stackFormats;
+  });
+
+  expect(formats).toBe(0);
+});
+
 test("listener wrapping preserves removeEventListener for callbacks and listener objects", async ({
   extension,
   server,

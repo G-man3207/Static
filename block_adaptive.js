@@ -170,9 +170,9 @@
     }
   };
 
-  const stackAdaptiveSource = () => {
+  const stackAdaptiveSource = (error = new Error()) => {
     try {
-      const stack = String(new Error().stack || "");
+      const stack = String(error.stack || "");
       for (const match of stack.matchAll(ADAPTIVE_SOURCE_URL_RE)) {
         const candidate = match[0].replace(/:\d+(?::\d+)?$/, "");
         let parsed = null;
@@ -190,14 +190,37 @@
     return "";
   };
 
-  const currentAdaptiveSource = () => {
-    if (activeAdaptiveSource) return activeAdaptiveSource;
+  const scriptAdaptiveSource = () => {
     try {
       if (document.currentScript && document.currentScript.src) {
         return stableUrlLabelFor(document.currentScript.src);
       }
     } catch {}
-    return stackAdaptiveSource() || "inline-or-runtime";
+    return "";
+  };
+
+  const currentAdaptiveSource = () => {
+    if (activeAdaptiveSource) return resolveAdaptiveSource(activeAdaptiveSource);
+    return scriptAdaptiveSource() || stackAdaptiveSource() || "inline-or-runtime";
+  };
+
+  // Formatting a stack trace is most of the cost of labelling a caller (~0.1 ms
+  // on real pages), and pages register promise, timer, and listener callbacks
+  // thousands of times per load. Registrations keep the caller's stack
+  // unformatted; it is labelled only if an adaptive signal reads the source.
+  const captureAdaptiveSource = () =>
+    activeAdaptiveSource || scriptAdaptiveSource() || { error: new Error() };
+
+  const resolveAdaptiveSource = (source) => {
+    if (typeof source === "string") return source;
+    if (source.error) {
+      source.value = runtimeAdaptiveSourceFor(
+        stackAdaptiveSource(source.error) || "inline-or-runtime",
+        source.label
+      );
+      source.error = null;
+    }
+    return source.value;
   };
 
   const hasStaticInternalObserverCaller = () => {
@@ -214,6 +237,12 @@
   };
 
   const runtimeAdaptiveSourceFor = (source, label) => {
+    if (typeof source === "object") {
+      // A captured source resolves with the label of its first registration,
+      // like the string branch below keeps an existing runtime label.
+      source.label ||= label;
+      return source;
+    }
     const safeSource = String(source || "").slice(0, 160);
     if (!isFallbackAdaptiveSource(safeSource)) return safeSource;
     if (safeSource.startsWith("runtime:")) return safeSource;
@@ -234,23 +263,36 @@
     }
   };
 
+  const asyncWrapperFor = (callback, source) => {
+    const callbackName = callback.name || "callback";
+    const wrapped = function (...args) {
+      return runWithAdaptiveSource(source, callback, this, args);
+    };
+    return U.stealth(wrapped, callbackName, {
+      length: callback.length,
+      source: U.nativeSourceFor(callback, callbackName),
+    });
+  };
+
   const wrapAsyncCallback = (callback, source, label) => {
     if (typeof callback !== "function") return callback;
     const safeSource = runtimeAdaptiveSourceFor(source, label);
+    if (typeof safeSource !== "string") {
+      // Captured sources are new objects per registration, so each keeps only
+      // its latest wrapper: enough for re-registration loops, never a backlog.
+      if (safeSource.callback !== callback) {
+        safeSource.callback = callback;
+        safeSource.wrapper = asyncWrapperFor(callback, safeSource);
+      }
+      return safeSource.wrapper;
+    }
     let bySource = asyncSourceWrappers.get(callback);
     if (!bySource) {
       bySource = new Map();
       asyncSourceWrappers.set(callback, bySource);
     }
     if (bySource.has(safeSource)) return bySource.get(safeSource);
-    const callbackName = callback.name || "callback";
-    const wrapped = function (...args) {
-      return runWithAdaptiveSource(safeSource, callback, this, args);
-    };
-    const stealthed = U.stealth(wrapped, callbackName, {
-      length: callback.length,
-      source: U.nativeSourceFor(callback, callbackName),
-    });
+    const stealthed = asyncWrapperFor(callback, safeSource);
     bySource.set(safeSource, stealthed);
     return stealthed;
   };
@@ -641,12 +683,15 @@
     maybeEmitFingerprintSignal();
   };
 
-  const instrumentFingerprintGlobal = (value, source = currentAdaptiveSource()) => {
+  const instrumentFingerprintGlobal = (value, source) => {
     if (!value || (typeof value !== "object" && typeof value !== "function")) return value;
     const hasLoad = typeof value.load === "function";
     const hasStart = typeof value.start === "function";
     if ((!hasLoad && !hasStart) || instrumentedFingerprintGlobals.has(value)) return value;
     instrumentedFingerprintGlobals.add(value);
+    // Resolved only for a real vendor global: the runtime scan calls this on
+    // every tick, and resolving its captured source would format a stack.
+    source ??= currentAdaptiveSource();
     if (hasLoad) {
       patchObjectMethod(
         value,
@@ -1083,7 +1128,7 @@
     };
     const WrappedMutationObserver = function MutationObserver(callback) {
       if (!new.target) return Reflect.apply(OrigMutationObserver, this, arguments);
-      const callbackSource = currentAdaptiveSource();
+      const callbackSource = captureAdaptiveSource();
       const callbackForPage =
         typeof callback === "function"
           ? function mutationObserverCallback(records, observerForCallback) {
@@ -1130,7 +1175,7 @@
       (origSetTimeout) =>
         function setTimeout(_handler) {
           const args = Array.from(arguments);
-          args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "setTimeout");
+          args[0] = wrapAsyncCallback(args[0], captureAdaptiveSource(), "setTimeout");
           return origSetTimeout.apply(this, args);
         }
     );
@@ -1140,7 +1185,7 @@
       (origSetInterval) =>
         function setInterval(_handler) {
           const args = Array.from(arguments);
-          args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "setInterval");
+          args[0] = wrapAsyncCallback(args[0], captureAdaptiveSource(), "setInterval");
           return origSetInterval.apply(this, args);
         }
     );
@@ -1151,7 +1196,7 @@
         function requestAnimationFrame(callback) {
           return origRequestAnimationFrame.call(
             this,
-            wrapAsyncCallback(callback, currentAdaptiveSource(), "requestAnimationFrame")
+            wrapAsyncCallback(callback, captureAdaptiveSource(), "requestAnimationFrame")
           );
         }
     );
@@ -1161,7 +1206,7 @@
       (origRequestIdleCallback) =>
         function requestIdleCallback(_callback) {
           const args = Array.from(arguments);
-          args[0] = wrapAsyncCallback(args[0], currentAdaptiveSource(), "requestIdleCallback");
+          args[0] = wrapAsyncCallback(args[0], captureAdaptiveSource(), "requestIdleCallback");
           return origRequestIdleCallback.apply(this, args);
         }
     );
@@ -1172,7 +1217,7 @@
         function queueMicrotask(callback) {
           return origQueueMicrotask.call(
             this,
-            wrapAsyncCallback(callback, currentAdaptiveSource(), "queueMicrotask")
+            wrapAsyncCallback(callback, captureAdaptiveSource(), "queueMicrotask")
           );
         }
     );
@@ -1181,7 +1226,7 @@
       "then",
       (origThen) =>
         function then(onFulfilled, onRejected) {
-          const source = currentAdaptiveSource();
+          const source = captureAdaptiveSource();
           return origThen.call(
             this,
             wrapAsyncCallback(onFulfilled, source, "promise.then"),
@@ -1196,7 +1241,7 @@
         function catch_(onRejected) {
           return origCatch.call(
             this,
-            wrapAsyncCallback(onRejected, currentAdaptiveSource(), "promise.catch")
+            wrapAsyncCallback(onRejected, captureAdaptiveSource(), "promise.catch")
           );
         }
     );
@@ -1207,7 +1252,7 @@
         function finally_(onFinally) {
           return origFinally.call(
             this,
-            wrapAsyncCallback(onFinally, currentAdaptiveSource(), "promise.finally")
+            wrapAsyncCallback(onFinally, captureAdaptiveSource(), "promise.finally")
           );
         }
     );
@@ -1217,7 +1262,7 @@
     try {
       U.wrapSetter(owner, prop, (nativeSet) => ({
         set(value) {
-          return nativeSet.call(this, wrapAsyncCallback(value, currentAdaptiveSource(), label));
+          return nativeSet.call(this, wrapAsyncCallback(value, captureAdaptiveSource(), label));
         },
       }));
     } catch {}
@@ -1341,7 +1386,7 @@
           type,
           listener,
           options: arguments[2],
-          source: currentAdaptiveSource(),
+          source: captureAdaptiveSource(),
         });
         return origAddEventListener.apply(this, args);
       },

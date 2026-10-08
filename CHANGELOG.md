@@ -18,6 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Pausing a site now also stops `window` global stripping there. The globals script never received the paused state because it shared a bridge channel with another script; the iframe attribute normalizer had the same race.
 - Device signal poisoning now recognizes common fonts in CSS font shorthands (`12px "Courier New"`), so `document.fonts.check()` / `load()` treat them as installed instead of falling back to the per-site hash.
 - The popup's **Protect this site** status line now updates after toggling, and a failed toggle restores the previous state.
+- The observe-only adaptive logger no longer formats a stack trace every time a page registers a promise, timer, or event-listener callback. It keeps the caller's stack unformatted and labels it only if an adaptive signal fires in that callback, which removes thousands of stack formats per load on script-heavy sites and stops page-installed `Error.prepareStackTrace` hooks from seeing Static's frames on ordinary registrations.
 
 ### Changed
 
