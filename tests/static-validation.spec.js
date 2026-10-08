@@ -188,10 +188,11 @@ const expectedMainWorldScripts = [
   "block_globals.js",
 ];
 
-const addContentScriptFiles = (manifest, referencedFiles) => {
-  for (const script of manifest.content_scripts || []) {
-    for (const js of script.js || []) referencedFiles.add(js);
-  }
+// Content scripts are registered by the service worker, not the manifest.
+const addContentScriptFiles = (referencedFiles) => {
+  const utils = loadServiceWorkerUtils();
+  for (const script of utils.MAIN_WORLD_SCRIPTS) referencedFiles.add(script.file);
+  for (const file of utils.ISOLATED_WORLD_SCRIPTS) referencedFiles.add(file);
 };
 
 const addIconFiles = (icons, referencedFiles) => {
@@ -226,7 +227,7 @@ const addHtmlScriptFiles = (filePath, referencedFiles) => {
 
 const collectManifestFiles = (manifest) => {
   const referencedFiles = new Set();
-  addContentScriptFiles(manifest, referencedFiles);
+  addContentScriptFiles(referencedFiles);
   addServiceWorkerFiles(manifest, referencedFiles);
   if (manifest.action && manifest.action.default_popup) {
     referencedFiles.add(manifest.action.default_popup);
@@ -251,22 +252,20 @@ const expectManifestFilesToExist = (manifest) => {
   }
 };
 
-const expectContentScriptWorlds = (manifest) => {
-  const mainWorld = manifest.content_scripts.find((script) => script.world === "MAIN");
-  const isolatedWorld = manifest.content_scripts.find((script) => script.world === "ISOLATED");
-
-  expect(mainWorld.js).toEqual(expectedMainWorldScripts);
-  expect(isolatedWorld.js).toEqual(["lists.js", "bridge.js", "dom_scrubber.js"]);
-  expect(mainWorld.run_at).toBe("document_start");
-  expect(isolatedWorld.run_at).toBe("document_start");
-  expect(mainWorld.all_frames).toBe(true);
-  expect(isolatedWorld.all_frames).toBe(true);
+const expectOnDemandContentScripts = (manifest) => {
+  // The service worker registers content scripts (contentScriptRegistrationsFor),
+  // so paused sites and switched-off features can be left out entirely.
+  expect(manifest.content_scripts).toBeUndefined();
+  expect(manifest.minimum_chrome_version).toBe("119");
+  const utils = loadServiceWorkerUtils();
+  expect(utils.MAIN_WORLD_SCRIPTS.map((script) => script.file)).toEqual(expectedMainWorldScripts);
+  expect([...utils.ISOLATED_WORLD_SCRIPTS]).toEqual(["lists.js", "bridge.js", "dom_scrubber.js"]);
 };
 
-test("manifest references existing files and keeps content-script worlds separated", () => {
+test("manifest references existing files and leaves content scripts to the service worker", () => {
   const manifest = readJson("manifest.json");
   expectManifestFilesToExist(manifest);
-  expectContentScriptWorlds(manifest);
+  expectOnDemandContentScripts(manifest);
 });
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -385,6 +384,7 @@ test("manifest keeps privacy-sensitive exposure and permissions minimal", () => 
   expect(manifest.permissions.sort()).toEqual([
     "declarativeNetRequest",
     "declarativeNetRequestWithHostAccess",
+    "scripting",
     "storage",
   ]);
   expect(manifest.host_permissions || []).toEqual(["*://*/*"]);
@@ -433,6 +433,8 @@ test("Firefox build strips unsupported DNR types and adds event-page scripts", (
     expect(fxManifest.browser_specific_settings.gecko.data_collection_permissions).toEqual({
       required: ["none"],
     });
+    // Chrome-only key; Firefox warns about unknown manifest keys.
+    expect(fxManifest.minimum_chrome_version).toBeUndefined();
 
     const unsupported = ["webtransport", "webbundle"];
     for (const rulesFile of ["fingerprint_vendors.json", "captcha_vendors.json"]) {
@@ -1019,8 +1021,7 @@ test("setupBridge.post handles both payload and null-payload consistently", () =
 });
 
 test("block_utils must load first — referenced from all block scripts via __static_block_utils__", () => {
-  const manifest = readJson("manifest.json");
-  const mainScripts = manifest.content_scripts[0].js;
+  const mainScripts = loadServiceWorkerUtils().MAIN_WORLD_SCRIPTS.map((script) => script.file);
   expect(mainScripts[0]).toBe("block_utils.js");
   for (let i = 1; i < mainScripts.length; i++) {
     const content = readText(mainScripts[i]);

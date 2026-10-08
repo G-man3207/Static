@@ -3,6 +3,7 @@
   "name": "Static",
   "version": "2.5.1",
   "description": "Blocks extension-enumeration probes and extension-derived browser fingerprinting.",
+  "minimum_chrome_version": "119",
   "browser_specific_settings": {
     "gecko": {
       "id": "{f8c3a2b1-d5e6-4789-abcd-ef0123456789}",
@@ -12,7 +13,12 @@
       }
     }
   },
-  "permissions": ["declarativeNetRequest", "declarativeNetRequestWithHostAccess", "storage"],
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "scripting",
+    "storage"
+  ],
   "host_permissions": ["*://*/*"],
   "optional_host_permissions": [],
   "icons": {
@@ -47,34 +53,5 @@
         "path": "rules/captcha_vendors.json"
       }
     ]
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": [
-        "block_utils.js",
-        "block_adaptive.js",
-        "block.js",
-        "block_vectors.js",
-        "block_iframe_attrs.js",
-        "block_style_vectors.js",
-        "block_fingerprint.js",
-        "block_replay.js",
-        "block_element_decoys.js",
-        "block_globals.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN",
-      "all_frames": true,
-      "match_origin_as_fallback": true
-    },
-    {
-      "matches": ["<all_urls>"],
-      "js": ["lists.js", "bridge.js", "dom_scrubber.js"],
-      "run_at": "document_start",
-      "world": "ISOLATED",
-      "all_frames": true,
-      "match_origin_as_fallback": true
-    }
-  ]
+  }
 }

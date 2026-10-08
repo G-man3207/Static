@@ -13,9 +13,12 @@
 //   7. Generate stable per-origin device personas for opt-in signal poisoning.
 //   8. Answer popup queries (`static_get_details`, `static_export_log`,
 //      `static_set_noise`, `static_set_replay`, `static_set_fingerprint`,
-//      `static_set_diagnostics`) and bridge queries (`static_get_persona`).
+//      `static_set_diagnostics`, `static_set_research_logging`) and bridge
+//      queries (`static_get_persona`).
 //   9. When a site is paused, install initiator-scoped DNR allow rules so
 //      global fingerprint/CAPTCHA lists do not keep blocking that origin.
+//  10. Register the content scripts: paused sites and switched-off features
+//      get none of Static's page code.
 
 // In the event-page fallback path (Firefox background.scripts), the deps
 // are loaded as sequential <script> tags before this file, so importScripts
@@ -26,6 +29,9 @@ if (typeof importScripts === "function") {
 const CFG = globalThis.__static_config__;
 const SW_HELPERS = CFG.helpers;
 const {
+  CONTENT_SCRIPT_SETTINGS,
+  contentScriptRegistrationsFor,
+  contentScriptsInSync,
   enforceCaps,
   ensurePlaybookWeek,
   latestPlaybookSnapshot,
@@ -504,6 +510,41 @@ let writeChain = Promise.resolve();
 const serialize = (fn) => {
   writeChain = writeChain.then(fn).catch(() => {});
   return writeChain;
+};
+
+// ─── On-demand content scripts ────────────────────────────────────────────
+// Registered here instead of in the manifest so paused sites get no Static
+// code at all and switched-off features stay unloaded. Browsers drop these
+// registrations on every extension update, so they are re-checked on worker
+// start, install/update, browser startup, and relevant setting changes.
+let contentScriptChain = Promise.resolve();
+
+const applyContentScriptRegistrations = async () => {
+  const settings = await chrome.storage.local.get(CONTENT_SCRIPT_SETTINGS);
+  const desired = contentScriptRegistrationsFor(settings);
+  const registered = await chrome.scripting.getRegisteredContentScripts();
+  if (contentScriptsInSync(registered, desired)) return;
+  const registeredIds = registered.map((script) => script.id);
+  const sameIds =
+    registeredIds.length === desired.length &&
+    desired.every((script) => registeredIds.includes(script.id));
+  if (sameIds) {
+    await chrome.scripting.updateContentScripts(desired);
+    return;
+  }
+  // Fresh install, update, or leftovers: register both in one call so Chrome
+  // keeps ID order (page world first).
+  if (registeredIds.length) await chrome.scripting.unregisterContentScripts();
+  await chrome.scripting.registerContentScripts(desired);
+};
+
+// Overlapping register/update calls fail, so runs are queued. Each run
+// re-reads storage and does nothing when the registrations already match.
+const syncContentScripts = () => {
+  contentScriptChain = contentScriptChain
+    .then(applyContentScriptRegistrations)
+    .catch((err) => safeLog(err, "content script sync"));
+  return contentScriptChain;
 };
 
 const addToCumulative = async (delta) => {
@@ -1194,6 +1235,7 @@ const detailsResponseFor = async (tabId, stored) => {
     diagnosticEvents: diagnosticEventCountFor(diagnosticEntry),
     diagnosticOrigins: Object.keys(stored.diagnostic_log).length,
     diagnosticsMode: stored.diagnostics_mode,
+    researchLogging: !!stored.research_logging,
     origin,
     drift: originProbeEntry ? playbookDriftForEntry(originProbeEntry) : null,
     noiseDiagnostics: originProbeEntry
@@ -1219,6 +1261,7 @@ const handleGetDetails = (msg, _sender, sendResponse) => {
       adaptive_log: {},
       compat_log: {},
       replay_mode: "off",
+      research_logging: false,
     });
     sendResponse(await detailsResponseFor(msg.tabId, stored));
   })();
@@ -1295,8 +1338,19 @@ const handleSetReplay = (msg, _sender, sendResponse) => {
     const allowed = new Set(["off", "mask", "noise", "chaos"]);
     const mode = allowed.has(msg.mode) ? msg.mode : "off";
     await chrome.storage.local.set({ replay_mode: mode });
+    await syncContentScripts();
     await broadcastConfigUpdate();
     sendResponse({ ok: true, mode });
+  })();
+  return true;
+};
+
+const handleSetResearchLogging = (msg, _sender, sendResponse) => {
+  (async () => {
+    const enabled = !!msg.enabled;
+    await chrome.storage.local.set({ research_logging: enabled });
+    await syncContentScripts();
+    sendResponse({ enabled, ok: true });
   })();
   return true;
 };
@@ -1306,6 +1360,7 @@ const handleSetFingerprint = (msg, _sender, sendResponse) => {
     const allowed = new Set(["off", "mask"]);
     const mode = allowed.has(msg.mode) ? msg.mode : "off";
     await chrome.storage.local.set({ fingerprint_mode: mode });
+    await syncContentScripts();
     if (mode !== "mask") {
       await clearAllHeaderRules();
     }
@@ -1330,6 +1385,7 @@ const handleSetSiteDisabled = (msg, _sender, sendResponse) => {
       delete disabled_origins[origin];
     }
     await chrome.storage.local.set({ disabled_origins });
+    await syncContentScripts();
     if (disabled) {
       await removeOriginHeaderRule(origin);
     }
@@ -1430,6 +1486,7 @@ const messageHandlers = {
   static_set_fingerprint: handleSetFingerprint,
   static_set_noise: handleSetNoise,
   static_set_replay: handleSetReplay,
+  static_set_research_logging: handleSetResearchLogging,
   static_set_site_disabled: handleSetSiteDisabled,
 };
 
@@ -1481,7 +1538,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
     reconcilePauseAllowRulesFromStorage();
   }
   if (changes.disabled_origins || changes.compat_log) refreshAllBadges();
+  if (Object.keys(CONTENT_SCRIPT_SETTINGS).some((key) => changes[key])) syncContentScripts();
 });
+
+chrome.runtime.onInstalled.addListener(() => {
+  syncContentScripts();
+});
+chrome.runtime.onStartup.addListener(() => {
+  syncContentScripts();
+});
+syncContentScripts();
 
 // ─── Startup: reconcile persisted DNR header rules against live state ────
 cleanupStaleHeaderRules()
