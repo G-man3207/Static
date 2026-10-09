@@ -139,6 +139,24 @@ test("blocks protected globals set via Object.assign, Reflect.set, and Object.de
   });
 });
 
+test("Object.assign onto window keeps symbol-keyed properties", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(() => {
+    const plain = Symbol("plain");
+    const mixed = Symbol("mixed");
+    Object.assign(
+      window,
+      { [plain]: "plain" },
+      { [mixed]: "mixed", __honeyExtensionInstalled: true }
+    );
+    return { honey: window.__honeyExtensionInstalled, mixed: window[mixed], plain: window[plain] };
+  });
+
+  expect(result).toEqual({ honey: undefined, mixed: "mixed", plain: "plain" });
+});
+
 test("does not expose obvious extension presence globals", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));

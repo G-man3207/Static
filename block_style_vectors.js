@@ -27,20 +27,54 @@
     return node && node.nodeType === Node.TEXT_NODE && isStyleElement(node.parentNode);
   };
 
-  const clearStyleText = (style) => {
-    while (style.firstChild) {
-      try {
-        style.removeChild(style.firstChild);
-      } catch {
-        return;
-      }
-    }
+  // Style text with its extension URLs neutralized (the rest kept), reporting
+  // the first one. Returns the value untouched when there are none.
+  const sanitizeStyleText = (label, value) => {
+    const { text, url } = U.sanitizeCssText(value);
+    if (!url) return value;
+    bridge.probe(url, label);
+    return text;
   };
 
-  const blockStyleText = (label, value) => {
-    const url = U.firstBadUrlIn(value);
-    if (!url) return false;
-    bridge.probe(url, label);
+  // The first extension URL a CSS declaration value can load, escapes included.
+  const badCssUrlIn = (value) => U.sanitizeCssText(value).url || U.firstBadUrlIn(value);
+
+  // The text a payload adds to a style: a string, a text node's data, or a
+  // fragment's text children (element children are not style text).
+  const pieceTextOf = (value) => {
+    if (typeof value === "string") return value;
+    if (!value || typeof value !== "object") return "";
+    if (value.nodeType === Node.TEXT_NODE) return value.data;
+    let text = "";
+    if (value.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+      for (let child = value.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType === Node.TEXT_NODE) text += child.data;
+      }
+    }
+    return text;
+  };
+
+  // The text a style holds once `piece` goes in before child `at` (at the
+  // end when null), in place of child `replaced` if given.
+  const styleTextWith = (style, piece, at, replaced) => {
+    let text = "";
+    for (let child = style.firstChild; child; child = child.nextSibling) {
+      if (child === at) text += piece;
+      if (child !== replaced && child.nodeType === Node.TEXT_NODE) text += child.data;
+    }
+    return at ? text : text + piece;
+  };
+
+  // A piece that is clean alone can finish an extension URL begun by the
+  // style's other text. Only pieces naming an extension scheme pay for the
+  // whole-text check; when it finds one, the style gets its whole text
+  // sanitized instead of the piece.
+  const rewroteSplitStyleText = (style, piece, wholeText, label) => {
+    if (!piece || !U.hasBadUrl(piece.includes("\\") ? U.cssUnescape(piece) : piece)) return false;
+    const text = wholeText();
+    const next = sanitizeStyleText(label, text);
+    if (next === text) return false;
+    style.textContent = next;
     return true;
   };
 
@@ -50,9 +84,11 @@
     const visit = (current) => {
       if (!current) return;
       if (current.nodeType === Node.TEXT_NODE) {
-        if (blockStyleText(label, current.textContent || "")) {
+        const text = current.textContent || "";
+        const next = sanitizeStyleText(label, text);
+        if (next !== text) {
           try {
-            current.textContent = "";
+            current.textContent = next;
             changed = true;
           } catch {}
         }
@@ -72,7 +108,7 @@
     for (let index = style.length - 1; index >= 0; index--) {
       const name = style.item(index);
       const value = style.getPropertyValue(name);
-      if (!U.firstBadUrlIn(value)) continue;
+      if (!badCssUrlIn(value)) continue;
       try {
         style.removeProperty(name);
         changed = true;
@@ -93,7 +129,7 @@
   };
 
   const sanitizeStyleDeclarationValue = (value, label) => {
-    const url = U.firstBadUrlIn(value);
+    const url = badCssUrlIn(value);
     if (!url) return { changed: false, value };
     bridge.probe(url, label);
 
@@ -114,8 +150,11 @@
   const scrubStyleTextNode = (style, label) => {
     if (!isStyleElement(style)) return false;
     const text = style.textContent || "";
-    if (!blockStyleText(label, text)) return false;
-    clearStyleText(style);
+    const next = sanitizeStyleText(label, text);
+    if (next === text) return false;
+    try {
+      style.textContent = next;
+    } catch {}
     return true;
   };
 
@@ -139,7 +178,8 @@
     }
     const template = document.createElement("template");
     try {
-      innerHTMLDesc.set.call(template, value);
+      // Static's own TrustedHTML: Trusted Types pages reject plain strings.
+      innerHTMLDesc.set.call(template, U.trustedHtml(value) || value);
     } catch {
       return value;
     }
@@ -159,7 +199,7 @@
     U.wrapMethod(proto, "setProperty", (orig) => ({
       setProperty(name, value, priority) {
         if (disabled) return orig.call(this, name, value, priority);
-        const url = U.firstBadUrlIn(value);
+        const url = badCssUrlIn(value);
         if (url) {
           bridge.probe(url, "style.setProperty");
           return;
@@ -201,11 +241,21 @@
   const patchTextContent = (proto) => {
     U.wrapSetter(proto, "textContent", (nativeSet) => ({
       set(value) {
-        const blocked =
-          !disabled &&
-          (isStyleElement(this) || isStyleTextNode(this)) &&
-          blockStyleText("style.textContent", value);
-        nativeSet.call(this, blocked ? "" : value);
+        if (disabled || !(isStyleElement(this) || isStyleTextNode(this))) {
+          nativeSet.call(this, value);
+          return;
+        }
+        const next = sanitizeStyleText("style.textContent", value);
+        const piece = next == null ? "" : String(next);
+        const style = this.parentNode;
+        const wholeText = () => styleTextWith(style, piece, this, this);
+        if (
+          isStyleTextNode(this) &&
+          rewroteSplitStyleText(style, piece, wholeText, "style.textContent")
+        ) {
+          return;
+        }
+        nativeSet.call(this, next);
       },
     }));
   };
@@ -213,8 +263,16 @@
   const patchStyleTextNodeSetter = (proto, prop, label) => {
     U.wrapSetter(proto, prop, (nativeSet) => ({
       set(value) {
-        const blocked = !disabled && isStyleTextNode(this) && blockStyleText(label, value);
-        nativeSet.call(this, blocked ? "" : value);
+        if (disabled || !isStyleTextNode(this)) {
+          nativeSet.call(this, value);
+          return;
+        }
+        const next = sanitizeStyleText(label, value);
+        const piece = next == null ? "" : String(next);
+        const style = this.parentNode;
+        const wholeText = () => styleTextWith(style, piece, this, this);
+        if (rewroteSplitStyleText(style, piece, wholeText, label)) return;
+        nativeSet.call(this, next);
       },
     }));
   };
@@ -226,11 +284,11 @@
           nativeSet.call(this, value);
           return;
         }
-        const nextValue =
-          isStyleElement(this) && blockStyleText("style.innerHTML", value)
-            ? ""
-            : sanitizeStyleMarkup(value, "style.innerHTML", innerHTMLDesc);
-        nativeSet.call(this, nextValue);
+        const text = U.htmlSinkText(value, true);
+        const next = isStyleElement(this)
+          ? sanitizeStyleText("style.innerHTML", text)
+          : sanitizeStyleMarkup(text, "style.innerHTML", innerHTMLDesc);
+        nativeSet.call(this, U.htmlSinkValue(value, text, next));
       },
     }));
   };
@@ -239,10 +297,13 @@
     if (!innerHTMLDesc) return;
     U.wrapSetter(proto, "outerHTML", (nativeSet) => ({
       set(value) {
-        nativeSet.call(
-          this,
-          disabled ? value : sanitizeStyleMarkup(value, "style.outerHTML", innerHTMLDesc)
-        );
+        if (disabled) {
+          nativeSet.call(this, value);
+          return;
+        }
+        const text = U.htmlSinkText(value, true);
+        const next = sanitizeStyleMarkup(text, "style.outerHTML", innerHTMLDesc);
+        nativeSet.call(this, U.htmlSinkValue(value, text, next));
       },
     }));
   };
@@ -251,12 +312,12 @@
     if (!innerHTMLDesc) return;
     U.wrapMethod(proto, "insertAdjacentHTML", (orig) => ({
       insertAdjacentHTML(position, html) {
-        if (disabled) return orig.call(this, position, html);
-        const nextHtml =
-          isStyleElement(this) && blockStyleText("style.insertAdjacentHTML", html)
-            ? ""
-            : sanitizeStyleMarkup(html, "style.insertAdjacentHTML", innerHTMLDesc);
-        return orig.call(this, position, nextHtml);
+        if (disabled || arguments.length < 2) return orig.apply(this, arguments);
+        const text = U.htmlSinkText(html, false);
+        const next = isStyleElement(this)
+          ? sanitizeStyleText("style.insertAdjacentHTML", text)
+          : sanitizeStyleMarkup(text, "style.insertAdjacentHTML", innerHTMLDesc);
+        return orig.call(this, position, U.htmlSinkValue(html, text, next));
       },
     }));
   };
@@ -264,9 +325,16 @@
   const patchInsertAdjacentText = (proto) => {
     U.wrapMethod(proto, "insertAdjacentText", (orig) => ({
       insertAdjacentText(position, text) {
-        if (disabled) return orig.call(this, position, text);
-        const nextText =
-          isStyleElement(this) && blockStyleText("style.insertAdjacentText", text) ? "" : text;
+        if (disabled || !isStyleElement(this)) return orig.call(this, position, text);
+        const label = "style.insertAdjacentText";
+        const nextText = sanitizeStyleText(label, text);
+        const where = String(position).toLowerCase();
+        if (where === "afterbegin" || where === "beforeend") {
+          const at = where === "afterbegin" ? this.firstChild : null;
+          const piece = String(nextText);
+          const wholeText = () => styleTextWith(this, piece, at, null);
+          if (rewroteSplitStyleText(this, piece, wholeText, label)) return undefined;
+        }
         return orig.call(this, position, nextText);
       },
     }));
@@ -275,7 +343,8 @@
   const scrubInsertionArgs = (target, args, label) => {
     const nextArgs = [];
     for (const arg of args) {
-      if (isStyleElement(target) && typeof arg === "string" && blockStyleText(label, arg)) {
+      if (isStyleElement(target) && typeof arg === "string") {
+        nextArgs.push(sanitizeStyleText(label, arg));
         continue;
       }
       if (isStyleElement(target) && arg && typeof arg === "object") {
@@ -299,6 +368,16 @@
           scrubTree(node, label);
           scrubStyleTextTree(node, label);
         }
+        if (isStyleElement(this)) {
+          // appendChild puts the node last; insertBefore / replaceChild at rest[0].
+          const at = name === "appendChild" ? null : rest[0] || null;
+          const replaced = name === "replaceChild" ? at : null;
+          const piece = pieceTextOf(node);
+          const wholeText = () => styleTextWith(this, piece, at, replaced);
+          if (rewroteSplitStyleText(this, piece, wholeText, label)) {
+            return name === "replaceChild" ? rest[0] : node;
+          }
+        }
         return orig.call(this, node, ...rest);
       },
     }));
@@ -308,7 +387,16 @@
     U.wrapMethod(proto, name, (orig) => ({
       [name](...args) {
         if (disabled) return orig.apply(this, args);
-        return orig.apply(this, scrubInsertionArgs(this, args, label));
+        const nextArgs = scrubInsertionArgs(this, args, label);
+        if (isStyleElement(this)) {
+          // All the call's pieces together, so a URL split between them counts.
+          const piece = nextArgs.map(pieceTextOf).join("");
+          const at = name === "prepend" ? this.firstChild : null;
+          const wholeText = () =>
+            name === "replaceChildren" ? piece : styleTextWith(this, piece, at, null);
+          if (rewroteSplitStyleText(this, piece, wholeText, label)) return undefined;
+        }
+        return orig.apply(this, nextArgs);
       },
     }));
   };
@@ -339,7 +427,7 @@
     for (let index = style.length - 1; index >= 0; index--) {
       const name = style.item(index);
       const value = style.getPropertyValue(name);
-      const url = U.firstBadUrlIn(value);
+      const url = badCssUrlIn(value);
       if (url) {
         bridge.probe(url, label);
         try {

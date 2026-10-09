@@ -45,6 +45,7 @@ async function startHeaderFixtureServer({ body = "ok", headers = {}, status = 20
       return `${this.origin}${path}`;
     },
     async close() {
+      server.closeAllConnections();
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
@@ -282,17 +283,24 @@ test("popup site toggle keeps its status line in sync", async ({ extension, serv
       server.origin
     );
 
+  // The toggle reloads the site tab; a poll that lands mid-reload retries.
+  const domTraces = () =>
+    staticPageTraces(page).then(
+      (traces) => traces.dom,
+      () => null
+    );
+
   await expect(toggle).toBeChecked();
   await toggle.evaluate((input) => input.click());
   await expect(status).toHaveText("Paused. This site can see installed extensions again.");
   await expect.poll(isPaused).toBe(true);
-  // The toggle reloads the site tab, which then has no Static page code.
-  await expect.poll(async () => (await staticPageTraces(page)).dom).toEqual([]);
+  // After the reload the paused site has no Static page code.
+  await expect.poll(domTraces).toEqual([]);
 
   await toggle.evaluate((input) => input.click());
   await expect(status).toHaveText("On. Pause it if the page looks broken.");
   await expect.poll(isPaused).toBe(false);
-  await expect.poll(async () => (await staticPageTraces(page)).dom.length).toBeGreaterThan(0);
+  await expect.poll(async () => ((await domTraces()) || []).length).toBeGreaterThan(0);
 });
 
 test("popup site toggle reloads the tab the popup is for, not another tab on the site", async ({
@@ -803,6 +811,53 @@ test("normalizes iframe sandbox and legacy permission attributes without console
   }
 });
 
+test("keeps fullscreen for cross-origin embeds that pair allow with allowfullscreen", async ({
+  extension,
+  server,
+}) => {
+  const child = await startHeaderFixtureServer({
+    body: '<!doctype html><script>parent.postMessage({ id: location.hash.slice(1), fullscreen: document.fullscreenEnabled }, "*");</script>',
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+  const page = await extension.context.newPage();
+
+  try {
+    await page.goto(server.url("/blank.html"));
+    const result = await page.evaluate(async (childUrl) => {
+      // YouTube's embed snippet: an allow list without fullscreen, plus allowfullscreen.
+      const allow =
+        "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+      const seen = {};
+      const allReported = new Promise((resolve) => {
+        addEventListener("message", (event) => {
+          seen[event.data.id] = event.data.fullscreen;
+          if (Object.keys(seen).length === 3) resolve();
+        });
+      });
+
+      const viaAttributes = document.createElement("iframe");
+      viaAttributes.setAttribute("allow", allow);
+      viaAttributes.setAttribute("allowfullscreen", "");
+      viaAttributes.src = `${childUrl}#attributes`;
+      const viaProperties = document.createElement("iframe");
+      viaProperties.allow = allow;
+      viaProperties.allowFullscreen = true;
+      viaProperties.src = `${childUrl}#properties`;
+      const viaMarkup = document.createElement("div");
+      viaMarkup.innerHTML = `<iframe src="${childUrl}#markup" allow="${allow}" allowfullscreen></iframe>`;
+      document.body.append(viaAttributes, viaProperties, viaMarkup);
+
+      await allReported;
+      return seen;
+    }, child.url("/child.html"));
+
+    expect(result).toEqual({ attributes: true, markup: true, properties: true });
+  } finally {
+    await page.close();
+    await child.close();
+  }
+});
+
 test("uses TrustedScriptURL-compatible script decoys on Trusted Types pages", async ({
   extension,
   server,
@@ -870,7 +925,7 @@ test("uses TrustedScriptURL-compatible script decoys on Trusted Types pages", as
   }
 });
 
-test("uses TrustedHTML-compatible HTML sinks on Trusted Types pages", async ({
+test("keeps page TrustedHTML working through HTML sinks on Trusted Types pages", async ({
   extension,
   server,
 }) => {
@@ -884,51 +939,142 @@ test("uses TrustedHTML-compatible HTML sinks on Trusted Types pages", async ({
     await page.waitForTimeout(100);
 
     const result = await page.evaluate(() => {
-      const outcomes = {};
-
-      // Test innerHTML with safe content
-      try {
-        const div = document.createElement("div");
-        div.innerHTML = '<span class="test">hello</span>';
-        outcomes.innerHTML = { ok: true, html: div.innerHTML };
-      } catch (error) {
-        outcomes.innerHTML = { message: error.message, name: error.name, ok: false };
-      }
-
-      // Test innerHTML with iframe markup (sanitization should still work)
-      try {
-        const div2 = document.createElement("div");
-        div2.innerHTML =
-          '<iframe src="https://example.com" sandbox="allow-scripts allow-same-origin unknown-token"></iframe>';
-        outcomes.iframeSanitized = { ok: true, html: div2.innerHTML };
-      } catch (error) {
-        outcomes.iframeSanitized = { message: error.message, name: error.name, ok: false };
-      }
-
-      // Test insertAdjacentHTML
-      try {
-        const div3 = document.createElement("div");
-        div3.insertAdjacentHTML("beforeend", "<p>inserted</p>");
-        outcomes.insertAdjacentHTML = { ok: true, html: div3.innerHTML };
-      } catch (error) {
-        outcomes.insertAdjacentHTML = { message: error.message, name: error.name, ok: false };
-      }
-
-      return outcomes;
+      const policy = trustedTypes.createPolicy("page", { createHTML: (html) => html });
+      const div = document.createElement("div");
+      div.innerHTML = policy.createHTML('<span class="test">hello</span>');
+      const framed = document.createElement("div");
+      framed.innerHTML = policy.createHTML(
+        '<iframe src="https://example.com" sandbox="allow-scripts allow-same-origin unknown-token"></iframe>'
+      );
+      const inserted = document.createElement("div");
+      inserted.insertAdjacentHTML("beforeend", policy.createHTML("<p>inserted</p>"));
+      return {
+        innerHTML: div.innerHTML,
+        insertAdjacentHTML: inserted.innerHTML,
+        sandbox: framed.querySelector("iframe").getAttribute("sandbox"),
+      };
     });
 
-    expect(result.innerHTML).toEqual({ ok: true, html: '<span class="test">hello</span>' });
-    expect(result.insertAdjacentHTML).toEqual({ ok: true, html: "<p>inserted</p>" });
-    expect(result.iframeSanitized.ok).toBe(true);
+    expect(result).toEqual({
+      innerHTML: '<span class="test">hello</span>',
+      insertAdjacentHTML: "<p>inserted</p>",
+      sandbox: "allow-scripts allow-same-origin",
+    });
     expect(messages.filter((message) => /TrustedHTML assignment/i.test(message.text))).toEqual([]);
-    expect(
-      messages.filter((message) => /Failed to set the 'innerHTML'/i.test(message.text))
-    ).toEqual([]);
-    expect(
-      messages.filter((message) => /Failed to execute 'insertAdjacentHTML'/i.test(message.text))
-    ).toEqual([]);
   } finally {
     page.off("console", onConsole);
+  }
+});
+
+test("leaves plain strings to the page's Trusted Types enforcement", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/trusted-types.html"));
+
+  const outcome = await page.evaluate(() => {
+    try {
+      document.createElement("div").innerHTML = "<b>untrusted</b>";
+      return "assigned";
+    } catch (error) {
+      return error.name;
+    }
+  });
+
+  // Natively a page that requires Trusted Types rejects plain strings here.
+  expect(outcome).toBe("TypeError");
+});
+
+test("passes page TrustedHTML through on pages whose CSP header lists their policies", async ({
+  extension,
+}) => {
+  const ttServer = await startHeaderFixtureServer({
+    body: '<!doctype html><meta charset="utf-8"><body>trusted</body>',
+    headers: {
+      "content-security-policy": "require-trusted-types-for 'script'; trusted-types app",
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
+  const page = await extension.context.newPage();
+
+  try {
+    await page.goto(ttServer.url("/"));
+    const result = await page.evaluate(() => {
+      const policy = trustedTypes.createPolicy("app", { createHTML: (html) => html });
+      const attempt = (write) => {
+        try {
+          return write();
+        } catch (error) {
+          return error.name;
+        }
+      };
+      const host = document.createElement("div");
+      const shadow = document.createElement("div").attachShadow({ mode: "open" });
+      return {
+        innerHTML: attempt(() => {
+          host.innerHTML = policy.createHTML("<b>ok</b>");
+          return host.innerHTML;
+        }),
+        insertAdjacentHTML: attempt(() => {
+          host.insertAdjacentHTML("beforeend", policy.createHTML("<i>more</i>"));
+          return host.innerHTML;
+        }),
+        outerHTML: attempt(() => {
+          host.querySelector("b").outerHTML = policy.createHTML("<p>swapped</p>");
+          return host.innerHTML;
+        }),
+        shadowInnerHTML: attempt(() => {
+          shadow.innerHTML = policy.createHTML("<u>shadow</u>");
+          return shadow.innerHTML;
+        }),
+      };
+    });
+
+    expect(result).toEqual({
+      innerHTML: "<b>ok</b>",
+      insertAdjacentHTML: "<b>ok</b><i>more</i>",
+      outerHTML: "<p>swapped</p><i>more</i>",
+      shadowInnerHTML: "<u>shadow</u>",
+    });
+  } finally {
+    await page.close();
+    await ttServer.close();
+  }
+});
+
+test("sanitizes probing page TrustedHTML where Static cannot create a policy", async ({
+  extension,
+}) => {
+  const ttServer = await startHeaderFixtureServer({
+    body: '<!doctype html><meta charset="utf-8"><body><div id="host"></div></body>',
+    headers: {
+      // Names the page's policy without requiring Trusted Types: strings still work.
+      "content-security-policy": "trusted-types app",
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
+  const page = await extension.context.newPage();
+
+  try {
+    await page.goto(ttServer.url("/"));
+    await page.evaluate(
+      (url) => {
+        const policy = trustedTypes.createPolicy("app", { createHTML: (html) => html });
+        document.getElementById("host").innerHTML = policy.createHTML(`<img src="${url}">`);
+      },
+      probedUrl(PROBED_ID, "/icon.png")
+    );
+
+    // Read the real DOM: Static's own getters report the page's value.
+    const client = await extension.context.newCDPSession(page);
+    const { root } = await client.send("DOM.getDocument", { depth: -1 });
+    const { outerHTML } = await client.send("DOM.getOuterHTML", { nodeId: root.nodeId });
+    expect(outerHTML).toContain("<img");
+    expect(outerHTML).not.toContain("chrome-extension://");
+  } finally {
+    await page.close();
+    await ttServer.close();
   }
 });
 
@@ -1098,6 +1244,47 @@ test("blocks broad extension URL vectors and accumulates per-origin ID counts", 
   if (typeof SharedWorker === "function") {
     expect(playbookWeek.vectorCounts.SharedWorker).toBe(1);
   }
+});
+
+test("blocks extension URLs disguised with characters the URL parser drops", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const probes = await page.evaluate(
+    async (url) => {
+      // The URL parser drops tabs and newlines anywhere and C0 controls at the
+      // ends, and setAttribute stringifies objects with toString().
+      const tabbed = url.replace("chrome", "chr\tome");
+      const newlined = url.replace("extension", "exten\nsion");
+      const controlled = `\u0001${url}`;
+      let count = 0;
+
+      new Image().src = tabbed;
+      count++;
+      document.createElement("img").setAttribute("src", newlined);
+      count++;
+      new Image().src = controlled;
+      count++;
+      document.createElement("div").innerHTML = `<img src="${tabbed}">`;
+      count++;
+      document.createElement("img").setAttribute("src", { url: "", toString: () => url });
+      count++;
+      await fetch(newlined).catch(() => {});
+      count++;
+      return count;
+    },
+    probedUrl(PROBED_ID, "/icon.png")
+  );
+
+  await page.waitForTimeout(400);
+  const origin = new URL(page.url()).origin;
+  const { probe_log } = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get({ probe_log: {} })
+  );
+  expect(probe_log[origin] && probe_log[origin].idCounts[PROBED_ID]).toBe(probes);
 });
 
 test("blocked XHR failures settle like native network failures", async ({ extension, server }) => {
@@ -3151,6 +3338,56 @@ test("DOM markers stay hidden from page MutationObservers with Research logging 
 
   // A marker-only mutation never reaches the page callback; ordinary ones do.
   expect(seen).toEqual({ callsAfterMarkerOnly: 0, names: ["SECTION"] });
+});
+
+test("MutationObservers still see page nodes that carry extension opt-out attributes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(async () => {
+    // A detached root: the DOM scrubber never strips these attributes there.
+    const root = document.createElement("div");
+    const seen = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        seen.push([...record.addedNodes].map((node) => node.nodeName));
+      }
+    });
+    observer.observe(root, { childList: true });
+
+    const textarea = document.createElement("textarea");
+    textarea.setAttribute("data-gramm", "false");
+    root.appendChild(textarea);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+    const input = document.createElement("input");
+    input.setAttribute("data-1p-ignore", "");
+    root.replaceChildren(document.createElement("p"), input, document.createElement("p"));
+    const taken = observer.takeRecords().map((record) => ({
+      added: [...record.addedNodes].map((node) => node.nodeName),
+      removed: [...record.removedNodes].map((node) => node.nodeName),
+    }));
+
+    // An injected widget stays hidden, but clearing it along with page nodes does not.
+    root.appendChild(document.createElement("grammarly-card"));
+    root.replaceChildren();
+    const cleared = observer
+      .takeRecords()
+      .map((record) => [...record.removedNodes].map((node) => node.nodeName));
+    observer.disconnect();
+    return { cleared, seen, taken };
+  });
+
+  expect(result).toEqual({
+    cleared: [["P", "INPUT", "P", "GRAMMARLY-CARD"]],
+    seen: [["TEXTAREA"]],
+    taken: [{ added: ["P", "INPUT", "P"], removed: ["TEXTAREA"] }],
+  });
 });
 
 test("MutationObserver takeRecords hides transient extension markers", async ({

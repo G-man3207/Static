@@ -965,6 +965,56 @@ test("block_utils exposes shared decoy path constants as arrays of RegExp", () =
   for (const re of U.STYLE_DECOY_PATHS) expect(isRegExp(re)).toBe(true);
 });
 
+test("U.sanitizeCssText neutralizes only CSS tokens that load extension URLs", () => {
+  const { U } = loadBlockUtils();
+  const id = "nngceckbapebfimnlniiiahkandclblb";
+  const probe = `chrome-extension://${id}/x.css`;
+  const cases = [
+    // [input, expected text, expected first URL]
+    ["body{margin:0}", "body{margin:0}", ""],
+    ['a{content:"\\201C"}', 'a{content:"\\201C"}', ""],
+    [`/* ${probe} */ b{c:d}`, `/* ${probe} */ b{c:d}`, ""],
+    [`@import url("${probe}"); b{c:d}`, '@import url("about:invalid"); b{c:d}', probe],
+    [`@import "${probe}";`, '@import "about:invalid";', probe],
+    [`b{c:url(  ${probe}  )}`, "b{c:url(about:invalid)}", probe],
+    [`b{c:url("chrome\\-extension://${id}/x.css")}`, 'b{c:url("about:invalid")}', probe],
+    [`b{c:url(\\63 hrome-extension://${id}/x.css)}`, "b{c:url(about:invalid)}", probe],
+    [`b{c:\\75 rl(${probe})}`, "b{c:url(about:invalid)}", probe],
+    [`b{c:url("chr\\9 ome-extension://${id}/x.css")}`, 'b{c:url("about:invalid")}', probe],
+    [`b{c:image-set("${probe}" 1x)}`, 'b{c:image-set("about:invalid" 1x)}', probe],
+    [`b{c:url('chrome-ext\\\nension://${id}/x.css')}`, 'b{c:url("about:invalid")}', probe],
+    [`b{c:myurl(${probe})}`, `b{c:myurl(${probe})}`, ""],
+    [
+      `a{content:"\\"${probe}"} b{c:url(${probe})}`,
+      `a{content:"\\"${probe}"} b{c:url(about:invalid)}`,
+      probe,
+    ],
+  ];
+  for (const [input, text, url] of cases) {
+    expect(U.sanitizeCssText(input), input).toEqual({ text, url });
+  }
+});
+
+test("U.sanitizeCssText rules out escape-heavy CSS quickly and remembers clean text", () => {
+  const { U } = loadBlockUtils();
+  // ~490 KB of Tailwind-style escaped class names and icon-font escapes.
+  let css = "";
+  for (let i = 0; css.length < 500_000; i++) {
+    const glyph = (i % 256).toString(16).padStart(2, "0");
+    css += `.md\\:flex-${i}{display:flex}.w-1\\/2-${i}{width:50%}.i-${i}:before{content:"\\f1${glyph}"}\n`;
+  }
+  const timed = () => {
+    const started = performance.now();
+    expect(U.sanitizeCssText(css)).toEqual({ text: css, url: "" });
+    return performance.now() - started;
+  };
+  const first = timed();
+  const again = timed();
+  // Tokenizing all of it takes ~50 ms; ruling out an extension scheme first takes a few.
+  expect(first).toBeLessThan(20);
+  expect(again).toBeLessThan(first / 4);
+});
+
 test("U.firstBadUrlIn extracts extension URL from plain URL strings", () => {
   const { U } = loadBlockUtils();
   expect(U.firstBadUrlIn("chrome-extension://abcabcabcabcabcabcabcabcabcabcab/popup.js")).toBe(
