@@ -45,6 +45,7 @@ async function startHeaderFixtureServer({ body = "ok", headers = {}, status = 20
       return `${this.origin}${path}`;
     },
     async close() {
+      server.closeAllConnections();
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
@@ -807,6 +808,53 @@ test("normalizes iframe sandbox and legacy permission attributes without console
     ).toEqual([]);
   } finally {
     page.off("console", onConsole);
+  }
+});
+
+test("keeps fullscreen for cross-origin embeds that pair allow with allowfullscreen", async ({
+  extension,
+  server,
+}) => {
+  const child = await startHeaderFixtureServer({
+    body: '<!doctype html><script>parent.postMessage({ id: location.hash.slice(1), fullscreen: document.fullscreenEnabled }, "*");</script>',
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+  const page = await extension.context.newPage();
+
+  try {
+    await page.goto(server.url("/blank.html"));
+    const result = await page.evaluate(async (childUrl) => {
+      // YouTube's embed snippet: an allow list without fullscreen, plus allowfullscreen.
+      const allow =
+        "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+      const seen = {};
+      const allReported = new Promise((resolve) => {
+        addEventListener("message", (event) => {
+          seen[event.data.id] = event.data.fullscreen;
+          if (Object.keys(seen).length === 3) resolve();
+        });
+      });
+
+      const viaAttributes = document.createElement("iframe");
+      viaAttributes.setAttribute("allow", allow);
+      viaAttributes.setAttribute("allowfullscreen", "");
+      viaAttributes.src = `${childUrl}#attributes`;
+      const viaProperties = document.createElement("iframe");
+      viaProperties.allow = allow;
+      viaProperties.allowFullscreen = true;
+      viaProperties.src = `${childUrl}#properties`;
+      const viaMarkup = document.createElement("div");
+      viaMarkup.innerHTML = `<iframe src="${childUrl}#markup" allow="${allow}" allowfullscreen></iframe>`;
+      document.body.append(viaAttributes, viaProperties, viaMarkup);
+
+      await allReported;
+      return seen;
+    }, child.url("/child.html"));
+
+    expect(result).toEqual({ attributes: true, markup: true, properties: true });
+  } finally {
+    await page.close();
+    await child.close();
   }
 });
 

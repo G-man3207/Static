@@ -1,7 +1,9 @@
 // Static - MAIN-world iframe policy attribute normalizer.
 (() => {
   const U = globalThis.__static_block_utils__;
-  const LEGACY_ALLOW_ATTRS = ["allowfullscreen", "allowpaymentrequest"];
+  // Legacy attributes and the allow feature each grants (to every origin).
+  const LEGACY_ALLOW_FEATURES = { allowfullscreen: "fullscreen", allowpaymentrequest: "payment" };
+  const LEGACY_ALLOW_ATTRS = Object.keys(LEGACY_ALLOW_FEATURES);
   const IFRAME_POLICY_ATTR_RE =
     /\s(?:sandbox|allow|allowfullscreen|allowpaymentrequest)(?:\s*=|\s|\/?>)/i;
   const IFRAME_MARKUP_RE = /<iframe\b/i;
@@ -11,6 +13,7 @@
   const LEGACY_ALLOW_ATTR_RE =
     /\sallow(?:fullscreen|paymentrequest)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?/gi;
   const HAS_ALLOW_ATTR_RE = /\sallow(?:\s*=|\s|\/?>)/i;
+  const ALLOW_VALUE_RE = /\sallow\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
   const FALLBACK_SANDBOX_TOKENS = new Set([
     "allow-downloads",
     "allow-forms",
@@ -109,10 +112,25 @@
   const isIframe = (element) =>
     typeof HTMLIFrameElement !== "undefined" && element instanceof HTMLIFrameElement;
 
-  const removeLegacyAllowAttrs = (element) => {
+  // A legacy attribute only matters while allow does not set its feature
+  // itself and the browser supports that feature; otherwise it can go.
+  const legacyAllowAttrIsRedundant = (attr, allowValue) => {
+    const feature = LEGACY_ALLOW_FEATURES[attr];
+    const supported = getSupportedAllowFeatures();
+    if (supported.size && !supported.has(feature)) return true;
+    return String(allowValue == null ? "" : allowValue)
+      .split(";")
+      .some((directive) => directive.trim().split(/\s+/)[0].toLowerCase() === feature);
+  };
+
+  const removeLegacyAllowAttrs = (element, allowValue) => {
     for (const attr of LEGACY_ALLOW_ATTRS) {
       try {
-        if (element.hasAttribute(attr) && nativeRemoveAttribute) {
+        if (
+          element.hasAttribute(attr) &&
+          nativeRemoveAttribute &&
+          legacyAllowAttrIsRedundant(attr, allowValue)
+        ) {
           nativeRemoveAttribute.call(element, attr);
         }
       } catch {}
@@ -124,10 +142,15 @@
     const localName = U.attrLocalName(null, name);
     if (localName === "sandbox") return { skip: false, value: normalizeSandboxValue(value) };
     if (localName === "allow") {
-      removeLegacyAllowAttrs(element);
-      return { skip: false, value: normalizeAllowValue(value) };
+      const allowValue = normalizeAllowValue(value);
+      removeLegacyAllowAttrs(element, allowValue);
+      return { skip: false, value: allowValue };
     }
-    if (LEGACY_ALLOW_ATTRS.includes(localName) && element.hasAttribute("allow")) {
+    if (
+      LEGACY_ALLOW_ATTRS.includes(localName) &&
+      element.hasAttribute("allow") &&
+      legacyAllowAttrIsRedundant(localName, element.getAttribute("allow"))
+    ) {
       return { skip: true, value };
     }
     return { skip: false, value };
@@ -153,8 +176,13 @@
     if (!IFRAME_POLICY_ATTR_RE.test(tag)) return tag;
     let nextTag = tag.replace(SANDBOX_ATTR_RE, replaceSandboxAttr);
     nextTag = nextTag.replace(ALLOW_ATTR_RE, replaceAllowAttr);
-    if (HAS_ALLOW_ATTR_RE.test(nextTag)) nextTag = nextTag.replace(LEGACY_ALLOW_ATTR_RE, "");
-    return nextTag;
+    if (!HAS_ALLOW_ATTR_RE.test(nextTag)) return nextTag;
+    const allowMatch = nextTag.match(ALLOW_VALUE_RE);
+    const allowValue = allowMatch ? (allowMatch[1] ?? allowMatch[2] ?? allowMatch[3]) : "";
+    return nextTag.replace(LEGACY_ALLOW_ATTR_RE, (legacy) => {
+      const attr = legacy.trim().split(/[\s=]/)[0].toLowerCase();
+      return legacyAllowAttrIsRedundant(attr, allowValue) ? "" : legacy;
+    });
   };
 
   const sanitizeIframeMarkup = (value) => {
@@ -182,7 +210,7 @@
     }));
   };
 
-  const patchIframeStringProperty = (prop, normalize, beforeSet) => {
+  const patchIframeStringProperty = (prop, normalize, afterNormalize) => {
     if (typeof HTMLIFrameElement === "undefined") return;
     U.wrapSetter(HTMLIFrameElement.prototype, prop, (nativeSet) => ({
       set(value) {
@@ -190,18 +218,24 @@
           nativeSet.call(this, value);
           return;
         }
-        if (beforeSet) beforeSet(this);
-        nativeSet.call(this, normalize(value));
+        const normalized = normalize(value);
+        if (afterNormalize) afterNormalize(this, normalized);
+        nativeSet.call(this, normalized);
       },
     }));
   };
 
   const patchIframeLegacyBooleanProperty = (prop) => {
     if (typeof HTMLIFrameElement === "undefined") return;
+    const attr = prop.toLowerCase();
     U.wrapSetter(HTMLIFrameElement.prototype, prop, (nativeSet) => ({
       set(value) {
-        if (!disabled && value && this.hasAttribute("allow")) return;
-        nativeSet.call(this, value);
+        const redundant =
+          !disabled &&
+          value &&
+          this.hasAttribute("allow") &&
+          legacyAllowAttrIsRedundant(attr, this.getAttribute("allow"));
+        if (!redundant) nativeSet.call(this, value);
       },
     }));
   };
