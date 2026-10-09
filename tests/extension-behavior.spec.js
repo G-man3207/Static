@@ -282,17 +282,24 @@ test("popup site toggle keeps its status line in sync", async ({ extension, serv
       server.origin
     );
 
+  // The toggle reloads the site tab; a poll that lands mid-reload retries.
+  const domTraces = () =>
+    staticPageTraces(page).then(
+      (traces) => traces.dom,
+      () => null
+    );
+
   await expect(toggle).toBeChecked();
   await toggle.evaluate((input) => input.click());
   await expect(status).toHaveText("Paused. This site can see installed extensions again.");
   await expect.poll(isPaused).toBe(true);
-  // The toggle reloads the site tab, which then has no Static page code.
-  await expect.poll(async () => (await staticPageTraces(page)).dom).toEqual([]);
+  // After the reload the paused site has no Static page code.
+  await expect.poll(domTraces).toEqual([]);
 
   await toggle.evaluate((input) => input.click());
   await expect(status).toHaveText("On. Pause it if the page looks broken.");
   await expect.poll(isPaused).toBe(false);
-  await expect.poll(async () => (await staticPageTraces(page)).dom.length).toBeGreaterThan(0);
+  await expect.poll(async () => ((await domTraces()) || []).length).toBeGreaterThan(0);
 });
 
 test("popup site toggle reloads the tab the popup is for, not another tab on the site", async ({
