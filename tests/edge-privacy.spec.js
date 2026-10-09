@@ -620,7 +620,7 @@ test("setAttribute probes padded with extra arguments are still blocked", async 
   expect(result).toEqual([null, null]);
 });
 
-test("CSSOM rules containing extension URLs are blocked before insertion", async ({
+test("CSSOM rules containing extension URLs are neutralized before insertion", async ({
   extension,
   server,
 }) => {
@@ -630,7 +630,13 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
   const result = await page.evaluate(
     async (styleUrl) => {
       const insertedSheet = new CSSStyleSheet();
-      const insertResult = insertedSheet.insertRule(`@import url("${styleUrl}")`);
+      let insertResult;
+      try {
+        insertResult = insertedSheet.insertRule(`@import url("${styleUrl}")`);
+      } catch (error) {
+        // Constructed sheets reject @import natively, probe or not.
+        insertResult = error.name;
+      }
 
       const replaceSheet = new CSSStyleSheet();
       const replaceResult = await replaceSheet.replace(`@import url("${styleUrl}")`);
@@ -646,7 +652,7 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
       return {
         addRuleAvailable,
         addRuleResult,
-        addRuleRules: addRuleSheet.cssRules.length,
+        addRuleText: [...addRuleSheet.cssRules].map((rule) => rule.cssText).join(""),
         insertResult,
         insertedRules: insertedSheet.cssRules.length,
         replaceResultIsSheet: replaceResult === replaceSheet,
@@ -659,7 +665,7 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
   );
 
   expect(result).toMatchObject({
-    insertResult: 0,
+    insertResult: "SyntaxError",
     insertedRules: 0,
     replaceResultIsSheet: true,
     replaceRules: 0,
@@ -668,7 +674,8 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
   });
   if (result.addRuleAvailable) {
     expect(result.addRuleResult).toBe(-1);
-    expect(result.addRuleRules).toBe(0);
+    expect(result.addRuleText).toContain("background-image");
+    expect(result.addRuleText).not.toContain("chrome-extension://");
   }
 
   const expectedCounts = {
@@ -693,6 +700,30 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
       )
     )
     .toMatchObject(expectedCounts);
+});
+
+test("CSSOM keeps the rules around an extension URL mention", async ({ extension, server }) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(
+    (url) => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(
+        `a[href^="${url}"] { color: red } .card { color: blue } .nav { color: green }`
+      );
+      const hover = new CSSStyleSheet();
+      hover.insertRule(".install-chrome-extension:hover { color: red }");
+      return {
+        hasUrl: [...sheet.cssRules].some((rule) => rule.cssText.includes(url)),
+        hoverRules: hover.cssRules.length,
+        rules: sheet.cssRules.length,
+      };
+    },
+    probedUrl(PROBED_ID, "/style.css")
+  );
+
+  expect(result).toEqual({ hasUrl: false, hoverRules: 1, rules: 3 });
 });
 
 const cssVectorCountsFor = (extension, origin) =>
@@ -757,7 +788,7 @@ test("CSS-escaped extension URLs are blocked in style text, CSSOM and declaratio
 
       return {
         importHref: style.sheet.cssRules[0].href,
-        insertedRules: sheet.cssRules.length,
+        insertedRule: sheet.cssRules[0].cssText.includes("about:invalid"),
         marginLeft: getComputedStyle(target).marginLeft,
         setProperty: declared.style.backgroundImage,
       };
@@ -767,7 +798,7 @@ test("CSS-escaped extension URLs are blocked in style text, CSSOM and declaratio
 
   expect(result).toEqual({
     importHref: "about:invalid",
-    insertedRules: 0,
+    insertedRule: true,
     marginLeft: "9px",
     setProperty: "",
   });

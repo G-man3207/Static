@@ -297,15 +297,17 @@
     }));
   };
 
-  const patchCssMethod = (proto, name, label, onBlocked) => {
+  // CSS text arguments go on with their extension URLs neutralized, so the
+  // browser handles the rest (and rejects what it would reject natively).
+  const patchCssMethod = (proto, name, label, cssArgCount = 1) => {
     U.wrapMethod(proto, name, (orig) => ({
       [name](...args) {
         if (disabled) return orig.apply(this, args);
-        const target = name === "addRule" ? `${args[0] || ""} ${args[1] || ""}` : args[0];
-        const url = U.sanitizeCssText(target).url || U.firstBadUrlIn(target);
-        if (url) {
+        for (let index = 0; index < Math.min(cssArgCount, args.length); index++) {
+          const { text, url } = U.sanitizeCssText(args[index]);
+          if (!url) continue;
           bridge.probe(url, label);
-          return onBlocked.call(this, args);
+          args[index] = text;
         }
         return orig.apply(this, args);
       },
@@ -314,16 +316,10 @@
 
   const patchCssRules = () => {
     if (typeof CSSStyleSheet === "undefined" || !CSSStyleSheet.prototype) return;
-    patchCssMethod(CSSStyleSheet.prototype, "insertRule", "css.insertRule", function (args) {
-      return typeof args[1] === "number" ? args[1] : 0;
-    });
-    patchCssMethod(CSSStyleSheet.prototype, "replace", "css.replace", function () {
-      return Promise.resolve(this);
-    });
-    patchCssMethod(CSSStyleSheet.prototype, "replaceSync", "css.replaceSync", function () {});
-    patchCssMethod(CSSStyleSheet.prototype, "addRule", "css.addRule", function () {
-      return -1;
-    });
+    patchCssMethod(CSSStyleSheet.prototype, "insertRule", "css.insertRule");
+    patchCssMethod(CSSStyleSheet.prototype, "replace", "css.replace");
+    patchCssMethod(CSSStyleSheet.prototype, "replaceSync", "css.replaceSync");
+    patchCssMethod(CSSStyleSheet.prototype, "addRule", "css.addRule", 2);
   };
 
   patchElementProperties();
