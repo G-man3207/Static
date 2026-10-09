@@ -82,6 +82,16 @@ const HEADER_RULES_STORAGE_KEY = "header_rules";
 const MAX_HEADER_RULE_ORIGINS = 150; // LRU cap (DNR dynamic-rule budget is finite)
 let dnrNextRuleId = UA_RULE_ID_BASE;
 
+// Every frame of a page asks for its persona as it starts, so header-rule
+// changes for one origin arrive together. They run one at a time: run
+// concurrently, each would add its own rule, and the untracked ones would keep
+// spoofing the site after it is paused.
+let headerRuleChain = Promise.resolve();
+const queueHeaderRuleChange = (fn) => {
+  headerRuleChain = headerRuleChain.then(fn).catch((err) => safeLog(err, "header rule change"));
+  return headerRuleChain;
+};
+
 const ALL_RESOURCE_TYPES = [
   "main_frame",
   "sub_frame",
@@ -109,41 +119,48 @@ const userAgentStringFor = (uaOs) => {
   return `Mozilla/5.0 (${uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36`;
 };
 
-const ensureOriginHeaderRule = async (origin, fingerprintMode, persona) => {
-  if (!origin || fingerprintMode !== "mask" || !persona || !persona.uaOs) return;
+const ensureOriginHeaderRule = (origin, fingerprintMode, persona) =>
+  queueHeaderRuleChange(async () => {
+    if (!origin || fingerprintMode !== "mask" || !persona || !persona.uaOs) return;
 
-  // Remove stale rule for this origin first
-  await removeOriginHeaderRule(origin);
+    const uaString = userAgentStringFor(persona.uaOs);
+    const existing = originHeaderRules.get(origin);
+    if (existing && existing.uaString === uaString) {
+      existing.lastUsed = Date.now();
+      return;
+    }
 
-  const uaString = userAgentStringFor(persona.uaOs);
-  const hostname = new URL(origin).hostname;
+    // Remove stale rule for this origin first
+    await dropOriginHeaderRule(origin);
 
-  // Build a single modifyHeaders rule that sets User-Agent AND strips Sec-CH-UA
-  const requestHeaders = [{ header: "User-Agent", operation: "set", value: uaString }];
-  for (const header of SEC_CH_UA_HEADERS) {
-    requestHeaders.push({ header, operation: "remove" });
-  }
+    const hostname = new URL(origin).hostname;
 
-  const ruleId = dnrNextRuleId++;
-  if (dnrNextRuleId > HEADER_RULE_ID_MAX) dnrNextRuleId = UA_RULE_ID_BASE;
-  const rule = {
-    id: ruleId,
-    priority: 100,
-    action: { type: "modifyHeaders", requestHeaders },
-    condition: headerRuleConditionFor(hostname),
-  };
+    // Build a single modifyHeaders rule that sets User-Agent AND strips Sec-CH-UA
+    const requestHeaders = [{ header: "User-Agent", operation: "set", value: uaString }];
+    for (const header of SEC_CH_UA_HEADERS) {
+      requestHeaders.push({ header, operation: "remove" });
+    }
 
-  try {
-    await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [rule] });
-  } catch (_err) {
-    // If adding fails (e.g. rule limit exceeded), silently skip
-    return;
-  }
+    const ruleId = dnrNextRuleId++;
+    if (dnrNextRuleId > HEADER_RULE_ID_MAX) dnrNextRuleId = UA_RULE_ID_BASE;
+    const rule = {
+      id: ruleId,
+      priority: 100,
+      action: { type: "modifyHeaders", requestHeaders },
+      condition: headerRuleConditionFor(hostname),
+    };
 
-  originHeaderRules.set(origin, { ruleId, uaString, lastUsed: Date.now() });
-  evictExcessHeaderRules();
-  await persistHeaderRules();
-};
+    try {
+      await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [rule] });
+    } catch (_err) {
+      // If adding fails (e.g. rule limit exceeded), silently skip
+      return;
+    }
+
+    originHeaderRules.set(origin, { ruleId, uaString, lastUsed: Date.now() });
+    evictExcessHeaderRules();
+    await persistHeaderRules();
+  });
 
 // Build a DNR condition that matches requests to `hostname` without matching
 // it as an arbitrary substring of a larger URL. requestDomains does not apply
@@ -160,7 +177,7 @@ const headerRuleConditionFor = (hostname) => {
   return { requestDomains: [hostname], resourceTypes: ALL_RESOURCE_TYPES };
 };
 
-const removeOriginHeaderRule = async (origin) => {
+const dropOriginHeaderRule = async (origin) => {
   const existing = originHeaderRules.get(origin);
   if (!existing) return;
 
@@ -173,6 +190,9 @@ const removeOriginHeaderRule = async (origin) => {
     // Ignore removal errors — rule may already be gone
   }
 };
+
+const removeOriginHeaderRule = (origin) =>
+  queueHeaderRuleChange(() => dropOriginHeaderRule(origin));
 
 // LRU eviction: if the map exceeds the cap, drop the least-recently-used
 // origins (smallest lastUsed) until under the limit.
@@ -205,25 +225,26 @@ const persistHeaderRules = () =>
     });
   });
 
-const clearAllHeaderRules = async () => {
-  const ruleIds = new Set([...originHeaderRules.values()].map((entry) => entry.ruleId));
-  originHeaderRules.clear();
-  await persistHeaderRules();
+const clearAllHeaderRules = () =>
+  queueHeaderRuleChange(async () => {
+    const ruleIds = new Set([...originHeaderRules.values()].map((entry) => entry.ruleId));
+    originHeaderRules.clear();
+    await persistHeaderRules();
 
-  // Always sweep our whole ID range to catch any orphaned rules from a prior
-  // session, even if the in-memory map was already empty.
-  try {
-    for (const rule of await chrome.declarativeNetRequest.getDynamicRules()) {
-      if (isHeaderRuleId(rule.id)) ruleIds.add(rule.id);
-    }
-  } catch {}
+    // Always sweep our whole ID range to catch any orphaned rules from a prior
+    // session, even if the in-memory map was already empty.
+    try {
+      for (const rule of await chrome.declarativeNetRequest.getDynamicRules()) {
+        if (isHeaderRuleId(rule.id)) ruleIds.add(rule.id);
+      }
+    } catch {}
 
-  if (ruleIds.size === 0) return;
+    if (ruleIds.size === 0) return;
 
-  try {
-    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [...ruleIds] });
-  } catch {}
-};
+    try {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [...ruleIds] });
+    } catch {}
+  });
 
 const cleanupStaleHeaderRules = async () => {
   // Called on service-worker init. Reconcile the persisted rule map against
@@ -1575,7 +1596,8 @@ chrome.runtime.onStartup.addListener(() => {
 syncContentScripts();
 
 // ─── Startup: reconcile persisted DNR header rules against live state ────
-cleanupStaleHeaderRules()
+// Queued first so later header-rule changes see the restored map.
+queueHeaderRuleChange(cleanupStaleHeaderRules)
   .then(() => reconcilePauseAllowRulesFromStorage())
   .catch((err) => safeLog(err, "startup DNR reconcile"));
 // Mirror the persisted diagnostics flag into the in-memory gate so safeLog is
