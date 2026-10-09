@@ -14,8 +14,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 - Video embeds that pair `allow` with `allowfullscreen` (YouTube's standard embed code) keep their fullscreen button when a script adds them. Static removed `allowfullscreen` whenever `allow` was present, even when `allow` did not grant fullscreen itself.
 - On sites that enforce Trusted Types, Static no longer breaks the page's own `TrustedHTML` in `innerHTML`, `outerHTML`, `insertAdjacentHTML` and shadow roots, and no longer turns plain strings into `TrustedHTML`, which had switched off the site's protection for those calls. `innerHTML = null` empties the element again instead of writing "null".
-- A `<style>` that mentions an extension URL keeps the rest of its rules; only that URL is replaced with an inert one. Static used to empty the whole stylesheet.
-- Extension probes hidden with CSS escapes (`url("chrome\-extension://…")`) or with tabs, newlines and control characters that the browser's URL parser ignores are now blocked like plain ones.
+- A `<style>` or constructed stylesheet (`insertRule`, `replace`, `replaceSync`) that mentions an extension URL keeps the rest of its rules; only that URL is replaced with an inert one. Static used to empty the whole stylesheet or drop the call.
+- Extension probes hidden with CSS escapes (`url("chrome\-extension://…")`), split across pieces of `<style>` text, or padded with tabs, newlines and control characters that the browser's URL parser ignores are now blocked like plain ones.
 - Page `MutationObserver`s again see their own elements that carry extension opt-out attributes such as `data-gramm="false"` or `data-1p-ignore`. Only records made up entirely of extension-injected elements stay hidden.
 - `Object.assign(window, …)` keeps symbol-keyed properties.
 - **Pause this site and reload** reloads the tab the popup was opened for, instead of the first tab on that site.
