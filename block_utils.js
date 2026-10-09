@@ -1,3 +1,4 @@
+/* eslint-disable max-lines, max-statements -- shared readers (URLs, CSS, HTML sinks) stay in one place so every MAIN-world script reads values the same way */
 // Static - shared MAIN-world utilities for block content scripts.
 // This file must load FIRST among MAIN-world content scripts in manifest.json.
 (() => {
@@ -191,8 +192,16 @@
     }
   };
 
+  // Every extension scheme ends in "extension:", which the URL parser still
+  // reads through tabs and newlines; text without it can name none.
+  const EXTENSION_TAIL_RE =
+    /e[\t\n\r]*x[\t\n\r]*t[\t\n\r]*e[\t\n\r]*n[\t\n\r]*s[\t\n\r]*i[\t\n\r]*o[\t\n\r]*n[\t\n\r]*:/i;
+
   // Whether text (markup, a list of URLs) mentions an extension URL anywhere.
-  U.hasBadUrl = (text) => U.BAD_URL_RE.test(withoutTabsOrNewlines(text == null ? "" : text));
+  U.hasBadUrl = (text) => {
+    const value = String(text == null ? "" : text);
+    return EXTENSION_TAIL_RE.test(value) && U.BAD_URL_RE.test(withoutTabsOrNewlines(value));
+  };
 
   // ======================================================================
   // CSS — only string and url() tokens make the browser load anything, and
@@ -208,6 +217,12 @@
   const startsCssEscape = (text, i) =>
     text[i] === "\\" && i + 1 < text.length && !isCssNewline(text[i + 1]);
 
+  const decodeCssHex = (hex) => {
+    const code = parseInt(hex, 16);
+    const valid = code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
+    return valid ? String.fromCodePoint(code) : "\ufffd";
+  };
+
   // CSS Syntax "consume an escaped code point"; text[i] is the backslash.
   const consumeCssEscape = (text, i) => {
     const hex = /^[\da-f]{1,6}/i.exec(text.slice(i + 1, i + 7));
@@ -215,10 +230,16 @@
     let next = i + 1 + hex[0].length;
     if (text[next] === "\r" && text[next + 1] === "\n") next += 2;
     else if (isCssWhitespace(text[next] || "")) next += 1;
-    const code = parseInt(hex[0], 16);
-    const valid = code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
-    return [valid ? String.fromCodePoint(code) : "�", next];
+    return [decodeCssHex(hex[0]), next];
   };
+
+  // CSS text with every escape decoded (escaped newlines dropped), to look
+  // for what the CSS parser will read without tokenizing it.
+  const CSS_ESCAPE_RE = /\\(?:([\da-f]{1,6})(?:\r\n|[ \t\n\r\f])?|([^\n\r\f])|[\n\r\f])/gi;
+  U.cssUnescape = (text) =>
+    String(text).replace(CSS_ESCAPE_RE, (match, hex, char) =>
+      hex ? decodeCssHex(hex) : char || ""
+    );
 
   // A quoted string's value; it ends at the closing quote or, unclosed, at a newline.
   const consumeCssString = (text, start) => {
@@ -287,11 +308,20 @@
     return { end: urlEnd, value };
   };
 
+  let lastCleanCss = "";
+
   // { text, url }: the CSS with each string or url() token that resolves to
   // an extension URL replaced by an inert one, and the first such URL ("" if none).
   U.sanitizeCssText = (input) => {
     const text = String(input == null ? "" : input);
-    if (!text.includes("\\") && !U.hasBadUrl(text)) return { text, url: "" };
+    // Most CSS names no extension scheme even with its escapes decoded: skip
+    // the tokenizer then, and for the text just found clean (style text is
+    // checked by its setter, on insertion, and again by the observer).
+    if (text === lastCleanCss) return { text, url: "" };
+    if (!U.hasBadUrl(text.includes("\\") ? U.cssUnescape(text) : text)) {
+      lastCleanCss = text;
+      return { text, url: "" };
+    }
     let out = "";
     let copied = 0;
     let url = "";
@@ -321,6 +351,7 @@
         i++;
       }
     }
+    if (!url) lastCleanCss = text;
     return url ? { text: out + text.slice(copied), url } : { text, url: "" };
   };
 
