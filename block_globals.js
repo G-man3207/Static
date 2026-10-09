@@ -135,6 +135,21 @@
     }));
   };
 
+  // A source as Object.assign would copy it minus protected keys: the source
+  // itself when it has none, else its own enumerable keys, symbols included.
+  const assignableSource = (target, source) => {
+    if (!source || typeof source !== "object") return source;
+    const keys = Reflect.ownKeys(source);
+    if (!keys.some(isProtectedKey)) return source;
+    const filtered = {};
+    for (const key of keys) {
+      if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue;
+      if (isProtectedKey(key)) scrubOwnProp(target, key);
+      else filtered[key] = source[key];
+    }
+    return filtered;
+  };
+
   const patchObjectAssign = () => {
     U.wrapMethod(Object, "assign", (orig) => ({
       assign(target) {
@@ -142,20 +157,7 @@
         if (!isProtectedTarget(target)) return orig.apply(this, arguments);
         const sources = [];
         for (let i = 1; i < arguments.length; i++) {
-          const source = arguments[i];
-          if (!source || typeof source !== "object") {
-            sources.push(source);
-            continue;
-          }
-          const filtered = {};
-          for (const [key, value] of Object.entries(source)) {
-            if (isProtectedKey(key)) {
-              scrubOwnProp(target, key);
-              continue;
-            }
-            filtered[key] = value;
-          }
-          sources.push(filtered);
+          sources.push(assignableSource(target, arguments[i]));
         }
         return orig.call(this, target, ...sources);
       },
