@@ -523,12 +523,15 @@
 
   // What a wrapper hands on after reading text from value and producing next:
   // the page's own value when nothing changed; otherwise next, re-created as
-  // TrustedHTML when the page passed TrustedHTML (kept as it was when Static
-  // has no policy). Changed strings stay strings, and objects become the
-  // string already read so their toString() runs once.
-  U.htmlSinkValue = (value, text, next) => {
+  // TrustedHTML when the page passed TrustedHTML. Without a Static policy a
+  // cosmetic change is dropped (the page's value goes on) and a blocking one
+  // goes on as a string: accepted unless the page enforces Trusted Types.
+  // Changed strings stay strings, and objects become the string already read
+  // so their toString() runs once.
+  U.htmlSinkValue = (value, text, next, cosmetic = false) => {
     if (trustedHtmlText && isTrustedHtml(value)) {
-      return next === text ? value : U.trustedHtml(next) || value;
+      if (next === text) return value;
+      return U.trustedHtml(next) || (cosmetic ? value : next);
     }
     if (next === text && (value === null || typeof value === "string")) return value;
     return next;

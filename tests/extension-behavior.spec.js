@@ -1043,6 +1043,41 @@ test("passes page TrustedHTML through on pages whose CSP header lists their poli
   }
 });
 
+test("sanitizes probing page TrustedHTML where Static cannot create a policy", async ({
+  extension,
+}) => {
+  const ttServer = await startHeaderFixtureServer({
+    body: '<!doctype html><meta charset="utf-8"><body><div id="host"></div></body>',
+    headers: {
+      // Names the page's policy without requiring Trusted Types: strings still work.
+      "content-security-policy": "trusted-types app",
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
+  const page = await extension.context.newPage();
+
+  try {
+    await page.goto(ttServer.url("/"));
+    await page.evaluate(
+      (url) => {
+        const policy = trustedTypes.createPolicy("app", { createHTML: (html) => html });
+        document.getElementById("host").innerHTML = policy.createHTML(`<img src="${url}">`);
+      },
+      probedUrl(PROBED_ID, "/icon.png")
+    );
+
+    // Read the real DOM: Static's own getters report the page's value.
+    const client = await extension.context.newCDPSession(page);
+    const { root } = await client.send("DOM.getDocument", { depth: -1 });
+    const { outerHTML } = await client.send("DOM.getOuterHTML", { nodeId: root.nodeId });
+    expect(outerHTML).toContain("<img");
+    expect(outerHTML).not.toContain("chrome-extension://");
+  } finally {
+    await page.close();
+    await ttServer.close();
+  }
+});
+
 test("suppresses unsafe-header console errors while preserving exposed XHR headers", async ({
   extension,
   server,

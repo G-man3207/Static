@@ -248,7 +248,7 @@
           return;
         }
         const text = U.htmlSinkText(value, true);
-        nativeSet.call(this, U.htmlSinkValue(value, text, sanitizeIframeMarkup(text)));
+        nativeSet.call(this, U.htmlSinkValue(value, text, sanitizeIframeMarkup(text), true));
       },
     }));
   };
@@ -258,7 +258,11 @@
       insertAdjacentHTML(position, html) {
         if (disabled || arguments.length < 2) return orig.apply(this, arguments);
         const text = U.htmlSinkText(html, false);
-        return orig.call(this, position, U.htmlSinkValue(html, text, sanitizeIframeMarkup(text)));
+        return orig.call(
+          this,
+          position,
+          U.htmlSinkValue(html, text, sanitizeIframeMarkup(text), true)
+        );
       },
     }));
   };
