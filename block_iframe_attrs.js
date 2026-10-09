@@ -32,7 +32,6 @@
   let sandboxTokenList = null;
   let nativeRemoveAttribute = null;
   let disabled = false;
-  let trustedHtmlPolicy = undefined;
 
   const applyConfigUpdate = (data) => {
     if (data && data.type === "config_update" && typeof data.disabled === "boolean") {
@@ -91,26 +90,6 @@
     normalizedTokensFor(tokens.map((token) => String(token)).join(" "), sandboxSupports);
 
   const normalizeSandboxValue = (value) => normalizedTokensFor(value, sandboxSupports).join(" ");
-
-  const trustedHtmlPolicyForSink = () => {
-    if (trustedHtmlPolicy !== undefined) return trustedHtmlPolicy;
-    if (!globalThis.trustedTypes || typeof globalThis.trustedTypes.createPolicy !== "function") {
-      trustedHtmlPolicy = null;
-      return null;
-    }
-    if (!U.cspAllowsTrustedTypesPolicy("staticBlockIframeAttrs")) {
-      trustedHtmlPolicy = null;
-      return null;
-    }
-    try {
-      trustedHtmlPolicy = globalThis.trustedTypes.createPolicy("staticBlockIframeAttrs", {
-        createHTML: (html) => sanitizeIframeMarkup(html),
-      });
-    } catch {
-      trustedHtmlPolicy = null;
-    }
-    return trustedHtmlPolicy;
-  };
 
   const normalizeAllowValue = (value) => {
     const raw = value == null ? "" : String(value);
@@ -227,30 +206,25 @@
     }));
   };
 
-  // If Trusted Types is enforced (at document_start this is from HTTP headers,
-  // not meta tags) but we cannot create a compatible policy, leave HTML sinks
-  // unpatched to avoid TrustedHTML assignment violations.
-  const canPatchHtmlSinks = () => trustedHtmlPolicy !== null || !U.cspRequiresTrustedTypes();
-
-  const trustedHtmlFor = (value) => {
-    const html = sanitizeIframeMarkup(value);
-    return trustedHtmlPolicy ? trustedHtmlPolicy.createHTML(html) : html;
-  };
-
   const patchHtmlSink = (proto, prop) => {
-    if (!canPatchHtmlSinks()) return;
     U.wrapSetter(proto, prop, (nativeSet) => ({
       set(value) {
-        nativeSet.call(this, disabled ? value : trustedHtmlFor(value));
+        if (disabled) {
+          nativeSet.call(this, value);
+          return;
+        }
+        const text = U.htmlSinkText(value, true);
+        nativeSet.call(this, U.htmlSinkValue(value, text, sanitizeIframeMarkup(text)));
       },
     }));
   };
 
   const patchInsertAdjacentHTML = () => {
-    if (!canPatchHtmlSinks()) return;
     U.wrapMethod(Element.prototype, "insertAdjacentHTML", (orig) => ({
       insertAdjacentHTML(position, html) {
-        return orig.call(this, position, disabled ? html : trustedHtmlFor(html));
+        if (disabled || arguments.length < 2) return orig.apply(this, arguments);
+        const text = U.htmlSinkText(html, false);
+        return orig.call(this, position, U.htmlSinkValue(html, text, sanitizeIframeMarkup(text)));
       },
     }));
   };
@@ -306,11 +280,6 @@
       },
     }));
   };
-
-  // Initialize Trusted Types policy eagerly so it is ready before any HTML
-  // sink patch is exercised. At document_start the meta-tag CSP may not be
-  // parsed yet, but trustedTypes.createPolicy works from HTTP-header CSP.
-  trustedHtmlPolicyForSink();
 
   if (typeof Element !== "undefined" && Element.prototype) {
     patchAttributeSetters();

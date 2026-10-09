@@ -481,8 +481,58 @@
       (tokens) => !tokens.includes("none") && (tokens.includes("*") || tokens.includes(policyName))
     );
 
-  U.cspRequiresTrustedTypes = () =>
-    cspMetaDirectives("require-trusted-types-for").some((tokens) => tokens.includes("script"));
+  // ======================================================================
+  // HTML sinks — innerHTML / outerHTML / insertAdjacentHTML take TrustedHTML
+  // or a string. Wrappers read the markup the way the sink converts it and
+  // hand the page's own value on unless they change the markup, so pages
+  // keep enforcing their own Trusted Types policies.
+  // ======================================================================
+
+  let trustedHtmlPolicy = null;
+  let isTrustedHtml = () => false;
+  let trustedHtmlText = null;
+  try {
+    const factory = globalThis.trustedTypes;
+    isTrustedHtml = factory.isHTML.bind(factory);
+    trustedHtmlText = TrustedHTML.prototype.toString;
+    // Created at document_start: header CSP applies, a later <meta> allow-list does not.
+    if (U.cspAllowsTrustedTypesPolicy("staticBlockIframeAttrs")) {
+      trustedHtmlPolicy = factory.createPolicy("staticBlockIframeAttrs", {
+        createHTML: (html) => html,
+      });
+    }
+  } catch {}
+
+  // TrustedHTML from Static's own policy, or null when the page's CSP forbids it.
+  U.trustedHtml = (html) => {
+    try {
+      return trustedHtmlPolicy ? trustedHtmlPolicy.createHTML(html) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // The markup a sink reads from value: TrustedHTML keeps its own text, the
+  // [LegacyNullToEmptyString] properties read null as "", and anything else
+  // is stringified once (a Symbol throws, as it does natively).
+  U.htmlSinkText = (value, nullIsEmpty) => {
+    if (value === null && nullIsEmpty) return "";
+    if (trustedHtmlText && isTrustedHtml(value)) return trustedHtmlText.call(value);
+    return `${value}`;
+  };
+
+  // What a wrapper hands on after reading text from value and producing next:
+  // the page's own value when nothing changed; otherwise next, re-created as
+  // TrustedHTML when the page passed TrustedHTML (kept as it was when Static
+  // has no policy). Changed strings stay strings, and objects become the
+  // string already read so their toString() runs once.
+  U.htmlSinkValue = (value, text, next) => {
+    if (trustedHtmlText && isTrustedHtml(value)) {
+      return next === text ? value : U.trustedHtml(next) || value;
+    }
+    if (next === text && (value === null || typeof value === "string")) return value;
+    return next;
+  };
 
   // ======================================================================
   // Bridge setup — shared MessagePort init pattern used by most block scripts.

@@ -870,7 +870,7 @@ test("uses TrustedScriptURL-compatible script decoys on Trusted Types pages", as
   }
 });
 
-test("uses TrustedHTML-compatible HTML sinks on Trusted Types pages", async ({
+test("keeps page TrustedHTML working through HTML sinks on Trusted Types pages", async ({
   extension,
   server,
 }) => {
@@ -884,51 +884,107 @@ test("uses TrustedHTML-compatible HTML sinks on Trusted Types pages", async ({
     await page.waitForTimeout(100);
 
     const result = await page.evaluate(() => {
-      const outcomes = {};
-
-      // Test innerHTML with safe content
-      try {
-        const div = document.createElement("div");
-        div.innerHTML = '<span class="test">hello</span>';
-        outcomes.innerHTML = { ok: true, html: div.innerHTML };
-      } catch (error) {
-        outcomes.innerHTML = { message: error.message, name: error.name, ok: false };
-      }
-
-      // Test innerHTML with iframe markup (sanitization should still work)
-      try {
-        const div2 = document.createElement("div");
-        div2.innerHTML =
-          '<iframe src="https://example.com" sandbox="allow-scripts allow-same-origin unknown-token"></iframe>';
-        outcomes.iframeSanitized = { ok: true, html: div2.innerHTML };
-      } catch (error) {
-        outcomes.iframeSanitized = { message: error.message, name: error.name, ok: false };
-      }
-
-      // Test insertAdjacentHTML
-      try {
-        const div3 = document.createElement("div");
-        div3.insertAdjacentHTML("beforeend", "<p>inserted</p>");
-        outcomes.insertAdjacentHTML = { ok: true, html: div3.innerHTML };
-      } catch (error) {
-        outcomes.insertAdjacentHTML = { message: error.message, name: error.name, ok: false };
-      }
-
-      return outcomes;
+      const policy = trustedTypes.createPolicy("page", { createHTML: (html) => html });
+      const div = document.createElement("div");
+      div.innerHTML = policy.createHTML('<span class="test">hello</span>');
+      const framed = document.createElement("div");
+      framed.innerHTML = policy.createHTML(
+        '<iframe src="https://example.com" sandbox="allow-scripts allow-same-origin unknown-token"></iframe>'
+      );
+      const inserted = document.createElement("div");
+      inserted.insertAdjacentHTML("beforeend", policy.createHTML("<p>inserted</p>"));
+      return {
+        innerHTML: div.innerHTML,
+        insertAdjacentHTML: inserted.innerHTML,
+        sandbox: framed.querySelector("iframe").getAttribute("sandbox"),
+      };
     });
 
-    expect(result.innerHTML).toEqual({ ok: true, html: '<span class="test">hello</span>' });
-    expect(result.insertAdjacentHTML).toEqual({ ok: true, html: "<p>inserted</p>" });
-    expect(result.iframeSanitized.ok).toBe(true);
+    expect(result).toEqual({
+      innerHTML: '<span class="test">hello</span>',
+      insertAdjacentHTML: "<p>inserted</p>",
+      sandbox: "allow-scripts allow-same-origin",
+    });
     expect(messages.filter((message) => /TrustedHTML assignment/i.test(message.text))).toEqual([]);
-    expect(
-      messages.filter((message) => /Failed to set the 'innerHTML'/i.test(message.text))
-    ).toEqual([]);
-    expect(
-      messages.filter((message) => /Failed to execute 'insertAdjacentHTML'/i.test(message.text))
-    ).toEqual([]);
   } finally {
     page.off("console", onConsole);
+  }
+});
+
+test("leaves plain strings to the page's Trusted Types enforcement", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/trusted-types.html"));
+
+  const outcome = await page.evaluate(() => {
+    try {
+      document.createElement("div").innerHTML = "<b>untrusted</b>";
+      return "assigned";
+    } catch (error) {
+      return error.name;
+    }
+  });
+
+  // Natively a page that requires Trusted Types rejects plain strings here.
+  expect(outcome).toBe("TypeError");
+});
+
+test("passes page TrustedHTML through on pages whose CSP header lists their policies", async ({
+  extension,
+}) => {
+  const ttServer = await startHeaderFixtureServer({
+    body: '<!doctype html><meta charset="utf-8"><body>trusted</body>',
+    headers: {
+      "content-security-policy": "require-trusted-types-for 'script'; trusted-types app",
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
+  const page = await extension.context.newPage();
+
+  try {
+    await page.goto(ttServer.url("/"));
+    const result = await page.evaluate(() => {
+      const policy = trustedTypes.createPolicy("app", { createHTML: (html) => html });
+      const attempt = (write) => {
+        try {
+          return write();
+        } catch (error) {
+          return error.name;
+        }
+      };
+      const host = document.createElement("div");
+      const shadow = document.createElement("div").attachShadow({ mode: "open" });
+      return {
+        innerHTML: attempt(() => {
+          host.innerHTML = policy.createHTML("<b>ok</b>");
+          return host.innerHTML;
+        }),
+        insertAdjacentHTML: attempt(() => {
+          host.insertAdjacentHTML("beforeend", policy.createHTML("<i>more</i>"));
+          return host.innerHTML;
+        }),
+        outerHTML: attempt(() => {
+          host.querySelector("b").outerHTML = policy.createHTML("<p>swapped</p>");
+          return host.innerHTML;
+        }),
+        shadowInnerHTML: attempt(() => {
+          shadow.innerHTML = policy.createHTML("<u>shadow</u>");
+          return shadow.innerHTML;
+        }),
+      };
+    });
+
+    expect(result).toEqual({
+      innerHTML: "<b>ok</b>",
+      insertAdjacentHTML: "<b>ok</b><i>more</i>",
+      outerHTML: "<p>swapped</p><i>more</i>",
+      shadowInnerHTML: "<u>shadow</u>",
+    });
+  } finally {
+    await page.close();
+    await ttServer.close();
   }
 });
 

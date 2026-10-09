@@ -905,9 +905,9 @@
             nativeSet.call(this, value);
             return;
           }
-          const input = typeof value === "string" ? value : String(value);
-          const { sanitized, tokenMap } = sanitizeHtmlMarkup(input, prop);
-          nativeSet.call(this, sanitized);
+          const text = U.htmlSinkText(value, true);
+          const { sanitized, tokenMap } = sanitizeHtmlMarkup(text, prop);
+          nativeSet.call(this, U.htmlSinkValue(value, text, sanitized));
           if (tokenMap && tokenMap.size > 0) {
             attachRemembersToSubtree(this, tokenMap);
           }
@@ -922,10 +922,10 @@
   const patchInsertAdjacentHTMLForElements = () => {
     U.wrapMethod(Element.prototype, "insertAdjacentHTML", (orig) => ({
       insertAdjacentHTML(position, html) {
-        if (disabled) return orig.call(this, position, html);
-        const input = typeof html === "string" ? html : String(html);
-        const { sanitized, tokenMap } = sanitizeHtmlMarkup(input, "insertAdjacentHTML");
-        const result = orig.call(this, position, sanitized);
+        if (disabled || arguments.length < 2) return orig.apply(this, arguments);
+        const text = U.htmlSinkText(html, false);
+        const { sanitized, tokenMap } = sanitizeHtmlMarkup(text, "insertAdjacentHTML");
+        const result = orig.call(this, position, U.htmlSinkValue(html, text, sanitized));
         if (tokenMap && tokenMap.size > 0) {
           attachRemembersToSubtree(this, tokenMap);
         }

@@ -166,7 +166,7 @@ test("innerHTML with React-like object pattern renders content correctly", async
     root.innerHTML = 42;
     patterns.push(root.textContent?.trim() || "FAIL");
 
-    // Pattern 4: null/undefined (should not throw, native converts to "null"/"undefined")
+    // Pattern 4: null (innerHTML treats null as an empty string)
     try {
       root.innerHTML = null;
       patterns.push(`null -> ${root.textContent}`);
@@ -181,7 +181,7 @@ test("innerHTML with React-like object pattern renders content correctly", async
   expect(result[0]).toBe("rendered from object");
   expect(result[1]).toBe("array content");
   expect(result[2]).toBe("42");
-  expect(result[3]).toBe("null -> null");
+  expect(result[3]).toBe("null -> ");
 });
 
 // ---------------------------------------------------------------------------

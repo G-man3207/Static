@@ -139,7 +139,8 @@
     }
     const template = document.createElement("template");
     try {
-      innerHTMLDesc.set.call(template, value);
+      // Static's own TrustedHTML: Trusted Types pages reject plain strings.
+      innerHTMLDesc.set.call(template, U.trustedHtml(value) || value);
     } catch {
       return value;
     }
@@ -223,10 +224,11 @@
           nativeSet.call(this, value);
           return;
         }
-        const nextValue = isStyleElement(this)
-          ? sanitizeStyleText("style.innerHTML", value)
-          : sanitizeStyleMarkup(value, "style.innerHTML", innerHTMLDesc);
-        nativeSet.call(this, nextValue);
+        const text = U.htmlSinkText(value, true);
+        const next = isStyleElement(this)
+          ? sanitizeStyleText("style.innerHTML", text)
+          : sanitizeStyleMarkup(text, "style.innerHTML", innerHTMLDesc);
+        nativeSet.call(this, U.htmlSinkValue(value, text, next));
       },
     }));
   };
@@ -235,10 +237,13 @@
     if (!innerHTMLDesc) return;
     U.wrapSetter(proto, "outerHTML", (nativeSet) => ({
       set(value) {
-        nativeSet.call(
-          this,
-          disabled ? value : sanitizeStyleMarkup(value, "style.outerHTML", innerHTMLDesc)
-        );
+        if (disabled) {
+          nativeSet.call(this, value);
+          return;
+        }
+        const text = U.htmlSinkText(value, true);
+        const next = sanitizeStyleMarkup(text, "style.outerHTML", innerHTMLDesc);
+        nativeSet.call(this, U.htmlSinkValue(value, text, next));
       },
     }));
   };
@@ -247,11 +252,12 @@
     if (!innerHTMLDesc) return;
     U.wrapMethod(proto, "insertAdjacentHTML", (orig) => ({
       insertAdjacentHTML(position, html) {
-        if (disabled) return orig.call(this, position, html);
-        const nextHtml = isStyleElement(this)
-          ? sanitizeStyleText("style.insertAdjacentHTML", html)
-          : sanitizeStyleMarkup(html, "style.insertAdjacentHTML", innerHTMLDesc);
-        return orig.call(this, position, nextHtml);
+        if (disabled || arguments.length < 2) return orig.apply(this, arguments);
+        const text = U.htmlSinkText(html, false);
+        const next = isStyleElement(this)
+          ? sanitizeStyleText("style.insertAdjacentHTML", text)
+          : sanitizeStyleMarkup(text, "style.insertAdjacentHTML", innerHTMLDesc);
+        return orig.call(this, position, U.htmlSinkValue(html, text, next));
       },
     }));
   };
