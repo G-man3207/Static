@@ -19,6 +19,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Device signal poisoning now recognizes common fonts in CSS font shorthands (`12px "Courier New"`), so `document.fonts.check()` / `load()` treat them as installed instead of falling back to the per-site hash.
 - The popup's **Protect this site** status line now updates after toggling, and a failed toggle restores the previous state.
 - The observe-only adaptive logger no longer formats a stack trace every time a page registers a promise, timer, or event-listener callback. It keeps the caller's stack unformatted and labels it only if an adaptive signal fires in that callback, which removes thousands of stack formats per load on script-heavy sites and stops page-installed `Error.prepareStackTrace` hooks from seeing Static's frames on ordinary registrations.
+- Device signal poisoning no longer leaves stray User-Agent header rules behind on pages with several frames. Every frame replaced its site's rule as it loaded, and frames loading together each added their own copy; pausing the site removed only one, so a paused `localhost` or IP-address site kept receiving the spoofed User-Agent until Static's background worker restarted. Each site's rule is now created once and reused.
 
 ### Changed
 

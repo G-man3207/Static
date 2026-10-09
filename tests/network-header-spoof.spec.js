@@ -10,8 +10,9 @@
 // declarativeNetRequestWithHostAccess permission). Testing focuses on:
 //   1. DNR rules are created with correct structure (unit)
 //   2. DNR rules are cleaned up on mode=off (unit)
-//   3. UA string format matches between JS and network layers (code review)
-//   4. iphey.com data sections respond correctly to masking state
+//   3. One rule per origin, however many frames ask, and pausing removes it (unit)
+//   4. UA string format matches between JS and network layers (code review)
+//   5. iphey.com data sections respond correctly to masking state
 //
 // In production, when the extension is installed from the Web Store, the
 // permission is properly granted and modifyHeaders rules ARE applied.
@@ -50,6 +51,44 @@ const preinstallHeaderRule = async (serviceWorker, origin) => {
     return { uaOs: persona.uaOs, os: persona.os, platform: persona.platform };
   }, origin);
 };
+
+// Every frame's bridge asks for its persona as the frame starts, so one page
+// load sends several requests for the same tab origin at once.
+const loadFramesConcurrently = (serviceWorker, origin, frames) =>
+  serviceWorker.evaluate(
+    ({ count, targetOrigin }) =>
+      Promise.all(
+        Array.from(
+          { length: count },
+          (_, frameId) =>
+            new Promise((resolve) => {
+              const sender = { frameId, tab: { id: 1, url: `${targetOrigin}/` } };
+              // eslint-disable-next-line no-undef
+              messageHandlers.static_get_persona({ type: "static_get_persona" }, sender, resolve);
+            })
+        )
+      ),
+    { count: frames, targetOrigin: origin }
+  );
+
+// Pause a site the way the popup does.
+const pauseSite = (serviceWorker, origin) =>
+  serviceWorker.evaluate(
+    (targetOrigin) =>
+      new Promise((resolve) => {
+        const msg = { disabled: true, origin: targetOrigin, type: "static_set_site_disabled" };
+        // eslint-disable-next-line no-undef
+        messageHandlers.static_set_site_disabled(msg, {}, resolve);
+      }),
+    origin
+  );
+
+const headerRuleIds = (serviceWorker) =>
+  serviceWorker.evaluate(async () =>
+    (await chrome.declarativeNetRequest.getDynamicRules())
+      .filter((rule) => rule.action.type === "modifyHeaders")
+      .map((rule) => rule.id)
+  );
 
 /** Extract a named entry from an iphey.com `.detail-block` section by ID. */
 const extractIpheyEntry = async (page, sectionId, entryName) => {
@@ -146,7 +185,34 @@ test.describe("Network-layer header spoofing", () => {
     expect(ourRules.length).toBe(0);
   });
 
-  // ── 3. Integration: iphey.com ───────────────────────────────────────────
+  // ── 3. Unit: one header rule per origin ────────────────────────────────
+
+  test("an origin keeps one header rule however many frames ask for it", async () => {
+    await enableFingerprintMasking(extension.serviceWorker);
+    const origin = "https://frames-test.example";
+
+    await loadFramesConcurrently(extension.serviceWorker, origin, 6);
+    const afterFirstLoad = await headerRuleIds(extension.serviceWorker);
+    expect(afterFirstLoad).toHaveLength(1);
+
+    // A reload reuses that rule instead of replacing it.
+    await loadFramesConcurrently(extension.serviceWorker, origin, 6);
+    expect(await headerRuleIds(extension.serviceWorker)).toEqual(afterFirstLoad);
+  });
+
+  test("pausing a site after a multi-frame load removes its header rule", async () => {
+    await enableFingerprintMasking(extension.serviceWorker);
+    // localhost gets no pause allow rule to outrank a leftover header rule, so
+    // anything left behind keeps spoofing the paused site's User-Agent.
+    const origin = "http://localhost:8123";
+    await loadFramesConcurrently(extension.serviceWorker, origin, 6);
+
+    await pauseSite(extension.serviceWorker, origin);
+
+    expect(await headerRuleIds(extension.serviceWorker)).toEqual([]);
+  });
+
+  // ── 4. Integration: iphey.com ───────────────────────────────────────────
 
   test("iphey.com BROWSER and NETWORK sections are present with fingerprint masking", async () => {
     test.skip(!(await isOnline()), "requires internet access");
@@ -191,7 +257,7 @@ test.describe("Network-layer header spoofing", () => {
     await disableFingerprintMasking(extension.serviceWorker);
   });
 
-  // ── 4. Integration: iphey.com control ───────────────────────────────────
+  // ── 5. Integration: iphey.com control ───────────────────────────────────
 
   test("iphey.com NETWORK section exists with fingerprint masking off (control)", async () => {
     test.skip(!(await isOnline()), "requires internet access");
