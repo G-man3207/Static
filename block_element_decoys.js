@@ -179,32 +179,23 @@
     } catch {}
     return false;
   };
-  const isDomMarkerElement = (node) => {
-    try {
-      if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
-      const tagName = String(node.tagName || "").toLowerCase();
-      if (DOM_MARKER_TAG_RE.test(tagName)) return true;
-      if (elementHasMarkerClass(node)) return true;
-      for (const attr of node.attributes || []) {
-        if (DOM_MARKER_ATTR_RE.test(attr.name)) return true;
-      }
-    } catch {}
-    return false;
-  };
-  const nodeListHasMarker = (nodes) => {
-    try {
-      for (const node of nodes || []) {
-        if (isDomMarkerElement(node)) return true;
-      }
-    } catch {}
-    return false;
+  // Elements extensions inject, by tag or class. Marker attributes alone do
+  // not count: pages set opt-outs such as data-gramm="false" on their own fields.
+  const isExtensionElement = (node) =>
+    !!node &&
+    node.nodeType === Node.ELEMENT_NODE &&
+    (DOM_MARKER_TAG_RE.test(String(node.tagName || "").toLowerCase()) ||
+      elementHasMarkerClass(node));
+  // A childList record is hidden only when every node it adds or removes is
+  // an extension element, so the page never loses records about its own nodes.
+  const onlyExtensionElements = (record) => {
+    const nodes = [...(record.addedNodes || []), ...(record.removedNodes || [])];
+    return nodes.length > 0 && nodes.every(isExtensionElement);
   };
   const shouldHideMutationRecord = (record) => {
     try {
       if (!record) return false;
-      if (record.type === "childList") {
-        return nodeListHasMarker(record.addedNodes) || nodeListHasMarker(record.removedNodes);
-      }
+      if (record.type === "childList") return onlyExtensionElements(record);
       if (record.type !== "attributes") return false;
       const name = U.attrLocalName(null, record.attributeName);
       if (DOM_MARKER_ATTR_RE.test(name)) return true;

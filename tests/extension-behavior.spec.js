@@ -3305,6 +3305,56 @@ test("DOM markers stay hidden from page MutationObservers with Research logging 
   expect(seen).toEqual({ callsAfterMarkerOnly: 0, names: ["SECTION"] });
 });
 
+test("MutationObservers still see page nodes that carry extension opt-out attributes", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(async () => {
+    // A detached root: the DOM scrubber never strips these attributes there.
+    const root = document.createElement("div");
+    const seen = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        seen.push([...record.addedNodes].map((node) => node.nodeName));
+      }
+    });
+    observer.observe(root, { childList: true });
+
+    const textarea = document.createElement("textarea");
+    textarea.setAttribute("data-gramm", "false");
+    root.appendChild(textarea);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+    const input = document.createElement("input");
+    input.setAttribute("data-1p-ignore", "");
+    root.replaceChildren(document.createElement("p"), input, document.createElement("p"));
+    const taken = observer.takeRecords().map((record) => ({
+      added: [...record.addedNodes].map((node) => node.nodeName),
+      removed: [...record.removedNodes].map((node) => node.nodeName),
+    }));
+
+    // An injected widget stays hidden, but clearing it along with page nodes does not.
+    root.appendChild(document.createElement("grammarly-card"));
+    root.replaceChildren();
+    const cleared = observer
+      .takeRecords()
+      .map((record) => [...record.removedNodes].map((node) => node.nodeName));
+    observer.disconnect();
+    return { cleared, seen, taken };
+  });
+
+  expect(result).toEqual({
+    cleared: [["P", "INPUT", "P", "GRAMMARLY-CARD"]],
+    seen: [["TEXTAREA"]],
+    taken: [{ added: ["P", "INPUT", "P"], removed: ["TEXTAREA"] }],
+  });
+});
+
 test("MutationObserver takeRecords hides transient extension markers", async ({
   extension,
   server,
