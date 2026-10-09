@@ -695,6 +695,87 @@ test("CSSOM rules containing extension URLs are blocked before insertion", async
     .toMatchObject(expectedCounts);
 });
 
+const cssVectorCountsFor = (extension, origin) =>
+  extension.serviceWorker.evaluate(
+    (pageOrigin) =>
+      chrome.storage.local.get({ probe_log: {} }).then(({ probe_log }) => {
+        const weeks = probe_log[pageOrigin] && probe_log[pageOrigin].playbook.weeks;
+        return weeks && Object.values(weeks)[0].vectorCounts;
+      }),
+    origin
+  );
+
+test("style text that mentions an extension URL keeps the page's other rules", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(
+    (url) => {
+      const target = document.createElement("div");
+      target.id = "styled";
+      document.body.appendChild(target);
+      const style = document.createElement("style");
+      style.textContent = `a[href^="${url}"] { color: red } #styled { margin-left: 7px }`;
+      document.head.appendChild(style);
+      return {
+        hasUrl: style.textContent.includes(url),
+        marginLeft: getComputedStyle(target).marginLeft,
+      };
+    },
+    probedUrl(PROBED_ID, "/style.css")
+  );
+
+  expect(result).toEqual({ hasUrl: false, marginLeft: "7px" });
+});
+
+test("CSS-escaped extension URLs are blocked in style text, CSSOM and declarations", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(
+    (url) => {
+      // The CSS parser decodes "\-" to "-" before the URL parser sees it.
+      const escaped = url.replace("chrome-", "chrome\\-");
+      const target = document.createElement("div");
+      target.id = "imported";
+      document.body.appendChild(target);
+      const style = document.createElement("style");
+      style.textContent = `@import url("${escaped}"); #imported { margin-left: 9px }`;
+      document.head.appendChild(style);
+
+      const sheet = new CSSStyleSheet();
+      sheet.insertRule(`#x { background-image: url("${escaped}") }`);
+
+      const declared = document.createElement("div");
+      declared.style.setProperty("background-image", `url("${escaped}")`);
+
+      return {
+        importHref: style.sheet.cssRules[0].href,
+        insertedRules: sheet.cssRules.length,
+        marginLeft: getComputedStyle(target).marginLeft,
+        setProperty: declared.style.backgroundImage,
+      };
+    },
+    probedUrl(PROBED_ID, "/style.css")
+  );
+
+  expect(result).toEqual({
+    importHref: "about:invalid",
+    insertedRules: 0,
+    marginLeft: "9px",
+    setProperty: "",
+  });
+  await expect
+    .poll(() => cssVectorCountsFor(extension, server.origin))
+    .toMatchObject({ "css.insertRule": 1, "style.setProperty": 1, "style.textContent": 1 });
+});
+
 test("invalid Chrome extension IDs are blocked but not logged or decoyed", async ({
   extension,
   server,

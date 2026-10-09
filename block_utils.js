@@ -194,6 +194,136 @@
   // Whether text (markup, a list of URLs) mentions an extension URL anywhere.
   U.hasBadUrl = (text) => U.BAD_URL_RE.test(withoutTabsOrNewlines(text == null ? "" : text));
 
+  // ======================================================================
+  // CSS — only string and url() tokens make the browser load anything, and
+  // the CSS parser decodes escapes in them (and in function names) before
+  // the URL parser sees the value. U.sanitizeCssText neutralizes just those
+  // tokens, so CSS that mentions an extension URL keeps every other rule.
+  // ======================================================================
+
+  const CSS_INERT_URL = "about:invalid";
+  const isCssNewline = (ch) => ch === "\n" || ch === "\r" || ch === "\f";
+  const isCssWhitespace = (ch) => ch === " " || ch === "\t" || isCssNewline(ch);
+  const isCssNameChar = (ch) => /[\w-]/.test(ch) || ch.charCodeAt(0) >= 0x80;
+  const startsCssEscape = (text, i) =>
+    text[i] === "\\" && i + 1 < text.length && !isCssNewline(text[i + 1]);
+
+  // CSS Syntax "consume an escaped code point"; text[i] is the backslash.
+  const consumeCssEscape = (text, i) => {
+    const hex = /^[\da-f]{1,6}/i.exec(text.slice(i + 1, i + 7));
+    if (!hex) return [text[i + 1], i + 2];
+    let next = i + 1 + hex[0].length;
+    if (text[next] === "\r" && text[next + 1] === "\n") next += 2;
+    else if (isCssWhitespace(text[next] || "")) next += 1;
+    const code = parseInt(hex[0], 16);
+    const valid = code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
+    return [valid ? String.fromCodePoint(code) : "�", next];
+  };
+
+  // A quoted string's value; it ends at the closing quote or, unclosed, at a newline.
+  const consumeCssString = (text, start) => {
+    let value = "";
+    let i = start + 1;
+    while (i < text.length && text[i] !== text[start] && !isCssNewline(text[i])) {
+      if (text[i] !== "\\") {
+        value += text[i++];
+      } else if (startsCssEscape(text, i)) {
+        const [decoded, next] = consumeCssEscape(text, i);
+        value += decoded;
+        i = next;
+      } else {
+        // An escaped newline continues the string; a trailing backslash is dropped.
+        i += text[i + 1] === "\r" && text[i + 2] === "\n" ? 3 : 2;
+      }
+    }
+    return [value, text[i] === text[start] ? i + 1 : i];
+  };
+
+  const consumeCssName = (text, start) => {
+    let name = "";
+    let i = start;
+    while (i < text.length) {
+      if (isCssNameChar(text[i])) {
+        name += text[i++];
+      } else if (startsCssEscape(text, i)) {
+        const [decoded, next] = consumeCssEscape(text, i);
+        name += decoded;
+        i = next;
+      } else {
+        break;
+      }
+    }
+    return [name, i];
+  };
+
+  // An unquoted url(...) value; whitespace may only trail it.
+  const consumeCssUrl = (text, start) => {
+    let value = "";
+    let ended = false;
+    let i = start;
+    while (i < text.length && text[i] !== ")") {
+      if (!ended && startsCssEscape(text, i)) {
+        const [decoded, next] = consumeCssEscape(text, i);
+        value += decoded;
+        i = next;
+        continue;
+      }
+      if (isCssWhitespace(text[i])) ended = true;
+      else if (!ended) value += text[i];
+      i++;
+    }
+    return [value, Math.min(i + 1, text.length)];
+  };
+
+  // At a name: where an unquoted url(...) token ends and its value, or where
+  // the name ends. url("…") stops at its string, which the caller reads next.
+  const consumeCssNameToken = (text, start) => {
+    const [name, end] = consumeCssName(text, start);
+    if (name.toLowerCase() !== "url" || text[end] !== "(") return { end };
+    let valueStart = end + 1;
+    while (isCssWhitespace(text[valueStart] || "")) valueStart++;
+    if (text[valueStart] === '"' || text[valueStart] === "'") return { end: valueStart };
+    const [value, urlEnd] = consumeCssUrl(text, valueStart);
+    return { end: urlEnd, value };
+  };
+
+  // { text, url }: the CSS with each string or url() token that resolves to
+  // an extension URL replaced by an inert one, and the first such URL ("" if none).
+  U.sanitizeCssText = (input) => {
+    const text = String(input == null ? "" : input);
+    if (!text.includes("\\") && !U.hasBadUrl(text)) return { text, url: "" };
+    let out = "";
+    let copied = 0;
+    let url = "";
+    const neutralize = (start, end, replacement, value) => {
+      if (!U.isBad(value)) return;
+      out += text.slice(copied, start) + replacement;
+      copied = end;
+      url ||= U.getUrl(value);
+    };
+    let i = 0;
+    while (i < text.length) {
+      const start = i;
+      if (text.startsWith("/*", i)) {
+        const close = text.indexOf("*/", i + 2);
+        i = close === -1 ? text.length : close + 2;
+      } else if (text[i] === '"' || text[i] === "'") {
+        const [value, end] = consumeCssString(text, i);
+        neutralize(start, end, `"${CSS_INERT_URL}"`, value);
+        i = end;
+      } else if (isCssNameChar(text[i]) || startsCssEscape(text, i)) {
+        const token = consumeCssNameToken(text, i);
+        if (token.value !== undefined) {
+          neutralize(start, token.end, `url(${CSS_INERT_URL})`, token.value);
+        }
+        i = token.end;
+      } else {
+        i++;
+      }
+    }
+    return url ? { text: out + text.slice(copied), url } : { text, url: "" };
+  };
+
   U.extensionIdentityFor = (url) => {
     try {
       const parsed = new URL(String(url || ""));

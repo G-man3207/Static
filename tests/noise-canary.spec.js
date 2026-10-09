@@ -20,6 +20,9 @@ const seedNoisePersona = async (extension, origin, id = PROBED_ID) => {
   );
 };
 
+// Style text keeps everything but the extension URL, which becomes inert.
+const NEUTRALIZED_IMPORT = '@import url("about:invalid")';
+
 const vectorCountsFor = (extension, origin) => {
   return extension.serviceWorker.evaluate(
     (pageOrigin) =>
@@ -657,16 +660,16 @@ test("style setProperty and cssText URL probes are fail-closed", async ({ extens
   }, imageUrl);
 
   expect(result).toEqual({
-    appendStyleText: "",
+    appendStyleText: NEUTRALIZED_IMPORT,
     cssText: "",
     cursor: "",
     directBackgroundImage: "",
-    htmlStyleText: "",
+    htmlStyleText: NEUTRALIZED_IMPORT,
     hasStyleUrl: false,
-    insertedStyleText: "",
-    parsedStyleText: "",
+    insertedStyleText: NEUTRALIZED_IMPORT,
+    parsedStyleText: NEUTRALIZED_IMPORT,
     preservedSiblingText: "ok",
-    textStyleText: "",
+    textStyleText: NEUTRALIZED_IMPORT,
   });
 
   await expect
@@ -736,14 +739,14 @@ test("style text-node URL probes are fail-closed synchronously", async ({ extens
   }, imageUrl);
 
   expect(result).toEqual({
-    appendChildText: "",
+    appendChildText: NEUTRALIZED_IMPORT,
     hasStyleUrl: false,
-    insertAdjacentText: "",
-    insertBeforeText: "",
-    mutableData: "",
-    mutableNodeValue: "",
-    mutableTextContent: "",
-    replaceChildText: "",
+    insertAdjacentText: NEUTRALIZED_IMPORT,
+    insertBeforeText: NEUTRALIZED_IMPORT,
+    mutableData: NEUTRALIZED_IMPORT,
+    mutableNodeValue: NEUTRALIZED_IMPORT,
+    mutableTextContent: NEUTRALIZED_IMPORT,
+    replaceChildText: NEUTRALIZED_IMPORT,
   });
 
   await expect

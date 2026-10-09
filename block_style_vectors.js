@@ -27,22 +27,17 @@
     return node && node.nodeType === Node.TEXT_NODE && isStyleElement(node.parentNode);
   };
 
-  const clearStyleText = (style) => {
-    while (style.firstChild) {
-      try {
-        style.removeChild(style.firstChild);
-      } catch {
-        return;
-      }
-    }
+  // Style text with its extension URLs neutralized (the rest kept), reporting
+  // the first one. Returns the value untouched when there are none.
+  const sanitizeStyleText = (label, value) => {
+    const { text, url } = U.sanitizeCssText(value);
+    if (!url) return value;
+    bridge.probe(url, label);
+    return text;
   };
 
-  const blockStyleText = (label, value) => {
-    const url = U.firstBadUrlIn(value);
-    if (!url) return false;
-    bridge.probe(url, label);
-    return true;
-  };
+  // The first extension URL a CSS declaration value can load, escapes included.
+  const badCssUrlIn = (value) => U.sanitizeCssText(value).url || U.firstBadUrlIn(value);
 
   const scrubStyleTextPayload = (node, label) => {
     if (!node || typeof node !== "object") return false;
@@ -50,9 +45,11 @@
     const visit = (current) => {
       if (!current) return;
       if (current.nodeType === Node.TEXT_NODE) {
-        if (blockStyleText(label, current.textContent || "")) {
+        const text = current.textContent || "";
+        const next = sanitizeStyleText(label, text);
+        if (next !== text) {
           try {
-            current.textContent = "";
+            current.textContent = next;
             changed = true;
           } catch {}
         }
@@ -72,7 +69,7 @@
     for (let index = style.length - 1; index >= 0; index--) {
       const name = style.item(index);
       const value = style.getPropertyValue(name);
-      if (!U.firstBadUrlIn(value)) continue;
+      if (!badCssUrlIn(value)) continue;
       try {
         style.removeProperty(name);
         changed = true;
@@ -93,7 +90,7 @@
   };
 
   const sanitizeStyleDeclarationValue = (value, label) => {
-    const url = U.firstBadUrlIn(value);
+    const url = badCssUrlIn(value);
     if (!url) return { changed: false, value };
     bridge.probe(url, label);
 
@@ -114,8 +111,11 @@
   const scrubStyleTextNode = (style, label) => {
     if (!isStyleElement(style)) return false;
     const text = style.textContent || "";
-    if (!blockStyleText(label, text)) return false;
-    clearStyleText(style);
+    const next = sanitizeStyleText(label, text);
+    if (next === text) return false;
+    try {
+      style.textContent = next;
+    } catch {}
     return true;
   };
 
@@ -159,7 +159,7 @@
     U.wrapMethod(proto, "setProperty", (orig) => ({
       setProperty(name, value, priority) {
         if (disabled) return orig.call(this, name, value, priority);
-        const url = U.firstBadUrlIn(value);
+        const url = badCssUrlIn(value);
         if (url) {
           bridge.probe(url, "style.setProperty");
           return;
@@ -201,11 +201,8 @@
   const patchTextContent = (proto) => {
     U.wrapSetter(proto, "textContent", (nativeSet) => ({
       set(value) {
-        const blocked =
-          !disabled &&
-          (isStyleElement(this) || isStyleTextNode(this)) &&
-          blockStyleText("style.textContent", value);
-        nativeSet.call(this, blocked ? "" : value);
+        const styleText = !disabled && (isStyleElement(this) || isStyleTextNode(this));
+        nativeSet.call(this, styleText ? sanitizeStyleText("style.textContent", value) : value);
       },
     }));
   };
@@ -213,8 +210,8 @@
   const patchStyleTextNodeSetter = (proto, prop, label) => {
     U.wrapSetter(proto, prop, (nativeSet) => ({
       set(value) {
-        const blocked = !disabled && isStyleTextNode(this) && blockStyleText(label, value);
-        nativeSet.call(this, blocked ? "" : value);
+        const styleText = !disabled && isStyleTextNode(this);
+        nativeSet.call(this, styleText ? sanitizeStyleText(label, value) : value);
       },
     }));
   };
@@ -226,10 +223,9 @@
           nativeSet.call(this, value);
           return;
         }
-        const nextValue =
-          isStyleElement(this) && blockStyleText("style.innerHTML", value)
-            ? ""
-            : sanitizeStyleMarkup(value, "style.innerHTML", innerHTMLDesc);
+        const nextValue = isStyleElement(this)
+          ? sanitizeStyleText("style.innerHTML", value)
+          : sanitizeStyleMarkup(value, "style.innerHTML", innerHTMLDesc);
         nativeSet.call(this, nextValue);
       },
     }));
@@ -252,10 +248,9 @@
     U.wrapMethod(proto, "insertAdjacentHTML", (orig) => ({
       insertAdjacentHTML(position, html) {
         if (disabled) return orig.call(this, position, html);
-        const nextHtml =
-          isStyleElement(this) && blockStyleText("style.insertAdjacentHTML", html)
-            ? ""
-            : sanitizeStyleMarkup(html, "style.insertAdjacentHTML", innerHTMLDesc);
+        const nextHtml = isStyleElement(this)
+          ? sanitizeStyleText("style.insertAdjacentHTML", html)
+          : sanitizeStyleMarkup(html, "style.insertAdjacentHTML", innerHTMLDesc);
         return orig.call(this, position, nextHtml);
       },
     }));
@@ -265,8 +260,9 @@
     U.wrapMethod(proto, "insertAdjacentText", (orig) => ({
       insertAdjacentText(position, text) {
         if (disabled) return orig.call(this, position, text);
-        const nextText =
-          isStyleElement(this) && blockStyleText("style.insertAdjacentText", text) ? "" : text;
+        const nextText = isStyleElement(this)
+          ? sanitizeStyleText("style.insertAdjacentText", text)
+          : text;
         return orig.call(this, position, nextText);
       },
     }));
@@ -275,7 +271,8 @@
   const scrubInsertionArgs = (target, args, label) => {
     const nextArgs = [];
     for (const arg of args) {
-      if (isStyleElement(target) && typeof arg === "string" && blockStyleText(label, arg)) {
+      if (isStyleElement(target) && typeof arg === "string") {
+        nextArgs.push(sanitizeStyleText(label, arg));
         continue;
       }
       if (isStyleElement(target) && arg && typeof arg === "object") {
@@ -339,7 +336,7 @@
     for (let index = style.length - 1; index >= 0; index--) {
       const name = style.item(index);
       const value = style.getPropertyValue(name);
-      const url = U.firstBadUrlIn(value);
+      const url = badCssUrlIn(value);
       if (url) {
         bridge.probe(url, label);
         try {

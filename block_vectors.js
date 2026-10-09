@@ -302,7 +302,7 @@
       [name](...args) {
         if (disabled) return orig.apply(this, args);
         const target = name === "addRule" ? `${args[0] || ""} ${args[1] || ""}` : args[0];
-        const url = U.firstBadUrlIn(target);
+        const url = U.sanitizeCssText(target).url || U.firstBadUrlIn(target);
         if (url) {
           bridge.probe(url, label);
           return onBlocked.call(this, args);
