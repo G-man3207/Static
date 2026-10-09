@@ -465,7 +465,7 @@
   };
 
   const sanitizeHtmlMarkup = (html, labelBase) => {
-    if (typeof html !== "string" || !html || !U.BAD_URL_RE.test(html)) {
+    if (typeof html !== "string" || !html || !U.hasBadUrl(html)) {
       return { sanitized: html, tokenMap: new Map() };
     }
     const tokenMap = new Map();
@@ -938,7 +938,7 @@
     if (typeof DOMParser === "undefined") return;
     U.wrapMethod(DOMParser.prototype, "parseFromString", (orig) => ({
       parseFromString(markup, type) {
-        if (disabled || typeof markup !== "string" || !U.BAD_URL_RE.test(markup)) {
+        if (disabled || typeof markup !== "string" || !U.hasBadUrl(markup)) {
           return orig.apply(this, arguments);
         }
         const t = String(type || "");
@@ -957,7 +957,7 @@
     if (typeof Range === "undefined") return;
     U.wrapMethod(Range.prototype, "createContextualFragment", (orig) => ({
       createContextualFragment(html) {
-        if (disabled || typeof html !== "string" || !U.BAD_URL_RE.test(html)) {
+        if (disabled || typeof html !== "string" || !U.hasBadUrl(html)) {
           return orig.apply(this, arguments);
         }
         const { sanitized, tokenMap } = sanitizeHtmlMarkup(html, "createContextualFragment");

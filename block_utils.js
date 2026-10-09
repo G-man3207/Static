@@ -134,14 +134,36 @@
     "safari-web-extension": /^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$/i,
   };
 
-  U.normalizeUrlString = (value) => String(value).trim();
+  const withoutTabsOrNewlines = (value) => String(value).replace(/[\t\n\r]/g, "");
+
+  // Read a URL string the way the URL parser does: it drops every ASCII tab
+  // and newline and strips C0 controls and spaces from both ends.
+  U.normalizeUrlString = (value) => {
+    const text = withoutTabsOrNewlines(value);
+    let start = 0;
+    let end = text.length;
+    while (start < end && text.charCodeAt(start) <= 0x20) start++;
+    while (end > start && text.charCodeAt(end - 1) <= 0x20) end--;
+    return text.slice(start, end);
+  };
+
+  // Request's own URL getter brand-checks its receiver, so it also reads
+  // Requests from other frames and rejects look-alike objects.
+  let requestUrlGetter = null;
+  try {
+    requestUrlGetter = Object.getOwnPropertyDescriptor(Request.prototype, "url").get;
+  } catch {}
 
   U.getUrl = (input) => {
     if (input == null) return "";
     if (typeof input === "string") return U.normalizeUrlString(input);
     if (typeof URL !== "undefined" && input instanceof URL) return input.href;
-    if (typeof Request !== "undefined" && input instanceof Request) return input.url;
-    if (typeof input.url === "string") return U.normalizeUrlString(input.url);
+    if (requestUrlGetter) {
+      try {
+        return requestUrlGetter.call(input);
+      } catch {}
+    }
+    // Anything else is stringified, as the browser does.
     try {
       return U.normalizeUrlString(input);
     } catch {
@@ -162,12 +184,15 @@
   U.firstBadUrlIn = (input) => {
     try {
       if (U.isBad(input)) return U.getUrl(input);
-      const match = String(input == null ? "" : input).match(U.BAD_URL_RE);
+      const match = withoutTabsOrNewlines(input == null ? "" : input).match(U.BAD_URL_RE);
       return match ? match[0] : "";
     } catch {
       return "";
     }
   };
+
+  // Whether text (markup, a list of URLs) mentions an extension URL anywhere.
+  U.hasBadUrl = (text) => U.BAD_URL_RE.test(withoutTabsOrNewlines(text == null ? "" : text));
 
   U.extensionIdentityFor = (url) => {
     try {

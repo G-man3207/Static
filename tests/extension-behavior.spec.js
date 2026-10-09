@@ -1100,6 +1100,47 @@ test("blocks broad extension URL vectors and accumulates per-origin ID counts", 
   }
 });
 
+test("blocks extension URLs disguised with characters the URL parser drops", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const probes = await page.evaluate(
+    async (url) => {
+      // The URL parser drops tabs and newlines anywhere and C0 controls at the
+      // ends, and setAttribute stringifies objects with toString().
+      const tabbed = url.replace("chrome", "chr\tome");
+      const newlined = url.replace("extension", "exten\nsion");
+      const controlled = `\u0001${url}`;
+      let count = 0;
+
+      new Image().src = tabbed;
+      count++;
+      document.createElement("img").setAttribute("src", newlined);
+      count++;
+      new Image().src = controlled;
+      count++;
+      document.createElement("div").innerHTML = `<img src="${tabbed}">`;
+      count++;
+      document.createElement("img").setAttribute("src", { url: "", toString: () => url });
+      count++;
+      await fetch(newlined).catch(() => {});
+      count++;
+      return count;
+    },
+    probedUrl(PROBED_ID, "/icon.png")
+  );
+
+  await page.waitForTimeout(400);
+  const origin = new URL(page.url()).origin;
+  const { probe_log } = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get({ probe_log: {} })
+  );
+  expect(probe_log[origin] && probe_log[origin].idCounts[PROBED_ID]).toBe(probes);
+});
+
 test("blocked XHR failures settle like native network failures", async ({ extension, server }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
