@@ -762,6 +762,53 @@ test("style text that mentions an extension URL keeps the page's other rules", a
   expect(result).toEqual({ hasUrl: false, marginLeft: "7px" });
 });
 
+test("style text split into pieces cannot rebuild an extension URL", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  const result = await page.evaluate(
+    (url) => {
+      const importHref = (write) => {
+        const style = document.createElement("style");
+        document.head.appendChild(style);
+        write(style);
+        const rule = style.sheet.cssRules[0];
+        return rule ? rule.href : null;
+      };
+      const head = '@import url("';
+      const tail = `${url}");`;
+      return {
+        append: importHref((style) => style.append(head, tail)),
+        appendChild: importHref((style) => {
+          style.appendChild(document.createTextNode(head));
+          style.appendChild(document.createTextNode(tail));
+        }),
+        data: importHref((style) => {
+          style.append(head, "placeholder");
+          style.lastChild.data = tail;
+        }),
+        escaped: importHref((style) => style.append(head, tail.replace("chrome-", "chrome\\-"))),
+        insertAdjacentText: importHref((style) => {
+          style.textContent = head;
+          style.insertAdjacentText("beforeend", tail);
+        }),
+      };
+    },
+    probedUrl(PROBED_ID, "/style.css")
+  );
+
+  expect(result).toEqual({
+    append: "about:invalid",
+    appendChild: "about:invalid",
+    data: "about:invalid",
+    escaped: "about:invalid",
+    insertAdjacentText: "about:invalid",
+  });
+});
+
 test("CSS-escaped extension URLs are blocked in style text, CSSOM and declarations", async ({
   extension,
   server,

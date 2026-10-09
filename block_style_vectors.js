@@ -39,6 +39,45 @@
   // The first extension URL a CSS declaration value can load, escapes included.
   const badCssUrlIn = (value) => U.sanitizeCssText(value).url || U.firstBadUrlIn(value);
 
+  // The text a payload adds to a style: a string, a text node's data, or a
+  // fragment's text children (element children are not style text).
+  const pieceTextOf = (value) => {
+    if (typeof value === "string") return value;
+    if (!value || typeof value !== "object") return "";
+    if (value.nodeType === Node.TEXT_NODE) return value.data;
+    let text = "";
+    if (value.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+      for (let child = value.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType === Node.TEXT_NODE) text += child.data;
+      }
+    }
+    return text;
+  };
+
+  // The text a style holds once `piece` goes in before child `at` (at the
+  // end when null), in place of child `replaced` if given.
+  const styleTextWith = (style, piece, at, replaced) => {
+    let text = "";
+    for (let child = style.firstChild; child; child = child.nextSibling) {
+      if (child === at) text += piece;
+      if (child !== replaced && child.nodeType === Node.TEXT_NODE) text += child.data;
+    }
+    return at ? text : text + piece;
+  };
+
+  // A piece that is clean alone can finish an extension URL begun by the
+  // style's other text. Only pieces naming an extension scheme pay for the
+  // whole-text check; when it finds one, the style gets its whole text
+  // sanitized instead of the piece.
+  const rewroteSplitStyleText = (style, piece, wholeText, label) => {
+    if (!piece || !U.hasBadUrl(piece.includes("\\") ? U.cssUnescape(piece) : piece)) return false;
+    const text = wholeText();
+    const next = sanitizeStyleText(label, text);
+    if (next === text) return false;
+    style.textContent = next;
+    return true;
+  };
+
   const scrubStyleTextPayload = (node, label) => {
     if (!node || typeof node !== "object") return false;
     let changed = false;
@@ -202,8 +241,21 @@
   const patchTextContent = (proto) => {
     U.wrapSetter(proto, "textContent", (nativeSet) => ({
       set(value) {
-        const styleText = !disabled && (isStyleElement(this) || isStyleTextNode(this));
-        nativeSet.call(this, styleText ? sanitizeStyleText("style.textContent", value) : value);
+        if (disabled || !(isStyleElement(this) || isStyleTextNode(this))) {
+          nativeSet.call(this, value);
+          return;
+        }
+        const next = sanitizeStyleText("style.textContent", value);
+        const piece = next == null ? "" : String(next);
+        const style = this.parentNode;
+        const wholeText = () => styleTextWith(style, piece, this, this);
+        if (
+          isStyleTextNode(this) &&
+          rewroteSplitStyleText(style, piece, wholeText, "style.textContent")
+        ) {
+          return;
+        }
+        nativeSet.call(this, next);
       },
     }));
   };
@@ -211,8 +263,16 @@
   const patchStyleTextNodeSetter = (proto, prop, label) => {
     U.wrapSetter(proto, prop, (nativeSet) => ({
       set(value) {
-        const styleText = !disabled && isStyleTextNode(this);
-        nativeSet.call(this, styleText ? sanitizeStyleText(label, value) : value);
+        if (disabled || !isStyleTextNode(this)) {
+          nativeSet.call(this, value);
+          return;
+        }
+        const next = sanitizeStyleText(label, value);
+        const piece = next == null ? "" : String(next);
+        const style = this.parentNode;
+        const wholeText = () => styleTextWith(style, piece, this, this);
+        if (rewroteSplitStyleText(style, piece, wholeText, label)) return;
+        nativeSet.call(this, next);
       },
     }));
   };
@@ -265,10 +325,16 @@
   const patchInsertAdjacentText = (proto) => {
     U.wrapMethod(proto, "insertAdjacentText", (orig) => ({
       insertAdjacentText(position, text) {
-        if (disabled) return orig.call(this, position, text);
-        const nextText = isStyleElement(this)
-          ? sanitizeStyleText("style.insertAdjacentText", text)
-          : text;
+        if (disabled || !isStyleElement(this)) return orig.call(this, position, text);
+        const label = "style.insertAdjacentText";
+        const nextText = sanitizeStyleText(label, text);
+        const where = String(position).toLowerCase();
+        if (where === "afterbegin" || where === "beforeend") {
+          const at = where === "afterbegin" ? this.firstChild : null;
+          const piece = String(nextText);
+          const wholeText = () => styleTextWith(this, piece, at, null);
+          if (rewroteSplitStyleText(this, piece, wholeText, label)) return undefined;
+        }
         return orig.call(this, position, nextText);
       },
     }));
@@ -302,6 +368,16 @@
           scrubTree(node, label);
           scrubStyleTextTree(node, label);
         }
+        if (isStyleElement(this)) {
+          // appendChild puts the node last; insertBefore / replaceChild at rest[0].
+          const at = name === "appendChild" ? null : rest[0] || null;
+          const replaced = name === "replaceChild" ? at : null;
+          const piece = pieceTextOf(node);
+          const wholeText = () => styleTextWith(this, piece, at, replaced);
+          if (rewroteSplitStyleText(this, piece, wholeText, label)) {
+            return name === "replaceChild" ? rest[0] : node;
+          }
+        }
         return orig.call(this, node, ...rest);
       },
     }));
@@ -311,7 +387,16 @@
     U.wrapMethod(proto, name, (orig) => ({
       [name](...args) {
         if (disabled) return orig.apply(this, args);
-        return orig.apply(this, scrubInsertionArgs(this, args, label));
+        const nextArgs = scrubInsertionArgs(this, args, label);
+        if (isStyleElement(this)) {
+          // All the call's pieces together, so a URL split between them counts.
+          const piece = nextArgs.map(pieceTextOf).join("");
+          const at = name === "prepend" ? this.firstChild : null;
+          const wholeText = () =>
+            name === "replaceChildren" ? piece : styleTextWith(this, piece, at, null);
+          if (rewroteSplitStyleText(this, piece, wholeText, label)) return undefined;
+        }
+        return orig.apply(this, nextArgs);
       },
     }));
   };
