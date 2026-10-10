@@ -188,6 +188,108 @@ test("innerHTML with React-like object pattern renders content correctly", async
 //  Dynamic DOM fixture - attribute cycling (DOM scrubber interaction)
 // ---------------------------------------------------------------------------
 
+test("attribute updates scrub markers without scheduling subtree rescans", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(1300);
+
+  const result = await page.evaluate(async () => {
+    const waitUntilQuiet = async () => {
+      const deadline = performance.now() + 6000;
+      while (performance.now() < deadline) {
+        const beat = performance.now();
+        await new Promise((resolve) => {
+          setTimeout(resolve, 0);
+        });
+        if (performance.now() - beat > 20) continue;
+        const gap = performance.now();
+        await new Promise((resolve) => {
+          setTimeout(resolve, 80);
+        });
+        if (performance.now() - gap < 110) return;
+      }
+    };
+
+    const nodes = [];
+    const app = document.createElement("div");
+    const fragment = document.createDocumentFragment();
+    for (let i = 0; i < 4000; i++) {
+      const el = document.createElement("div");
+      el.className = "item";
+      el.setAttribute("data-id", String(i));
+      el.textContent = "n";
+      fragment.appendChild(el);
+      nodes.push(el);
+    }
+    app.appendChild(fragment);
+    document.body.appendChild(app);
+    // Insertion still schedules delayed shadow walks. Let those finish so
+    // they are not counted as attribute-update work.
+    await waitUntilQuiet();
+
+    const marker = nodes[0];
+    marker.classList.add("keep", "grammarly-card");
+    marker.setAttribute("data-grammarly-extension", "1");
+    marker.setAttribute("data-route", "inbox");
+
+    const host = document.createElement("div");
+    app.appendChild(host);
+    host.setAttribute("data-ready", "1");
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = '<span id="inside" class="keep lastpass-panel" data-lastpass-root="1"></span>';
+    // Host insertion has its own delayed walk. Drain it so the timer queue
+    // measured below is only the attribute updates.
+    await waitUntilQuiet();
+
+    const start = performance.now();
+    for (const el of nodes) el.setAttribute("aria-rowindex", "1");
+    document.documentElement.classList.add("theme-dark");
+    let spins = 0;
+    let maxBeat = 0;
+    while (performance.now() - start < 1500) {
+      const beat = performance.now();
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
+      maxBeat = Math.max(maxBeat, performance.now() - beat);
+      spins += 1;
+      if (performance.now() - beat < 12 && spins > 3) break;
+    }
+
+    const inside = root.querySelector("#inside");
+    return {
+      busyMs: performance.now() - start,
+      hostReady: host.getAttribute("data-ready"),
+      insideClass: inside ? [...inside.classList] : null,
+      insideData: inside ? inside.hasAttribute("data-lastpass-root") : null,
+      markerClass: [...marker.classList],
+      markerData: marker.hasAttribute("data-grammarly-extension"),
+      markerRoute: marker.getAttribute("data-route"),
+      maxBeat,
+      rootClass: document.documentElement.classList.contains("theme-dark"),
+      spins,
+    };
+  });
+
+  expect(result.markerData).toBe(false);
+  expect(result.markerClass).toEqual(["item", "keep"]);
+  expect(result.markerRoute).toBe("inbox");
+  expect(result.insideData).toBe(false);
+  expect(result.insideClass).toEqual(["keep"]);
+  expect(result.hostReady).toBe("1");
+  expect(result.rootClass).toBe(true);
+  // Old path: each of the 4,000 attribute records scheduled four subtree
+  // walks. This test measured ~300ms of follow-up timer work (and ~120ms /
+  // a ~70ms beat in a tighter harness). The fixed path has nothing to drain
+  // (measured ~8-15ms), so 70ms still fails the old path on a much faster
+  // machine without tripping on a slow setTimeout(0).
+  expect(result.busyMs).toBeLessThan(70);
+  expect(result.maxBeat).toBeLessThan(50);
+});
+
 test("dynamic DOM fixture handles attribute cycling without losing content", async ({
   extension,
   server,

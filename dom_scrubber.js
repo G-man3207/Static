@@ -106,6 +106,24 @@
     scrubShadowRoot(el);
   };
 
+  // Attribute records name the one attribute that changed. Re-running the
+  // full element scrub, then scheduling four subtree walks to hunt for shadow
+  // roots, blocks the main thread on routine class/data updates. 4,000
+  // attribute updates queued that timer storm and kept this isolated world
+  // busy for ~120–300ms; a class change on <html> repeated a full walk of an
+  // 8k-node tree four times, including a long task. Walks stay on insertion.
+  const scrubAttributeRecord = (el, name) => {
+    if (!el || el.nodeType !== 1 || !name) return;
+    if (String(name).toLowerCase() === "class") {
+      scrubClasses(el);
+      return;
+    }
+    if (!matchesAny(ATTR_RE, String(name).toLowerCase())) return;
+    try {
+      el.removeAttribute(name);
+    } catch {}
+  };
+
   const scrubTree = (root) => {
     if (!root || disabled) return;
     scrubEl(root);
@@ -151,8 +169,12 @@
           }
         }
         if (m.type === "attributes") {
-          scrubEl(m.target);
-          scheduleShadowScan(m.target);
+          scrubAttributeRecord(m.target, m.attributeName);
+          // Shadow roots attach without their own mutation record. Check the
+          // host whose attribute just changed (custom-element upgrades do this
+          // synchronously) but do not walk its descendants — that scan belongs
+          // to insertion, which already schedules one.
+          scrubShadowRoot(m.target);
         }
       }
     });

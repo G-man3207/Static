@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Fixed
+
+- Routine attribute updates no longer make the DOM scrubber rescan the page. Every class or `data-*` change scheduled four subtree walks from the isolated-world scrubber; 4,000 of those updates kept the main thread busy for about 120ms (longest beat about 70ms), and a class change on `<html>` over an 8k-node tree repeated a full walk four times, including a long task. The attribute that changed is still scrubbed, and a shadow root already attached to that element is still cleaned.
+
 ## [2.6.0] — 2026-10-10
 
 ### Added
