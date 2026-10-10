@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-10-10
+
 ### Added
 
 - **Research logging** switch in the popup's **More** panel, off by default. It loads the adaptive behavior logger, which wraps page timers, promises, and listeners to attribute data collection to its source; adaptive signals and their reason tokens only record while it is on.
@@ -404,7 +406,8 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.5.1...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/G-man3207/Static/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/G-man3207/Static/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/G-man3207/Static/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/G-man3207/Static/compare/v2.3.0...v2.4.0
