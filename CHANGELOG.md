@@ -8,6 +8,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Fixed
 
+- Device signal poisoning no longer tells page scripts the browser is in light mode when it is in dark mode. Only `matchMedia()` was overridden, so the page's CSS still rendered dark while its scripts read light: sites that pick their theme in JavaScript came up light, and a page could catch the lie by comparing the two or by rewording the query (`screen and (prefers-color-scheme: dark)`). Even in light mode the wrapped result failed native `MediaQueryList` checks. `prefers-color-scheme` queries now get the browser's own answer.
 - Routine attribute updates no longer make the DOM scrubber rescan the page. Every class or `data-*` change scheduled four subtree walks from the isolated-world scrubber; 4,000 of those updates kept the main thread busy for about 120ms (longest beat about 70ms), and a class change on `<html>` over an 8k-node tree repeated a full walk four times, including a long task. The attribute that changed is still scrubbed, and a shadow root already attached to that element is still cleaned.
 
 ## [2.6.0] — 2026-10-10

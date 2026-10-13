@@ -112,8 +112,6 @@ test("Fingerprint masking aligns matchMedia with desktop persona", async ({
     anyHoverNone: window.matchMedia("(any-hover: none)").matches,
     anyPointerFine: window.matchMedia("(any-pointer: fine)").matches,
     anyPointerCoarse: window.matchMedia("(any-pointer: coarse)").matches,
-    prefersLight: window.matchMedia("(prefers-color-scheme: light)").matches,
-    prefersDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
   }));
 
   expect(result.hoverHover).toBe(true);
@@ -124,8 +122,39 @@ test("Fingerprint masking aligns matchMedia with desktop persona", async ({
   expect(result.anyHoverNone).toBe(false);
   expect(result.anyPointerFine).toBe(true);
   expect(result.anyPointerCoarse).toBe(false);
-  expect(result.prefersLight).toBe(true);
-  expect(result.prefersDark).toBe(false);
+});
+
+test("Fingerprint masking leaves prefers-color-scheme to the browser", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+
+  await enableFingerprintMask(extension, page);
+
+  for (const colorScheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme });
+    const result = await page.evaluate(() => {
+      const style = document.createElement("style");
+      style.textContent = "@media (prefers-color-scheme: dark) { body { color: rgb(1, 2, 3); } }";
+      document.head.append(style);
+      const cssDark = getComputedStyle(document.body).color === "rgb(1, 2, 3)";
+      style.remove();
+      // The native getter throws "Illegal invocation" on a wrapped MediaQueryList.
+      const matches = Object.getOwnPropertyDescriptor(MediaQueryList.prototype, "matches").get;
+      return {
+        cssDark,
+        jsDark: matches.call(matchMedia("(prefers-color-scheme: dark)")),
+        jsLight: matches.call(matchMedia("(prefers-color-scheme: light)")),
+      };
+    });
+    expect(result).toEqual({
+      cssDark: colorScheme === "dark",
+      jsDark: colorScheme === "dark",
+      jsLight: colorScheme === "light",
+    });
+  }
 });
 
 test("Fingerprint masking masks uaFullVersion in high entropy values", async ({

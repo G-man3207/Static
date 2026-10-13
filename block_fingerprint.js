@@ -945,9 +945,9 @@
     );
   };
 
+  // prefers-color-scheme stays native: CSS keeps rendering the real scheme, so a
+  // JS-only override is a detectable mismatch rather than a hidden bit.
   const MEDIA_QUERY_OVERRIDES = {
-    "(prefers-color-scheme:dark)": false,
-    "(prefers-color-scheme:light)": true,
     "(hover:hover)": true,
     "(hover:none)": false,
     "(pointer:fine)": true,
