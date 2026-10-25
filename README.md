@@ -33,7 +33,7 @@ Static is intentionally narrow. It is built to run alongside uBlock Origin or Pr
 Static asks for these permissions in `manifest.json`:
 
 - **`declarativeNetRequest`** — needed to load the static fingerprinting/CAPTCHA vendor rulesets under `rules/`.
-- **`declarativeNetRequestWithHostAccess`** — needed for Dynamic Declarative Net Request rules that modify outgoing request headers (User-Agent and `Sec-CH-UA`) when Device signal poisoning is active. Static does not use this to broadly block or redirect traffic; it is scoped to the header-spoofing path.
+- **`declarativeNetRequestWithHostAccess`** — needed for Dynamic Declarative Net Request rules that rewrite outgoing `User-Agent` and `Sec-CH-UA*` headers on protected sites. Static does not use this to broadly block or redirect traffic; it is scoped to the header-spoofing path.
 - **`scripting`** — the service worker registers Static's content scripts itself instead of declaring them in the manifest, so paused sites get none of Static's page code and switched-off features stay unloaded. It adds no install warning.
 - **`storage`** — local settings, probe logs, playbook summaries, and disabled-site list. Nothing leaves the device unless you explicitly export it.
 - **`host_permissions: *://*/*`** — required so content scripts can run on all sites and block extension-enumeration probes. Host access is also used by the narrow DNR rulesets so they can match requests to the listed fingerprinting/CAPTCHA domains.
@@ -81,16 +81,16 @@ Firefox needs MAIN-world content scripts (128+) and built-in data-collection con
    - **Fingerprinting / anti-bot vendors**: Fingerprint, DataDome, PerimeterX/HUMAN, Sift, Forter, ThreatMetrix/TransUnion, Iovation, Kasada, Sardine, Shape Security/F5.
    - **CAPTCHA / device-check vendors** (off by default, breaks logins): Arkose Labs / FunCAPTCHA, DataDome response pages, and Cloudflare Turnstile / Challenge Platform.
 
-   When Device signal poisoning is active, Static also adds dynamic DNR rules that rewrite the outgoing `User-Agent` and strip `Sec-CH-UA` / `Sec-CH-UA-Mobile` / `Sec-CH-UA-Platform` request headers so the network layer sees the same persona as the JavaScript layer.
+   On every protected site, Static rewrites the JavaScript user agent, platform, and Client Hints, and the matching `User-Agent` and `Sec-CH-UA*` request headers, to a stable per-site persona. That includes the first navigation and requests the page makes to other hosts. Paused sites are left alone.
 
-5. **Device signal poisoning (opt-in).** Static can return a stable per-site machine persona for high-entropy browser signals: OS/user-agent platform, CPU/RAM buckets, language, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, offline-audio render output, storage quota, battery, and network hints.
+5. **Device signal poisoning (opt-in).** Static can return a stable per-site machine persona for the other high-entropy browser signals: CPU/RAM buckets, language, screen and pixel ratio, timezone, WebGL renderer/vendor, canvas readback, offline-audio render output, storage quota, battery, and network hints. User agent, platform, and Client Hints are rewritten on every protected site even when this is off.
 6. **Self-stealth.** `Function.prototype.toString` is patched with a `WeakMap` that maps wrapped functions to native-looking strings, so the blocker's API overrides look like real native functions under `toString` checks.
 7. **Replay poisoning (opt-in).** When a likely session-replay SDK is detected in page script, Static can proxy only that recorder's event listeners so they see redacted form values and jittered coordinates while ordinary page handlers still receive the real events.
 8. **Iframe attribute hardening.** Extension probes and fingerprinting scripts can infer browser capabilities from the shape of `<iframe allow>` / `sandbox` / `allowfullscreen` / `allowpaymentrequest>` attributes. Static normalizes these attributes: it drops unsupported `allow` tokens, keeps only valid `sandbox` tokens, drops legacy `allowfullscreen` / `allowpaymentrequest` only where `allow` already sets the same feature, and works on pages with Trusted Types `require-trusted-types-for 'script'` CSP by creating a dedicated policy.
 9. **Style / CSSOM vector blocking.** Extension URLs can be smuggled into `<style>` text nodes, inline `style` attributes, `CSSStyleSheet.cssText`, `CSSStyleDeclaration.setProperty` / `cssText`, and `insertRule` / `replace` / `replaceSync` / `addRule` calls. Static scrubs these sources before the browser can issue a request, and does it synchronously so the URL cannot be read back.
 10. **Per-site disable.** You can turn Static off for individual sites from the popup, including a plain-language **Page not working?** card with one-click pause and reload. When a site is disabled, all extension-probe blocking, DOM scrubbing, global stripping, and opt-in poisoning modes are bypassed for that origin, and Static lets that site's pages through the fingerprint/CAPTCHA network lists, including bot-check frames they embed (Cloudflare Turnstile, Arkose, hCaptcha), whose own requests would otherwise still be blocked. The popup's network-lists section says when they are skipped for the current site. Once the page reloads, a paused site gets none of Static's page code: the service worker registers the content scripts with paused origins excluded, including the `about:blank`, `srcdoc`, `data:`, and `blob:` frames those sites create. Pausing ignores ports, so pausing `localhost:3000` pauses every `localhost` port, and resuming any of them resumes the host. The disabled state persists in `chrome.storage.local`; the page that is open when you pause stops acting at once, and the reload removes Static from it. The **Disabled sites** page lists every paused origin with search, per-origin enable, and **Enable All**.
 
-The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds. The popup's diagnostics also include an **Exposed browser profile** view showing the JavaScript-visible user agent, platform, locale/language, timezone, screen, hardware buckets, WebGL, network, storage, and battery signals the current site can read; when Device signal poisoning is active, this view shows Static's stable per-site persona.
+The toolbar badge and popup show a live count of extension-enumeration probes blocked on the current tab. On sites that probe aggressively (LinkedIn runs ~4,500 per page load) the number climbs into the thousands within seconds. The popup's diagnostics also include an **Exposed browser profile** view. On every protected site the user agent and platform rows are the scrubbed per-site persona; the other rows are that persona only when Device signal poisoning is on, and otherwise the real browser profile. A paused site shows the real user agent.
 
 ## Compatibility warning
 
@@ -180,7 +180,7 @@ BrowserGate documents fingerprint collection beyond extension scans: user-agent 
 
 - **Stable per origin.** The persona is deterministic from `hash(user_secret + origin)`, so a site does not see a different computer every pageview.
 - **Different across origins.** Two unrelated sites get different personas, reducing cross-site correlation.
-- **Plausible, not random.** Values are internally aligned: the user-agent OS segment matches `navigator.platform`, Client Hints platform, desktop touch profile, screen bucket, and generic WebGL renderer. When the feature is on, the same persona is pushed to the network layer via dynamic DNR rules that rewrite `User-Agent` and strip `Sec-CH-UA` headers, so a server cannot infer the real OS from request headers.
+- **Plausible, not random.** Values are internally aligned: the user-agent OS segment matches `navigator.platform`, Client Hints platform, desktop touch profile, screen bucket, and generic WebGL renderer. User agent, platform, and Client Hints are rewritten on every protected site, in JavaScript and on request headers, whether or not this feature is on.
 - **Weakening instead of blocking.** Reads still complete, but high-entropy values are decoyed or subtly perturbed so collectors cannot rely on the raw machine profile as confidently.
 - **Opt-in.** It is off by default because some sites use these APIs for legitimate compatibility decisions.
 
@@ -315,6 +315,7 @@ static/
 ├── manifest.json
 ├── lists.js                # DOM pattern + Noise persona config
 ├── block_utils.js          # Shared MAIN/ISOLATED utility helpers
+├── block_ua.js             # MAIN-world user-agent, platform, and Client Hints scrubbing
 ├── block_adaptive.js       # MAIN-world observe-only adaptive behavior logging
 ├── block.js                # MAIN-world fetch/XHR blocker + Noise decoys
 ├── block_vectors.js        # MAIN-world element / worker / beacon / EventSource blockers

@@ -177,6 +177,7 @@ const countMap = (count, prefix = "k") =>
 
 const expectedMainWorldScripts = [
   "block_utils.js",
+  "block_ua.js",
   "block_adaptive.js",
   "block.js",
   "block_vectors.js",
@@ -271,6 +272,7 @@ test("manifest references existing files and leaves content scripts to the servi
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const coreMainWorldScripts = [
   "block_utils.js",
+  "block_ua.js",
   "block.js",
   "block_vectors.js",
   "block_iframe_attrs.js",

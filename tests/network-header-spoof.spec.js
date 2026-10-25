@@ -18,6 +18,7 @@
 // permission is properly granted and modifyHeaders rules ARE applied.
 
 const { expect, test } = require("@playwright/test");
+const http = require("http");
 const { launchExtension } = require("./helpers/extension");
 const { isOnline } = require("./helpers/real-browser");
 
@@ -32,13 +33,8 @@ const enableFingerprintMasking = async (serviceWorker) => {
 
 const disableFingerprintMasking = async (serviceWorker) => {
   await serviceWorker.evaluate(() => chrome.storage.local.set({ fingerprint_mode: "off" }));
-  // clearAllHeaderRules is a global in the service worker scope
-  await serviceWorker.evaluate(() => {
-    // eslint-disable-next-line no-undef
-    clearAllHeaderRules();
-  });
   await new Promise((resolve) => {
-    setTimeout(resolve, 500);
+    setTimeout(resolve, 200);
   });
 };
 
@@ -47,7 +43,7 @@ const preinstallHeaderRule = async (serviceWorker, origin) => {
     // eslint-disable-next-line no-undef
     const persona = await fingerprintPersonaFor(targetOrigin);
     // eslint-disable-next-line no-undef
-    await ensureOriginHeaderRule(targetOrigin, "mask", persona);
+    await ensureOriginHeaderRule(targetOrigin, persona);
     return { uaOs: persona.uaOs, os: persona.os, platform: persona.platform };
   }, origin);
 };
@@ -113,6 +109,7 @@ const extractIpheyEntry = async (page, sectionId, entryName) => {
 
 // ─── Tests ────────────────────────────────────────────────────────────────
 
+// eslint-disable-next-line max-lines-per-function -- one fixture covers the header-rule cases
 test.describe("Network-layer header spoofing", () => {
   let extension;
   let page;
@@ -129,87 +126,132 @@ test.describe("Network-layer header spoofing", () => {
 
   // ── 1. Unit: DNR rule creation ─────────────────────────────────────────
 
-  test("DNR header rule is installed with correct modifyHeaders structure", async () => {
-    // Verify that the service worker creates DNR dynamic rules with the
-    // expected modifyHeaders action (User-Agent set + Sec-CH-UA remove).
-    await enableFingerprintMasking(extension.serviceWorker);
+  test("a synthetic User-Agent rule exists at startup without poisoning", async () => {
+    const rules = await extension.serviceWorker.evaluate(async () =>
+      (await chrome.declarativeNetRequest.getDynamicRules()).filter(
+        (rule) => rule.action && rule.action.type === "modifyHeaders"
+      )
+    );
+    const global = rules.find((rule) => rule.priority === 40);
+    expect(global).toBeTruthy();
+    const ua = global.action.requestHeaders.find((header) => header.header === "User-Agent");
+    expect(ua.operation).toBe("set");
+    expect(ua.value).toContain("Chrome/152.0.0.0");
+    const secCh = global.action.requestHeaders.find((header) => header.header === "Sec-CH-UA");
+    expect(secCh.operation).toBe("set");
+    expect(secCh.value).toContain('"Chromium";v="152"');
+  });
 
-    const testOrigin = "https://static-test.example";
-    await preinstallHeaderRule(extension.serviceWorker, testOrigin);
+  test("DNR header rule sets User-Agent and Sec-CH-UA", async () => {
+    await preinstallHeaderRule(extension.serviceWorker, "https://static-test.example");
 
     const rules = await extension.serviceWorker.evaluate(() =>
       chrome.declarativeNetRequest.getDynamicRules()
     );
-    const ourRules = rules.filter((r) => r.action && r.action.type === "modifyHeaders");
-    expect(ourRules.length).toBeGreaterThanOrEqual(1);
-
-    const ourRule = ourRules[0];
-    expect(ourRule.action.type).toBe("modifyHeaders");
-
-    const headerOps = ourRule.action.requestHeaders.map((h) => h.header);
-    expect(headerOps).toContain("User-Agent");
-    expect(headerOps).toContain("Sec-CH-UA-Platform");
-
-    const uaSet = ourRule.action.requestHeaders.some(
-      (h) => h.header === "User-Agent" && h.operation === "set"
+    const ourRules = rules.filter(
+      (rule) => rule.action && rule.action.type === "modifyHeaders" && rule.priority === 100
     );
-    const secChRemoved = ourRule.action.requestHeaders.some(
-      (h) => h.header === "Sec-CH-UA" && h.operation === "remove"
-    );
-    expect(uaSet).toBe(true);
-    expect(secChRemoved).toBe(true);
-
-    await disableFingerprintMasking(extension.serviceWorker);
+    expect(ourRules).toHaveLength(2);
+    expect(
+      ourRules.every((rule) =>
+        rule.action.requestHeaders.some(
+          (header) =>
+            header.header === "User-Agent" &&
+            header.operation === "set" &&
+            header.value.includes("Chrome/152.0.0.0")
+        )
+      )
+    ).toBe(true);
+    expect(
+      ourRules.every((rule) =>
+        rule.action.requestHeaders.some(
+          (header) => header.header === "Sec-CH-UA" && header.operation === "set"
+        )
+      )
+    ).toBe(true);
+    expect(ourRules.some((rule) => rule.condition.requestDomains)).toBe(true);
+    expect(ourRules.some((rule) => rule.condition.initiatorDomains)).toBe(true);
   });
 
-  // ── 2. Unit: DNR rule cleanup ──────────────────────────────────────────
-
-  test("DNR header rules are removed when fingerprint mode is turned off", async () => {
-    await enableFingerprintMasking(extension.serviceWorker);
+  test("turning fingerprint mode off does not remove UA header rules", async () => {
     await preinstallHeaderRule(extension.serviceWorker, "https://cleanup-test.example");
+    const before = await headerRuleIds(extension.serviceWorker);
+    expect(before.length).toBeGreaterThan(0);
 
-    // Verify rules exist
-    let rules = await extension.serviceWorker.evaluate(() =>
-      chrome.declarativeNetRequest.getDynamicRules()
-    );
-    let ourRules = rules.filter((r) => r.action && r.action.type === "modifyHeaders");
-    expect(ourRules.length).toBeGreaterThanOrEqual(1);
-
-    // Turn off — should clean up all rules
     await disableFingerprintMasking(extension.serviceWorker);
 
-    rules = await extension.serviceWorker.evaluate(() =>
-      chrome.declarativeNetRequest.getDynamicRules()
-    );
-    ourRules = rules.filter((r) => r.action && r.action.type === "modifyHeaders");
-    expect(ourRules.length).toBe(0);
+    expect(await headerRuleIds(extension.serviceWorker)).toEqual(before);
   });
 
-  // ── 3. Unit: one header rule per origin ────────────────────────────────
-
-  test("an origin keeps one header rule however many frames ask for it", async () => {
-    await enableFingerprintMasking(extension.serviceWorker);
+  test("an origin keeps its header rules however many frames ask for them", async () => {
     const origin = "https://frames-test.example";
-
     await loadFramesConcurrently(extension.serviceWorker, origin, 6);
     const afterFirstLoad = await headerRuleIds(extension.serviceWorker);
-    expect(afterFirstLoad).toHaveLength(1);
+    expect(afterFirstLoad.filter((id) => id >= 10000)).toHaveLength(2);
 
-    // A reload reuses that rule instead of replacing it.
     await loadFramesConcurrently(extension.serviceWorker, origin, 6);
     expect(await headerRuleIds(extension.serviceWorker)).toEqual(afterFirstLoad);
   });
 
-  test("pausing a site after a multi-frame load removes its header rule", async () => {
-    await enableFingerprintMasking(extension.serviceWorker);
-    // localhost gets no pause allow rule to outrank a leftover header rule, so
-    // anything left behind keeps spoofing the paused site's User-Agent.
+  test("pausing localhost removes its header rules without dropping the global rule", async () => {
+    const kept = "https://still-protected.example";
+    await preinstallHeaderRule(extension.serviceWorker, kept);
     const origin = "http://localhost:8123";
-    await loadFramesConcurrently(extension.serviceWorker, origin, 6);
-
+    await loadFramesConcurrently(extension.serviceWorker, origin, 2);
     await pauseSite(extension.serviceWorker, origin);
 
-    expect(await headerRuleIds(extension.serviceWorker)).toEqual([]);
+    const rules = await extension.serviceWorker.evaluate(() =>
+      chrome.declarativeNetRequest.getDynamicRules()
+    );
+    const modify = rules.filter((rule) => rule.action && rule.action.type === "modifyHeaders");
+    expect(modify.some((rule) => rule.priority === 100 && rule.condition.regexFilter)).toBe(false);
+    const global = modify.find((rule) => rule.priority === 40);
+    expect(global).toBeTruthy();
+    expect(
+      global.action.requestHeaders.find((header) => header.header === "User-Agent").value
+    ).toContain("Chrome/152.0.0.0");
+    expect(
+      rules.some(
+        (rule) =>
+          rule.priority === 1000 &&
+          rule.condition &&
+          String(rule.condition.regexFilter || "").includes("localhost")
+      )
+    ).toBe(true);
+    expect(
+      modify.some(
+        (rule) =>
+          rule.priority === 100 &&
+          (rule.condition.requestDomains || []).includes("still-protected.example")
+      )
+    ).toBe(true);
+  });
+
+  test("a paused localhost request is not rewritten and another host still is", async () => {
+    const seen = [];
+    const server = http.createServer((req, res) => {
+      seen.push({ host: req.headers.host, ua: req.headers["user-agent"] || "" });
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<!doctype html><title>ua</title>");
+    });
+    await new Promise((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const { port } = server.address();
+    try {
+      await pauseSite(extension.serviceWorker, `http://localhost:${port}`);
+      await page.goto(`http://127.0.0.1:${port}/other`);
+      await page.goto(`http://localhost:${port}/paused`);
+      const other = seen.find((entry) => entry.host.startsWith("127.0.0.1"));
+      const paused = seen.find((entry) => entry.host.startsWith("localhost"));
+      expect(other && other.ua).toContain("Chrome/152.0.0.0");
+      expect(paused && paused.ua).not.toContain("Chrome/152.0.0.0");
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => {
+        server.close(resolve);
+      });
+    }
   });
 
   // ── 4. Integration: iphey.com ───────────────────────────────────────────

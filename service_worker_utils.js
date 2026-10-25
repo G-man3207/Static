@@ -346,6 +346,7 @@ globalThis.__static_sw_utils__ = (() => {
   // shared utils global) and block_globals.js last (it deletes that global).
   const MAIN_WORLD_SCRIPTS = [
     { file: "block_utils.js" },
+    { file: "block_ua.js" },
     { file: "block_adaptive.js", when: (s) => s.research_logging === true },
     { file: "block.js" },
     { file: "block_vectors.js" },

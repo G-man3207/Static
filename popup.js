@@ -464,12 +464,8 @@ const collectLocalBrowserProfile = async () => {
   };
 };
 
-const maskedUserAgentForPersona = (personaData) => {
-  const source = String(navigator.userAgent || "");
-  const uaOs = String(personaData.uaOs || "Windows NT 10.0; Win64; x64");
-  if (source.includes("(") && source.includes(")")) {
-    return source.replace(/\([^)]*\)/, `(${uaOs})`);
-  }
+const syntheticUserAgentFor = (personaData) => {
+  const uaOs = String((personaData && personaData.uaOs) || "Windows NT 10.0; Win64; x64");
   return `Mozilla/5.0 (${uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36`;
 };
 
@@ -490,7 +486,7 @@ const profileFromPersona = (personaData) => {
     storageQuota: personaData.storageQuota,
     timeZone: personaData.timeZone,
     uaDataPlatform: personaData.uaDataPlatform,
-    userAgent: maskedUserAgentForPersona(personaData),
+    userAgent: syntheticUserAgentFor(personaData),
     webgl: {
       renderer: personaData.webglRenderer,
       vendor: personaData.webglVendor,
@@ -553,19 +549,26 @@ const formatWebglProfile = (webgl) => {
   return values.length ? values.join(" / ") : "unavailable";
 };
 
-const exposedProfileStateFor = (resp, usesPersona) => {
+const exposedProfileStateFor = (resp, poisoning, uaScrubbed) => {
   if (resp && resp.disabled) {
     return {
       className: "profile-summary paused",
       label: "Paused here — browser defaults exposed",
-      note: "Static is paused on this site, so the page sees your unpoisoned JavaScript-visible profile.",
+      note: "Static is paused on this site, so the page sees your real user agent and browser profile.",
     };
   }
-  if (usesPersona) {
+  if (poisoning) {
     return {
       className: "profile-summary",
       label: "Poisoned per-site persona exposed",
-      note: "Device signal poisoning is active here. These are the stable JavaScript-visible values Static presents to this origin. Network request headers may still differ by browser policy.",
+      note: "Device signal poisoning is active here. These are the stable JavaScript-visible values Static presents to this origin, including the user agent sent on requests.",
+    };
+  }
+  if (uaScrubbed) {
+    return {
+      className: "profile-summary",
+      label: "User agent scrubbed",
+      note: "This site sees a stable per-site user agent, platform, and Client Hints. Other rows are this browser's real profile until Device signal poisoning is on.",
     };
   }
   if (resp && resp.fingerprintMode === "mask") {
@@ -578,7 +581,7 @@ const exposedProfileStateFor = (resp, usesPersona) => {
   return {
     className: "profile-summary warning",
     label: "Browser-default profile exposed",
-    note: "These are JavaScript-visible signals. Static does not claim to rewrite every network request header or browser Client Hint.",
+    note: "Open Static on a web page to see the user agent that site receives. This view is the extension page's own browser profile.",
   };
 };
 
@@ -604,11 +607,27 @@ const renderExposedProfile = async (resp) => {
   const note = document.getElementById("profile-note");
   box.innerHTML = "";
   try {
-    const usesPersona = !!(resp && resp.fingerprintPersona && !resp.disabled);
-    const profile = usesPersona
+    const paused = !!(resp && resp.disabled);
+    const poisoning = !!(
+      resp &&
+      resp.fingerprintMode === "mask" &&
+      resp.fingerprintPersona &&
+      !paused
+    );
+    const uaScrubbed = !!(resp && resp.fingerprintPersona && !paused);
+    const profile = poisoning
       ? profileFromPersona(resp.fingerprintPersona)
-      : await collectLocalBrowserProfile();
-    const state = exposedProfileStateFor(resp, usesPersona);
+      : {
+          ...(await collectLocalBrowserProfile()),
+          ...(uaScrubbed
+            ? {
+                userAgent: syntheticUserAgentFor(resp.fingerprintPersona),
+                platform: resp.fingerprintPersona.platform,
+                uaDataPlatform: resp.fingerprintPersona.uaDataPlatform,
+              }
+            : {}),
+        };
+    const state = exposedProfileStateFor(resp, poisoning, uaScrubbed);
     summary.className = state.className;
     summary.textContent = state.label;
     note.textContent = state.note;

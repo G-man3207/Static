@@ -39,9 +39,6 @@
   const UNMASKED_VENDOR_WEBGL = 0x9245;
   const UNMASKED_RENDERER_WEBGL = 0x9246;
   const allowedModes = new Set(["off", MODE_MASK]);
-  const uaDataMethodProxies = new WeakMap();
-  const uaDataNavigatorProxies = new WeakMap();
-  const uaDataProxies = new WeakMap();
   const explicitTimeZoneDateTimeFormats = new WeakSet();
   const poisonedAudioBuffers = new WeakSet();
   const nativeDateGetTimezoneOffset = Date.prototype.getTimezoneOffset;
@@ -147,36 +144,15 @@
 
   U.setupBridge(BRIDGE_EVENT, 1000, applyConfigUpdate);
 
-  const maskedUa = (ua) => {
-    const p = persona();
-    const source = String(ua || "");
-    if (source.includes("(") && source.includes(")")) {
-      return source.replace(/\([^)]*\)/, `(${p.uaOs})`);
-    }
-    return `Mozilla/5.0 (${p.uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36`;
-  };
-
-  const maskedAppVersion = (appVersion) => {
-    const p = persona();
-    const source = String(appVersion || "");
-    if (source.includes("(") && source.includes(")")) {
-      return source.replace(/\([^)]*\)/, `(${p.uaOs})`);
-    }
-    return `5.0 (${p.uaOs})`;
-  };
-
   const navigatorValueFor = (prop, original) => {
     const p = persona();
     const navValues = {
-      appVersion: maskedAppVersion(original),
       deviceMemory: p.deviceMemory,
       hardwareConcurrency: p.hardwareConcurrency,
       language: p.languages[0] || original,
       languages: p.languages.slice(),
       maxTouchPoints: p.maxTouchPoints,
       pdfViewerEnabled: p.pdfViewerEnabled,
-      platform: p.platform,
-      userAgent: maskedUa(original),
       vendor: p.vendor,
       webdriver: false,
     };
@@ -240,15 +216,12 @@
   const patchNavigatorGetters = () => {
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
     for (const prop of [
-      "appVersion",
       "deviceMemory",
       "hardwareConcurrency",
       "language",
       "languages",
       "maxTouchPoints",
       "pdfViewerEnabled",
-      "platform",
-      "userAgent",
       "vendor",
       "webdriver",
     ]) {
@@ -284,121 +257,6 @@
       patchGetter(ScreenOrientation.prototype, "type", () => "landscape-primary");
       patchGetter(ScreenOrientation.prototype, "angle", () => 0);
     }
-  };
-
-  const maskedBrands = (brands) => {
-    if (!Array.isArray(brands)) return brands;
-    return brands.map((brand) => ({ ...brand }));
-  };
-
-  const highEntropyValueFor = (hint, original) => {
-    const p = persona();
-    const values = {
-      architecture: p.architecture,
-      bitness: p.bitness,
-      model: "",
-      platform: p.uaDataPlatform,
-      platformVersion: p.os === "windows" ? "10.0.0" : "15.0.0",
-      uaFullVersion: "152.0.0.0",
-      wow64: false,
-    };
-    return Object.prototype.hasOwnProperty.call(values, hint) ? values[hint] : original;
-  };
-
-  const maskedUaDataJson = (target) => {
-    const p = persona();
-    const base =
-      target && typeof target.toJSON === "function"
-        ? target.toJSON()
-        : { brands: target && target.brands, mobile: target && target.mobile };
-    return {
-      ...safeObject(base),
-      brands: maskedBrands(base && base.brands),
-      mobile: false,
-      platform: p.uaDataPlatform,
-    };
-  };
-
-  const maskedHighEntropyValues = (target, hints) => {
-    const wanted = typeof hints === "string" ? [hints] : Array.from(hints || []);
-    const base =
-      target && typeof target.getHighEntropyValues === "function"
-        ? target.getHighEntropyValues(hints).catch(() => ({}))
-        : Promise.resolve({});
-    return Promise.resolve(base).then((values) => {
-      const out = { ...safeObject(values) };
-      for (const hint of wanted) out[hint] = highEntropyValueFor(hint, out[hint]);
-      out.brands = maskedBrands(out.brands || (target && target.brands));
-      out.mobile = false;
-      out.platform = persona().uaDataPlatform;
-      return out;
-    });
-  };
-
-  const maskedUaData = (target, owner) => {
-    if (!target || typeof target !== "object") return target;
-    if (owner && (typeof owner === "object" || typeof owner === "function")) {
-      const ownerCached = uaDataNavigatorProxies.get(owner);
-      if (ownerCached) return ownerCached;
-    }
-    const cached = uaDataProxies.get(target);
-    if (cached) return cached;
-    const nativeValue = (prop) => Reflect.get(target, prop, target);
-    const cachedMethod = (prop, build) => {
-      let methods = uaDataMethodProxies.get(target);
-      if (!methods) {
-        methods = {};
-        uaDataMethodProxies.set(target, methods);
-      }
-      methods[prop] ||= build();
-      return methods[prop];
-    };
-    const proxy = new Proxy(target, {
-      get(t, prop) {
-        if (!isMasking()) return nativeValue(prop);
-        if (prop === "brands") return maskedBrands(nativeValue(prop));
-        if (prop === "mobile") return false;
-        if (prop === "platform") return persona().uaDataPlatform;
-        if (prop === "toJSON") {
-          const orig = nativeValue(prop);
-          if (typeof orig !== "function") return orig;
-          return cachedMethod("toJSON", () =>
-            U.stealth(
-              function toJSON() {
-                return maskedUaDataJson(t);
-              },
-              "toJSON",
-              { length: 0, source: U.nativeSourceFor(orig, "toJSON") }
-            )
-          );
-        }
-        if (prop === "getHighEntropyValues") {
-          const orig = nativeValue(prop);
-          if (typeof orig !== "function") return orig;
-          return cachedMethod("getHighEntropyValues", () =>
-            U.stealth(
-              function getHighEntropyValues(hints) {
-                return maskedHighEntropyValues(t, hints);
-              },
-              "getHighEntropyValues",
-              { length: 1, source: U.nativeSourceFor(orig, "getHighEntropyValues") }
-            )
-          );
-        }
-        const value = nativeValue(prop);
-        return typeof value === "function" ? value.bind(t) : value;
-      },
-    });
-    uaDataProxies.set(target, proxy);
-    if (owner && (typeof owner === "object" || typeof owner === "function")) {
-      uaDataNavigatorProxies.set(owner, proxy);
-    }
-    return proxy;
-  };
-
-  const patchUserAgentData = () => {
-    if (typeof Navigator === "undefined" || !Navigator.prototype) return;
-    patchGetter(Navigator.prototype, "userAgentData", maskedUaData);
   };
 
   const timeZoneOffsetFor = (date, timeZone) => {
@@ -1123,8 +981,6 @@
     if (typeof Navigator === "undefined" || !Navigator.prototype) return;
     for (const [prop, value] of [
       ["productSub", "20030107"],
-      ["oscpu", ""],
-      ["buildID", ""],
       ["cookieEnabled", true],
       ["onLine", true],
     ]) {
@@ -1383,7 +1239,6 @@
     patchNavigatorConstants();
     patchScreenGetters();
     patchScreenPosition();
-    patchUserAgentData();
     patchDateTimeFormatConstructor();
     patchTimezone();
     patchNetworkInformation();

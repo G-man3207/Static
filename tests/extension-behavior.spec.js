@@ -3713,7 +3713,7 @@ test("per-site disable stops fingerprint masking", async ({ extension, server })
 
   // When disabled, native values should be returned, not the masked personas
   expect(["Win32", "MacIntel", "Linux x86_64"]).toContain(result.platform);
-  // Masked userAgent always contains Chrome/152.0.0.0; real UAs vary
+  // A scrubbed user agent contains Chrome/152.0.0.0. A paused page must not.
   expect(result.userAgent).not.toContain("Chrome/152.0.0.0");
 });
 

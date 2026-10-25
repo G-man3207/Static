@@ -14,6 +14,7 @@ test("default settings register only the core content scripts", async ({ extensi
   const main = await registeredMain(extension);
   expect(main.js.map((file) => file.replace(/^\//, ""))).toEqual([
     "block_utils.js",
+    "block_ua.js",
     "block.js",
     "block_vectors.js",
     "block_iframe_attrs.js",
@@ -26,6 +27,7 @@ test("default settings register only the core content scripts", async ({ extensi
   await page.goto(server.url("/blank.html"));
   const traces = await staticPageTraces(page);
   expect(traces.dom.length).toBeGreaterThan(0);
+  expect(traces.platformGetter).toContain("block_ua.js");
   expect(traces.platformGetter).not.toContain("block_fingerprint.js");
   expect(traces.rtcWithoutNewThrows).toBe(true);
   expect(traces.timer).toEqual([]);
@@ -41,8 +43,21 @@ test("switching poisoning and research logging on loads their scripts", async ({
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
   const traces = await staticPageTraces(page);
-  expect(traces.platformGetter).toContain("block_fingerprint.js");
+  expect(traces.platformGetter).toContain("block_ua.js");
+  expect(traces.platformGetter).not.toContain("block_fingerprint.js");
   expect(traces.timer).toContain("block_adaptive.js");
+  const hardwareFrames = await page.evaluate(() => {
+    const getter = Object.getOwnPropertyDescriptor(Navigator.prototype, "hardwareConcurrency").get;
+    try {
+      getter.call({});
+    } catch (error) {
+      return [...String(error.stack).matchAll(/chrome-extension:\/\/[a-p]{32}\/([\w.]+\.js)/g)].map(
+        (match) => match[1]
+      );
+    }
+    return [];
+  });
+  expect(hardwareFrames).toContain("block_fingerprint.js");
 });
 
 test("a paused site gets no Static page code while other sites keep it", async ({

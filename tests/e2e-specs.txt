@@ -2,6 +2,7 @@
 # Read by package.json (test:e2e) and gate.sh so the two never drift apart.
 # One spec path per line. Blank lines and comments (#) are ignored.
 tests/network-header-spoof.spec.js
+tests/ua-spoof.spec.js
 tests/globals-stealth.spec.js
 tests/bridge-flush.spec.js
 tests/extension-behavior.spec.js

@@ -21,6 +21,7 @@
     "__perf_probe_bi__",
     "__perf_replay_bi__",
     "__perf_style_bi__",
+    "__perf_ua_bi__",
   ];
   const BRIDGE_EVENTS = [...CONFIG_EVENTS, "__perf_adaptive_bi__"];
   const DISABLED_CONFIG = {
