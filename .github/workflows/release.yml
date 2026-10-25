@@ -43,6 +43,11 @@ jobs:
             -x ".husky/*" \
             -x "_metadata/*" \
             -x ".pi/*" \
+            -x ".agents/*" \
+            -x ".claude/*" \
+            -x ".grok/*" \
+            -x ".zcode/*" \
+            -x "skills-lock.json" \
             -x "node_modules/*" \
             -x "tests/*" \
             -x "docs/*" \

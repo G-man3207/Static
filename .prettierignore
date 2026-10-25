@@ -1,3 +1,8 @@
 _metadata/
 node_modules/
 *.min.js
+# Agent skills are vendored as-is; do not restyle them to the extension config.
+.agents/
+.claude/
+.grok/
+.zcode/

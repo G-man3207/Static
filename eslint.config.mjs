@@ -91,6 +91,9 @@ const strictCorrectnessRules = {
 export default [
   includeIgnoreFile(gitignorePath),
   {
+    ignores: [".agents/**", ".claude/**", ".grok/**", ".zcode/**"],
+  },
+  {
     linterOptions: {
       reportUnusedDisableDirectives: "error",
     },
