@@ -90,14 +90,14 @@ const headerRuleIds = (serviceWorker) =>
 const extractIpheyEntry = async (page, sectionId, entryName) => {
   return page.evaluate(
     ({ sectionId, entryName }) => {
-      const block = document.querySelector(`.detail-block h3#${CSS.escape(sectionId)}`);
-      if (!block) return null;
-      const list = block.closest(".detail-block");
-      if (!list) return null;
-      for (const entry of list.querySelectorAll(".detail-entry")) {
-        const nameEl = entry.querySelector(".detail-name");
+      // The card for each section is the element carrying that id (article in
+      // the current layout). Entry rows live inside it as label/value pairs.
+      const card = document.getElementById(sectionId);
+      if (!card) return null;
+      for (const item of card.querySelectorAll(".detail-item, .detail-entry")) {
+        const nameEl = item.querySelector(".detail-label, .detail-name");
         if (nameEl && nameEl.textContent.trim() === entryName) {
-          const valueEl = entry.querySelector(".detail-value");
+          const valueEl = item.querySelector(".detail-value");
           return valueEl ? valueEl.textContent.trim() : null;
         }
       }

@@ -2062,8 +2062,11 @@ test("Adaptive observe-only logging records multi-signal collectors without addi
   const sessionRules = await extension.serviceWorker.evaluate(() =>
     chrome.declarativeNetRequest.getSessionRules()
   );
-  expect(dynamicRules).toEqual([]);
-  expect(sessionRules).toEqual([]);
+  // Adaptive logging is observe-only: the header rules Static always installs
+  // for user-agent scrubbing may exist, but no rule may block or redirect.
+  const blocking = (rules) => rules.filter((rule) => rule.action.type !== "modifyHeaders");
+  expect(blocking(dynamicRules)).toEqual([]);
+  expect(blocking(sessionRules)).toEqual([]);
 });
 
 test("Adaptive observe-only logging ignores canvas-heavy apps without corroborating signals", async ({
@@ -2256,8 +2259,11 @@ test("Adaptive runtime detection logs proxied vendor signatures without behavior
   const sessionRules = await extension.serviceWorker.evaluate(() =>
     chrome.declarativeNetRequest.getSessionRules()
   );
-  expect(dynamicRules).toEqual([]);
-  expect(sessionRules).toEqual([]);
+  // Adaptive logging is observe-only: the header rules Static always installs
+  // for user-agent scrubbing may exist, but no rule may block or redirect.
+  const blocking = (rules) => rules.filter((rule) => rule.action.type !== "modifyHeaders");
+  expect(blocking(dynamicRules)).toEqual([]);
+  expect(blocking(sessionRules)).toEqual([]);
 });
 
 test("Adaptive runtime detection recognizes Fingerprint v4 start endpoints", async ({
@@ -3812,4 +3818,84 @@ test("Clear log removes probe state and Noise identity while preserving preferen
       noise_enabled: true,
       replay_mode: "chaos",
     });
+});
+
+test("html sinks block probes that a quoted attribute or entity hides from the markup scan", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
+
+  const url = probedUrl();
+  // A quoted ">" ends a naive tag scan early, and the parser decodes these
+  // character references after any text scan, so all three reach a live element.
+  await page.evaluate(
+    ([u]) => {
+      const host = document.createElement("div");
+      host.innerHTML = `<img alt="a > b" src="${u}">`;
+      document.body.appendChild(host);
+      const named = document.createElement("div");
+      named.innerHTML = `<img src="${u.replace("chrome-extension:", "chrome-extension&colon;")}">`;
+      document.body.appendChild(named);
+      const numeric = new DOMParser().parseFromString(
+        `<input src="${u.replace("chrome-extension:", "chrome&#45;extension:")}">`,
+        "text/html"
+      );
+      document.body.appendChild(numeric.querySelector("input"));
+      const range = document.createRange();
+      const frag = range.createContextualFragment(
+        `<video poster="${u.replace("chrome-extension:", "chrome&#x2d;extension:")}"></video>`
+      );
+      document.body.appendChild(frag);
+    },
+    [url]
+  );
+  await page.waitForTimeout(250);
+
+  const storage = await extension.serviceWorker.evaluate(() =>
+    chrome.storage.local.get(["probe_log"])
+  );
+  const entry = Object.values(storage.probe_log || {}).find(
+    (e) => e && e.idCounts && e.idCounts[PROBED_ID]
+  );
+  expect(entry).toBeTruthy();
+  // Visible surfaces report the original again (stealth), so check the block
+  // at the level that matters: every probe was recorded by the sink.
+  expect(entry.idCounts[PROBED_ID]).toBeGreaterThanOrEqual(4);
+});
+
+test("normalizes iframe policy attributes that a quoted angle bracket precedes in markup", async ({
+  extension,
+  server,
+}) => {
+  const page = await extension.context.newPage();
+  await page.goto(server.url("/blank.html"));
+  await page.waitForTimeout(100);
+
+  const result = await page.evaluate(() => {
+    const sandboxFor = (markup) => {
+      const host = document.createElement("div");
+      host.innerHTML = markup;
+      document.body.appendChild(host);
+      return host.querySelector("iframe").getAttribute("sandbox");
+    };
+    const unsupported = "allow-downloads-without-user-activation";
+    return {
+      plain: sandboxFor(`<iframe sandbox="allow-scripts ${unsupported}"></iframe>`),
+      quotedBefore: sandboxFor(
+        `<iframe title="a > b" sandbox="allow-scripts ${unsupported}"></iframe>`
+      ),
+      quotedAfter: sandboxFor(
+        `<iframe sandbox="allow-scripts ${unsupported}" title="a > b"></iframe>`
+      ),
+    };
+  });
+
+  expect(result).toEqual({
+    plain: "allow-scripts",
+    quotedBefore: "allow-scripts",
+    quotedAfter: "allow-scripts",
+  });
 });

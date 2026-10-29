@@ -4,13 +4,20 @@ All notable changes to Static will be documented here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.7.0] — 2026-10-29
 
 ### Fixed
 
 - A page that tests the user agent no longer shows the real one. On every protected site, Static rewrites the JavaScript user agent, platform, and Client Hints, and the matching request headers, including the first visit. Paused sites still see the real user agent. Device signal poisoning stays opt-in for the other signals.
 - Device signal poisoning no longer tells page scripts the browser is in light mode when it is in dark mode. Only `matchMedia()` was overridden, so the page's CSS still rendered dark while its scripts read light: sites that pick their theme in JavaScript came up light, and a page could catch the lie by comparing the two or by rewording the query (`screen and (prefers-color-scheme: dark)`). Even in light mode the wrapped result failed native `MediaQueryList` checks. `prefers-color-scheme` queries now get the browser's own answer.
 - Routine attribute updates no longer make the DOM scrubber rescan the page. Every class or `data-*` change scheduled four subtree walks from the isolated-world scrubber; 4,000 of those updates kept the main thread busy for about 120ms (longest beat about 70ms), and a class change on `<html>` over an 8k-node tree repeated a full walk four times, including a long task. The attribute that changed is still scrubbed, and a shadow root already attached to that element is still cleaned.
+- Markup sinks no longer miss a probe URL behind a quoted `>` or a character reference. The `innerHTML`/`outerHTML`/`insertAdjacentHTML`/`DOMParser`/`Range` scan read a tag only up to the first `>`, so writing an ordinary decoy attribute such as `alt="a > b"` in front of `src="chrome-extension://…"` left the probe unblocked; and because the HTML parser decodes character references after the scan, `chrome-extension&colon;//…` and `chrome&#45;extension://…` reached the live element too. The scan now reads quoted attribute values whole and decodes character references in the values it checks. An extension-URL probe is blocked and recorded, and the visible attribute keeps reporting the original as before.
+- iframe attribute normalization no longer skips a tag whose earlier attribute holds a quoted `>`. `<iframe title="a > b" sandbox="…">` stopped the tag scan early, so an unsupported `sandbox` token in that tag survived. Such tags are normalized like any other.
+
+### Changed
+
+- The two adaptive-logging tests assert that no blocking or redirecting network rule is installed, instead of requiring the dynamic-rule list to be empty. The always-on user-agent rule from 2.6.0 legitimately occupies it.
+- The `iphey.com` integration checks read the site's current card markup, so the network-layer User-Agent assertions run again instead of reading `null`.
 
 ## [2.6.0] — 2026-10-10
 
@@ -412,7 +419,8 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/G-man3207/Static/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/G-man3207/Static/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/G-man3207/Static/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/G-man3207/Static/compare/v2.4.0...v2.5.0

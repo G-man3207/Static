@@ -203,6 +203,63 @@
     return EXTENSION_TAIL_RE.test(value) && U.BAD_URL_RE.test(withoutTabsOrNewlines(value));
   };
 
+  // Character references as the HTML parser reads them in text and attribute
+  // values, so "chrome-extension&colon;//…" is found too. `<textarea>` is RCDATA:
+  // entities decode and every other character stays literal. DOMParser is not a
+  // Trusted Types sink, so this works under `require-trusted-types-for`.
+  // The native method is captured here because block_element_decoys.js patches
+  // parseFromString and calls this decoder; going through the patch would recurse.
+  // Decoded per `<`-separated run because an entity cannot contain `<`, which
+  // also keeps a literal "</textarea>" in the value from ending the element.
+  const entityParser = typeof DOMParser === "function" ? new DOMParser() : null;
+  const nativeParseFromString = entityParser
+    ? Object.getOwnPropertyDescriptor(DOMParser.prototype, "parseFromString").value
+    : null;
+  const decodeEntityRun = (run) => {
+    if (!nativeParseFromString) return run;
+    try {
+      const doc = nativeParseFromString.call(
+        entityParser,
+        `<textarea>${run}</textarea>`,
+        "text/html"
+      );
+      const field = doc.querySelector("textarea");
+      return field ? field.value : run;
+    } catch {
+      return run;
+    }
+  };
+  U.decodeHtmlEntities = (text) => {
+    const value = String(text == null ? "" : text);
+    if (!value.includes("&") || !entityParser) return value;
+    return value.includes("<")
+      ? value.split("<").map(decodeEntityRun).join("<")
+      : decodeEntityRun(value);
+  };
+
+  // A markup attribute value with its character references decoded when that
+  // is the only way it could name an extension URL. Values that already read
+  // as one, and values with no entity, are returned as they are.
+  U.markupValueForCheck = (value) => {
+    const text = String(value == null ? "" : value);
+    if (!text.includes("&")) return text;
+    const decoded = U.decodeHtmlEntities(text);
+    return U.isBad(decoded) ? decoded : text;
+  };
+
+  // Markup that names an extension URL, whether written plainly or through the
+  // character references the parser decodes. The plain regex runs first, then a
+  // string test that only markup with a suspicious entity gets the DOM parse:
+  // an encoded scheme either keeps "extension" readable or must hide its colon.
+  U.hasBadUrlInMarkup = (text) => {
+    const value = String(text == null ? "" : text);
+    if (U.hasBadUrl(value)) return true;
+    if (!value.includes("&") || !/extension|&colon|&#0*58|&#x0*3a/i.test(value)) {
+      return false;
+    }
+    return U.hasBadUrl(U.decodeHtmlEntities(value));
+  };
+
   // ======================================================================
   // CSS — only string and url() tokens make the browser load anything, and
   // the CSS parser decodes escapes in them (and in function names) before

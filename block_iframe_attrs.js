@@ -7,7 +7,11 @@
   const IFRAME_POLICY_ATTR_RE =
     /\s(?:sandbox|allow|allowfullscreen|allowpaymentrequest)(?:\s*=|\s|\/?>)/i;
   const IFRAME_MARKUP_RE = /<iframe\b/i;
-  const IFRAME_TAG_RE = /<iframe\b[^>]*>/gi;
+  // A ">" inside a quoted attribute value does not end the tag, so quoted runs
+  // are matched whole; a scan that stopped at the first ">" would leave the
+  // sandbox/allow attributes after a decoy attribute unnormalized. A quote the
+  // markup never closes still ends the tag at the next ">".
+  const IFRAME_TAG_RE = /<iframe\b((?:[^>"']|"[^"]*"?|'[^']*'?)*)>/gi;
   const SANDBOX_ATTR_RE = /(\ssandbox\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
   const ALLOW_ATTR_RE = /(\sallow\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
   const LEGACY_ALLOW_ATTR_RE =

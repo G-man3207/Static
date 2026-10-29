@@ -456,27 +456,40 @@
   };
 
   const sanitizeHtmlMarkup = (html, labelBase) => {
-    if (typeof html !== "string" || !html || !U.hasBadUrl(html)) {
+    if (typeof html !== "string" || !html || !U.hasBadUrlInMarkup(html)) {
       return { sanitized: html, tokenMap: new Map() };
     }
     const tokenMap = new Map();
     const localBump = (url, isDecoy) => bumpSinkProbe(labelBase, url, isDecoy);
 
+    // A ">" inside a quoted attribute value does not end the tag, so quoted
+    // runs are matched whole; otherwise a decoy attribute added in front of the
+    // probe hid it from this scan while the parser still read it. Closing tags
+    // have no attributes and stay out of the scan. A quote the markup never
+    // closes still ends the scan at the next ">".
     const sanitized = html.replace(
-      /<([a-z][a-z0-9-]*)\b([^>]*)>/gi,
+      /<([a-z][a-z0-9-]*)\b((?:[^>"']|"[^"]*"?|'[^']*'?)*)>/gi,
       (full, tagName, attrsChunk) => {
         const rewriteOneAttr = (am, attr, quoteChar, val) => {
           if (!val) return am;
           const q = quoteChar || "";
           const prop = attr.toLowerCase();
+          // The parser decodes character references in the value it keeps, so
+          // "chrome-extension&colon;//…" is a probe the raw text does not show.
+          const value = U.markupValueForCheck(val);
           if (prop === "srcset") {
-            if (!U.BAD_URL_RE.test(String(val))) return am;
+            if (!U.BAD_URL_RE.test(String(value))) return am;
             // Always rewrite per-candidate for srcset to support descriptors and mixed values.
-            const finalVal = rewriteSrcsetValue(val, tagName, (u, d) => localBump(u, d), tokenMap);
+            const finalVal = rewriteSrcsetValue(
+              value,
+              tagName,
+              (u, d) => localBump(u, d),
+              tokenMap
+            );
             return `${attr}=${q}${finalVal}${q}`;
           }
-          if (!U.isBad(val)) return am;
-          const url = U.getUrl(val);
+          if (!U.isBad(value)) return am;
+          const url = U.getUrl(value);
           const k = passiveDecoyKindFor(url, prop, tagName);
           if (!canHandleTagProp(tagName, prop)) {
             localBump(url, false);
@@ -929,7 +942,7 @@
     if (typeof DOMParser === "undefined") return;
     U.wrapMethod(DOMParser.prototype, "parseFromString", (orig) => ({
       parseFromString(markup, type) {
-        if (disabled || typeof markup !== "string" || !U.hasBadUrl(markup)) {
+        if (disabled || typeof markup !== "string" || !U.hasBadUrlInMarkup(markup)) {
           return orig.apply(this, arguments);
         }
         const t = String(type || "");
@@ -948,7 +961,7 @@
     if (typeof Range === "undefined") return;
     U.wrapMethod(Range.prototype, "createContextualFragment", (orig) => ({
       createContextualFragment(html) {
-        if (disabled || typeof html !== "string" || !U.hasBadUrl(html)) {
+        if (disabled || typeof html !== "string" || !U.hasBadUrlInMarkup(html)) {
           return orig.apply(this, arguments);
         }
         const { sanitized, tokenMap } = sanitizeHtmlMarkup(html, "createContextualFragment");
