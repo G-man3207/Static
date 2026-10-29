@@ -9,6 +9,21 @@ test("Replay poisoning detects documented OpenReplay global recording starts", a
 
   await page.goto(server.url("/openreplay-global-replay.html"));
   await expect.poll(() => page.evaluate(() => window.OpenReplay.isActive())).toBe(true);
+
+  // Recording the signal proves block_replay.js has its config, since it queues
+  // signals until config_update arrives and only then starts redacting. Filling
+  // the field earlier records the raw value.
+  await expect
+    .poll(() =>
+      extension.serviceWorker.evaluate((origin) => {
+        return chrome.storage.local.get("replay_log").then(({ replay_log }) => {
+          const entry = replay_log && replay_log[origin];
+          return !!(entry && entry.signals && entry.signals["global:OpenReplay.start"]);
+        });
+      }, server.origin)
+    )
+    .toBe(true);
+
   await page.locator("#secret").fill("openreplay-global@example.com");
 
   const observed = await page.evaluate(() => ({
