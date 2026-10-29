@@ -259,12 +259,15 @@ function createFirefoxDriver() {
   }
   log(`Firefox binary: ${firefoxBinary}`);
 
+  // Firefox 153+ restricts WebDriver navigation to http(s)/file/blob/about:blank
+  // unless system access is enabled. The about:debugging and moz-extension://
+  // checks below need it (see Mozilla bug 1579790). Firefox 159 dropped the
+  // --remote-allow-system-access argument and reads this variable instead, so
+  // set it before geckodriver spawns the browser (children inherit the env).
+  process.env.MOZ_REMOTE_ALLOW_SYSTEM_ACCESS = "1";
+
   const options = new firefox.Options();
   options.setBinary(firefoxBinary);
-  // Firefox 153+ restricts WebDriver navigation to http(s)/file/blob/about:blank
-  // unless system access is enabled. about:debugging and moz-extension:// popup
-  // checks need this flag (see Mozilla bug 1579790).
-  options.addArguments("--remote-allow-system-access");
   // Extensions are unreliable in Firefox headless — CI wraps with xvfb-run.
   options.setPreference("extensions.autoDisableScopes", 0);
   options.setPreference("extensions.enabledScopes", 15);
