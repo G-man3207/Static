@@ -20,8 +20,8 @@
 - New storage key `research_logging` (default `false`), new message `static_set_research_logging` (`{ enabled }` → `{ enabled, ok: true }`), new details field `researchLogging`.
 - Popup copy: "Applies when the page reloads." on Device signal poisoning, Replay poisoning and Research logging.
 - Every commit passes `npm run format:check` and `npm run lint:strict` (the husky hook does not run in this worktree, so run them by hand).
-- Work happens in `/root/Static-worktrees/on-demand-content-scripts` on `feat/on-demand-content-scripts`; never touch the uncommitted changes in `/root/Static`.
-- Run browsers on `DISPLAY=:97` (`Xvfb :97 -screen 0 1280x1024x24 -nolisten tcp &`); `xvfb-run` is unavailable here.
+- Work happens in a separate git worktree for the `feat/on-demand-content-scripts` branch; do not touch unrelated uncommitted changes in the main checkout.
+- Run browsers on a dedicated X display (for example `DISPLAY=:97`, with `Xvfb :97 -screen 0 1280x1024x24 -nolisten tcp &`); `xvfb-run` may be unavailable here.
 
 ## Review Focus
 
