@@ -23,7 +23,7 @@
     "__perf_style_bi__",
     "__perf_ua_bi__",
   ];
-  const BRIDGE_EVENTS = [...CONFIG_EVENTS, "__perf_adaptive_bi__"];
+  const BRIDGE_EVENTS = [...CONFIG_EVENTS, "__perf_adaptive_bi__", "__perf_scout_bi__"];
   const DISABLED_CONFIG = {
     persona: [],
     personaPaths: {},
@@ -186,7 +186,14 @@
   };
 
   const flushOnHidden = () => {
-    if (document.visibilityState === "hidden") flush();
+    if (document.visibilityState !== "hidden") return;
+    drainScout();
+    flush();
+  };
+
+  const flushOnPageHide = () => {
+    drainScout();
+    flush();
   };
 
   const handleProbeBlocked = (data) => {
@@ -252,6 +259,46 @@
     }
   };
 
+  // ─── Scout evidence relay ────────────────────────────────────────────────
+  // The scout runs on pages this bridge considers "disabled" for masking, so
+  // its evidence must not be dropped by the disabled flag. Probe URLs are
+  // sanitized in the service worker, not here. `seq` lets the synchronous drain
+  // below forward the same batch the port is about to deliver without doubling
+  // any delta (the service worker never sees `seq`).
+  let lastScoutSeq = 0;
+
+  const forwardSiteEvidence = (data) => {
+    try {
+      if (!data || typeof data !== "object") return;
+      if (typeof data.seq === "number") {
+        if (data.seq <= lastScoutSeq) return;
+        lastScoutSeq = data.seq;
+      }
+      chrome.runtime.sendMessage({
+        type: "static_site_evidence",
+        probes: Array.isArray(data.probes) ? data.probes : [],
+        overflow: typeof data.overflow === "number" && data.overflow > 0 ? data.overflow : 0,
+        signals: data.signals && typeof data.signals === "object" ? data.signals : {},
+      });
+    } catch (err) {
+      safeLog(err, "site evidence");
+    }
+  };
+
+  // Called from pagehide / visibility-hidden before the document is frozen, so
+  // the last <250 ms of scout probes are not lost to the port task queue.
+  const drainScout = () => {
+    try {
+      if (typeof CustomEvent !== "function" || !document.dispatchEvent) return;
+      const detail = { payload: null };
+      document.dispatchEvent(new CustomEvent("__static_scout_drain__", { detail }));
+      if (typeof detail.payload !== "string" || !detail.payload) return;
+      forwardSiteEvidence(JSON.parse(detail.payload));
+    } catch (err) {
+      safeLog(err, "scout drain");
+    }
+  };
+
   const handlePortMessage = (event) => {
     const data = event.data;
     if (!data || typeof data !== "object") return;
@@ -259,6 +306,7 @@
     if (data.type === "replay_detected") sendReplaySignal(data.signal);
     if (data.type === "adaptive_signal") sendAdaptiveSignal(data.signal);
     if (data.type === "compat_signal") sendCompatSignal(data);
+    if (data.type === "site_evidence") forwardSiteEvidence(data);
   };
 
   const createPort = (eventName) => {
@@ -361,7 +409,7 @@
     refreshPersona();
   });
 
-  addEventListener("pagehide", flush, { capture: true });
+  addEventListener("pagehide", flushOnPageHide, { capture: true });
   document.addEventListener("visibilitychange", flushOnHidden, { capture: true });
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

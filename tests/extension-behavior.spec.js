@@ -3,7 +3,7 @@
 const http = require("http");
 const { expect, test } = require("./helpers/extension-fixture");
 const { expectApiSurface, getApiSurface } = require("./helpers/api-surface");
-const { launchExtension, staticPageTraces } = require("./helpers/extension");
+const { launchExtension, resetStorage, staticPageTraces } = require("./helpers/extension");
 const { visibleContentRatio } = require("./helpers/png");
 const { startFixtureServer } = require("./helpers/server");
 
@@ -194,7 +194,7 @@ test("records compatibility warnings for unhandled blocked fetch probes", async 
   extension,
   server,
 }) => {
-  await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
+  await resetStorage(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
@@ -589,7 +589,7 @@ test("does not warn when blocked fetch probes are handled by the page", async ({
   extension,
   server,
 }) => {
-  await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
+  await resetStorage(extension);
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
 
@@ -613,7 +613,7 @@ test("html sinks (innerHTML, DOMParser, Range, insertAdjacent) intercept extensi
 }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
-  await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
+  await resetStorage(extension);
 
   const url = probedUrl();
   await page.evaluate(
@@ -3826,7 +3826,7 @@ test("html sinks block probes that a quoted attribute or entity hides from the m
 }) => {
   const page = await extension.context.newPage();
   await page.goto(server.url("/blank.html"));
-  await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
+  await resetStorage(extension);
 
   const url = probedUrl();
   // A quoted ">" ends a naive tag scan early, and the parser decodes these

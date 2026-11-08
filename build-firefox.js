@@ -150,7 +150,14 @@ if (stripTypesFromServiceWorker(swPath)) {
 //    handles the SW path; this handles the event-page path.
 const manifestPath = path.join(tmpDir, "manifest.json");
 const fxManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-fxManifest.background.scripts = ["lists.js", "service_worker_utils.js", "service_worker.js"];
+fxManifest.background.scripts = [
+  "lists.js",
+  "signals.js",
+  "site_signals.js",
+  "site_dnr.js",
+  "service_worker_utils.js",
+  "service_worker.js",
+];
 // Chrome-only key; Firefox warns about unknown manifest keys.
 delete fxManifest.minimum_chrome_version;
 fs.writeFileSync(manifestPath, `${JSON.stringify(fxManifest, null, 2)}\n`);

@@ -2,7 +2,13 @@
 // Static — on-demand content-script registration (spec:
 // docs/superpowers/specs/2026-10-08-on-demand-content-scripts-design.md).
 const { expect, test } = require("./helpers/extension-fixture");
-const { staticPageTraces } = require("./helpers/extension");
+const {
+  registeredScripts,
+  setProtectionMode,
+  setSiteDecision,
+  setStorage,
+  staticPageTraces,
+} = require("./helpers/extension");
 const { startFixtureServer } = require("./helpers/server");
 
 const registeredMain = (extension) =>
@@ -184,4 +190,82 @@ test("research logging message saves the setting and loads the logger", async ({
   );
   expect(saved).toEqual({ enabled: true, ok: true });
   expect((await registeredMain(extension)).js).toContain("block_adaptive.js");
+});
+
+// =========================================================================
+// v2.8 per-site registrations (spec: Content-script registrations)
+// =========================================================================
+
+test("per_site decisions register the full stack on site patterns and scout elsewhere", async ({
+  extension,
+}) => {
+  await setProtectionMode(extension, "per_site");
+  await setSiteDecision(extension, "left-off.example", "off");
+  let scripts = await registeredScripts(extension);
+  expect(scripts.map((script) => script.id)).toEqual(["c-scout-main", "d-scout-isolated"]);
+
+  await setSiteDecision(extension, "127.0.0.1", "on");
+  scripts = await registeredScripts(extension);
+  expect(scripts.map((script) => script.id)).toEqual([
+    "a-main",
+    "b-isolated",
+    "c-scout-main",
+    "d-scout-isolated",
+  ]);
+  const [main, isolated, scoutMain, scoutIsolated] = scripts;
+  expect(main.matches).toEqual(["*://127.0.0.1/*"]);
+  expect(isolated.matches).toEqual(main.matches);
+  expect(scoutMain.matches).toEqual(["<all_urls>"]);
+  expect(scoutIsolated.matches).toEqual(["<all_urls>"]);
+  expect(scoutMain.excludeMatches).toEqual(main.matches);
+  expect(scoutIsolated.excludeMatches).toEqual(main.matches);
+  // An off decision is not a full-stack match and does not exclude the scout.
+  expect(main.matches.some((pattern) => pattern.includes("left-off.example"))).toBe(false);
+  expect(scoutMain.excludeMatches).not.toContain("*://left-off.example/*");
+});
+
+test("per_site ignores always-mode pause entries until the site is decided on", async ({
+  extension,
+  server,
+}) => {
+  await setStorage(extension, { disabled_origins: { [server.origin]: true } });
+  await setProtectionMode(extension, "per_site");
+  let scripts = await registeredScripts(extension);
+  expect(scripts.map((script) => script.id)).toEqual(["c-scout-main", "d-scout-isolated"]);
+  expect(scripts[0].excludeMatches).toEqual([]);
+
+  await setProtectionMode(extension, "always");
+  scripts = await registeredScripts(extension);
+  const main = scripts.find((script) => script.id === "a-main");
+  expect(main.excludeMatches).toEqual(["http://127.0.0.1/*"]);
+});
+
+test("per_site registrations stay sorted, unique and complete for 250 decided sites", async ({
+  extension,
+}) => {
+  const decisions = {};
+  for (let index = 0; index < 250; index += 1) {
+    decisions[`s${index}.example`] = { at: index + 1, source: "sites-page", state: "on" };
+  }
+  decisions["[::1]"] = { at: 1, source: "popup", state: "on" };
+  decisions["-bad.example"] = { at: 2, source: "popup", state: "on" };
+  await setStorage(extension, { protection_mode: "per_site", site_decisions: decisions });
+
+  const scripts = await registeredScripts(extension);
+  expect(scripts.map((script) => script.id)).toEqual([
+    "a-main",
+    "b-isolated",
+    "c-scout-main",
+    "d-scout-isolated",
+  ]);
+  const matches = scripts[0].matches;
+  expect(matches).toHaveLength(500);
+  expect(new Set(matches).size).toBe(500);
+  expect(matches).toEqual([...matches].sort());
+  expect(matches).toContain("*://s0.example/*");
+  expect(matches).toContain("*://*.s249.example/*");
+  expect(matches).not.toContain("*://[::1]/*");
+  expect(matches).not.toContain("*://-bad.example/*");
+  expect(scripts[2].excludeMatches).toEqual(matches);
+  expect(scripts[3].excludeMatches).toEqual(matches);
 });

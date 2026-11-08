@@ -1,6 +1,6 @@
 const { expect, test: base } = require("@playwright/test");
 const { datadogFixtureFiles } = require("./datadog-fixtures");
-const { launchExtension } = require("./extension");
+const { launchExtension, resetStorage } = require("./extension");
 const { hotjarFixtureFiles } = require("./hotjar-fixtures");
 const { posthogFixtureFiles } = require("./posthog-fixtures");
 const { startFixtureServer } = require("./server");
@@ -627,7 +627,10 @@ const test = base.extend({
     void server;
     const extension = await launchExtension();
     try {
-      await extension.serviceWorker.evaluate(() => chrome.storage.local.clear());
+      // launchExtension seeds always mode for the pre-v2.8 specs; clearing here
+      // (instead of relying on the launch seed) still drops any startup state,
+      // then re-seeds because the default mode is per_site.
+      await resetStorage(extension);
       await use(extension);
     } finally {
       await extension.close();

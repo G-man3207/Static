@@ -136,6 +136,314 @@
       .adaptive[hidden] {
         display: none;
       }
+      .count-subtext {
+        margin-top: 4px;
+        color: var(--text-subtle);
+        font-size: 10px;
+        line-height: 1.4;
+      }
+      .onboarding {
+        padding: 11px 16px 12px;
+        background: #f6f6f6;
+        border-bottom: 1px solid var(--border);
+      }
+      .onboarding[hidden] {
+        display: none;
+      }
+      .onboarding-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .onboarding-body {
+        margin-top: 4px;
+        color: var(--text-muted);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      .onboarding-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .onboarding-button {
+        padding: 5px 8px;
+        color: var(--text);
+        background: #fff;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        font: inherit;
+        font-size: 10px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .onboarding-button:hover {
+        border-color: var(--text-muted);
+      }
+      .onboarding-button.is-secondary {
+        color: var(--text-muted);
+        background: transparent;
+      }
+      .onboarding-note {
+        margin: 6px 0 0;
+        color: var(--accent);
+        font-size: 10px;
+      }
+      .onboarding-note[hidden] {
+        display: none;
+      }
+      .mode-section {
+        padding-top: 12px;
+        padding-bottom: 12px;
+      }
+      .mode-section h2 {
+        margin-bottom: 6px;
+      }
+      .mode-row {
+        display: flex;
+        gap: 2px;
+        padding: 2px;
+        background: #f0f0f0;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+      }
+      .mode-button {
+        flex: 1;
+        padding: 5px 6px;
+        color: var(--text-muted);
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        font: inherit;
+        font-size: 10px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .mode-button:hover {
+        color: var(--text);
+      }
+      .mode-button[aria-pressed="true"] {
+        color: var(--text);
+        background: #fff;
+        border-color: var(--border-strong);
+        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+      }
+      .mode-button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      .mode-explainer {
+        margin: 5px 0 0;
+        color: var(--text-subtle);
+        font-size: 10px;
+        line-height: 1.4;
+      }
+      .mode-note {
+        margin: 5px 0 0;
+        color: var(--accent);
+        font-size: 10px;
+        line-height: 1.4;
+      }
+      .mode-note[hidden] {
+        display: none;
+      }
+      .site-decision[hidden] {
+        display: none;
+      }
+      .site-decision-head {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .site-state {
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .site-verdict {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 6px;
+        color: var(--text-muted);
+        background: #f6f6f6;
+        border: 1px solid var(--border-strong);
+        border-radius: 5px;
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+
+      .site-verdict[hidden] {
+        display: none;
+      }
+      .site-verdict.is-protect {
+        color: #246236;
+        background: #f1fbf4;
+        border-color: #bfdfc9;
+      }
+      .site-verdict.is-skip {
+        color: #8a4b00;
+        background: #fff7e8;
+        border-color: #efd4a8;
+      }
+      .site-verdict.is-on {
+        color: var(--accent);
+        background: #fff5f5;
+        border-color: #ead0d0;
+      }
+      .site-headline {
+        margin: 8px 0 0;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.35;
+      }
+      .site-recommendation[hidden] {
+        display: none;
+      }
+      .site-summary {
+        margin: 3px 0 0;
+        color: var(--text-muted);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      .site-headline[hidden],
+      .site-summary-text[hidden] {
+        display: none;
+      }
+      .site-caution {
+        margin: 6px 0 0;
+        color: #8a4b00;
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1.4;
+      }
+      .site-reasons {
+        margin: 8px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .site-reasons li {
+        position: relative;
+        padding: 3px 0 3px 14px;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      .site-reasons li::before {
+        position: absolute;
+        left: 0;
+        top: 2px;
+        font-weight: 700;
+      }
+      .site-reasons .benefit::before {
+        content: "+";
+        color: #246236;
+      }
+      .site-reasons .risk::before {
+        content: "\2212";
+        color: var(--accent);
+      }
+      .site-reasons .note {
+        color: var(--text-subtle);
+      }
+      .site-reasons .note::before {
+        content: "\00b7";
+        color: var(--text-subtle);
+      }
+      .site-open-more {
+        margin: 5px 0 0;
+        padding: 0;
+        color: var(--accent);
+        background: none;
+        border: 0;
+        font: inherit;
+        font-size: 10px;
+        font-weight: 600;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      .site-open-more:hover {
+        color: #a52626;
+      }
+      .site-open-more[hidden] {
+        display: none;
+      }
+      .site-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .site-actions[hidden] {
+        display: none;
+      }
+      .site-action {
+        flex: 1;
+        min-height: 28px;
+        padding: 6px 7px;
+        color: var(--text);
+        background: #fff;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        font: inherit;
+        font-size: 10px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .site-action:hover {
+        border-color: var(--text-muted);
+      }
+      .site-action.is-primary {
+        color: #fff;
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .site-action.is-primary:hover {
+        background: #b52a2a;
+        border-color: #b52a2a;
+      }
+      .site-action.is-danger {
+        color: var(--accent);
+        background: #fff5f5;
+        border-color: #ead0d0;
+      }
+      .site-action.is-danger:hover {
+        border-color: var(--accent);
+      }
+      .site-action.is-suggested {
+        box-shadow: 0 0 0 2px #ead0d0;
+      }
+      .site-action[hidden] {
+        display: none;
+      }
+      .site-action:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      .site-note {
+        margin: 7px 0 0;
+        color: var(--text-muted);
+        font-size: 10px;
+        line-height: 1.4;
+      }
+      .site-note[hidden] {
+        display: none;
+      }
+      .is-targeted {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+        border-radius: 3px;
+      }
+      .recovery-section[hidden] {
+        display: none;
+      }
+      .recovery-section {
+        padding-top: 12px;
+        padding-bottom: 12px;
+      }
+      .recovery-section .recovery {
+        margin-top: 0;
+      }
       .recovery {
         margin-top: 10px;
         padding: 8px;
@@ -668,6 +976,7 @@
         border-radius: 6px;
         cursor: pointer;
         text-align: left;
+        text-decoration: none;
         transition:
           background 0.1s,
           border-color 0.1s;
@@ -782,27 +1091,70 @@
       <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
     </div>
 
+    <div class="onboarding" id="onboarding" role="note" aria-labelledby="onboarding-title" hidden>
+      <div class="onboarding-title" id="onboarding-title">Static now asks before it masks</div>
+      <div class="onboarding-body">
+        Static stays off on a page until you choose. When a site checks for extensions or
+        fingerprints your browser, the toolbar icon shows what it found so you can decide.
+      </div>
+      <div class="onboarding-actions">
+        <button class="onboarding-button" id="onboarding-dismiss" type="button">Got it</button>
+        <button class="onboarding-button is-secondary" id="onboarding-always" type="button">
+          Protect every site instead
+        </button>
+      </div>
+      <p class="onboarding-note" id="onboarding-note" role="status" aria-live="polite" hidden></p>
+    </div>
+
     <div class="hero">
       <div class="count" id="count">0</div>
-      <div class="label">probes blocked on this tab</div>
+      <div class="label" id="count-label">probes blocked on this tab</div>
+      <div class="count-subtext" id="count-subtext" hidden>
+        Static is watching, not masking, on this site.
+      </div>
       <div class="cumulative" id="cumulative"></div>
       <div class="drift" id="drift" hidden></div>
       <div class="adaptive" id="adaptive" hidden></div>
-      <div class="recovery" id="recovery" hidden aria-live="polite">
-        <div class="recovery-title" id="recovery-title">Page not working?</div>
-        <div class="recovery-detail" id="recovery-detail">
-          Static can stop logins, checkouts, or extra features on some sites. Pause it here to
-          check.
-        </div>
-        <div class="recovery-actions">
-          <button class="recovery-button" id="recovery-action" type="button">
-            Pause this site and reload
-          </button>
-        </div>
-      </div>
     </div>
 
-    <div class="section site-section" id="site-control">
+    <section
+      class="section site-section site-decision"
+      id="site-decision"
+      aria-labelledby="site-decision-title"
+      hidden
+    >
+      <h2 class="sr-only" id="site-decision-title">Site decision</h2>
+      <div class="site-decision-head">
+        <div class="site-state" id="site-state">Static is off here.</div>
+        <span class="site-verdict" id="site-verdict" hidden></span>
+      </div>
+      <div class="site-recommendation" id="site-summary" hidden>
+        <p class="site-headline" id="site-headline"></p>
+        <p class="site-summary site-summary-text" id="site-summary-text"></p>
+      </div>
+      <p class="site-caution" id="site-caution" hidden></p>
+      <ul
+        class="site-reasons"
+        id="site-reasons"
+        aria-label="Why Static recommends this"
+        hidden
+      ></ul>
+      <button class="site-open-more" id="site-open-more" type="button" hidden>
+        Review the controls behind this
+      </button>
+      <div class="site-actions" id="site-cta">
+        <button class="site-action is-primary" id="site-protect" type="button">
+          Protect this site
+        </button>
+        <button class="site-action" id="site-leave-off" type="button">Leave it off</button>
+        <button class="site-action is-danger" id="site-turn-off" type="button">
+          Turn it off here
+        </button>
+      </div>
+      <p class="site-note" id="site-note" role="status" aria-live="polite" hidden></p>
+    </section>
+
+    <div class="section site-section" id="site-control" hidden>
       <div class="toggle-row">
         <div class="col">
           <div class="ttl" id="site-title">
@@ -822,6 +1174,37 @@
           />
           <span class="switch-bg"></span>
         </label>
+      </div>
+    </div>
+
+    <div class="section mode-section" id="mode-section">
+      <h2>Protection mode</h2>
+      <div class="mode-row" id="mode-row" role="group" aria-label="Protection mode">
+        <button class="mode-button" id="mode-per-site" type="button" aria-pressed="false">
+          Only sites I choose
+        </button>
+        <button class="mode-button" id="mode-always" type="button" aria-pressed="false">
+          Every site
+        </button>
+      </div>
+      <p class="mode-explainer" id="mode-explainer">
+        Static stays off until you turn it on for a site.
+      </p>
+      <p class="mode-note" id="mode-note" role="status" aria-live="polite" hidden></p>
+    </div>
+
+    <div class="section recovery-section" id="recovery-section" hidden>
+      <div class="recovery" id="recovery" hidden aria-live="polite">
+        <div class="recovery-title" id="recovery-title">Page not working?</div>
+        <div class="recovery-detail" id="recovery-detail">
+          Static can stop logins, checkouts, or extra features on some sites. Pause it here to
+          check.
+        </div>
+        <div class="recovery-actions">
+          <button class="recovery-button" id="recovery-action" type="button">
+            Pause this site and reload
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1057,11 +1440,11 @@
           <span class="log-link-stats" id="noise-stats"></span>
           <span class="log-link-arrow">→</span>
         </button>
-        <button class="log-link" id="view-disabled">
-          <span class="log-link-text">View disabled sites</span>
-          <span class="log-link-stats" id="disabled-stats"></span>
+        <a class="log-link" id="view-sites" href="sites.html">
+          <span class="log-link-text">Manage protected sites</span>
+          <span class="log-link-stats" id="sites-stats"></span>
           <span class="log-link-arrow">→</span>
-        </button>
+        </a>
       </div>
 
       <div class="section">

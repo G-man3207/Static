@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- registrations, caps, playbook and drift helpers share one dependency-free module */
 // Static - pure service-worker helpers for caps, playbooks, and drift scoring.
 globalThis.__static_sw_utils__ = (() => {
   const CFG = globalThis.__static_config__;
@@ -358,13 +359,29 @@ globalThis.__static_sw_utils__ = (() => {
     { file: "block_globals.js" },
   ];
   const ISOLATED_WORLD_SCRIPTS = ["lists.js", "bridge.js", "dom_scrubber.js"];
+  // Observe-only scout that runs in per-site mode on sites the user has not
+  // masked yet. block_utils.js must stay first; scout.js deletes the shared
+  // globals once every scout script captured them.
+  const SCOUT_MAIN_SCRIPTS = [
+    "block_utils.js",
+    "signals.js",
+    "scout.js",
+    "scout_probes.js",
+    "scout_signals.js",
+  ];
+  const SCOUT_ISOLATED_SCRIPTS = ["lists.js", "bridge.js"];
   // Storage keys, with defaults, that decide what gets registered.
   const CONTENT_SCRIPT_SETTINGS = {
     disabled_origins: {},
     fingerprint_mode: "off",
+    protection_mode: "per_site",
     replay_mode: "off",
     research_logging: false,
+    site_decisions: {},
   };
+  const PROTECTION_MODES = ["per_site", "always"];
+  const MAX_SITE_DECISIONS = 250;
+  const MAX_EVIDENCE_SITES = 200;
   const PATTERN_HOST_RE = /^[a-z0-9.-]+$/;
 
   // Firefox never matches patterns with ports, and one malformed pattern makes
@@ -395,29 +412,112 @@ globalThis.__static_sw_utils__ = (() => {
   const isOriginPaused = (origin, disabledOrigins) =>
     !!origin && pausedOriginsLike(origin, disabledOrigins).length > 0;
 
+  const protectionModeFor = (settings) =>
+    settings && settings.protection_mode === "always" ? "always" : "per_site";
+
+  const decisionStateFor = (siteKey, siteDecisions) => {
+    const entry = (siteDecisions || {})[siteKey];
+    if (!entry || typeof entry !== "object") return "undecided";
+    if (entry.state === "on") return "on";
+    if (entry.state === "off") return "off";
+    return "undecided";
+  };
+
+  const siteDecisionsOn = (siteDecisions) =>
+    Object.keys(siteDecisions || {})
+      .filter((siteKey) => decisionStateFor(siteKey, siteDecisions) === "on")
+      .sort();
+
+  const siteDecisionPatterns = (siteDecisions) => {
+    const patterns = new Set();
+    for (const siteKey of siteDecisionsOn(siteDecisions)) {
+      for (const pattern of H.sitePatternsFor(siteKey) || []) patterns.add(pattern);
+    }
+    return [...patterns].sort();
+  };
+
+  // Registrations:
+  //   always   -> the two full-stack scripts everywhere except paused hosts
+  //   per_site -> the full stack on decided-on sites only, plus a scout pair on
+  //               every other page. The scout pair's excludeMatches mirror the
+  //               full stack's matches, so exactly one set runs per frame.
   const contentScriptRegistrationsFor = (settings) => {
-    const disabled = settings.disabled_origins || {};
-    const patterns = Object.keys(disabled)
-      .filter((origin) => disabled[origin])
+    const mode = protectionModeFor(settings);
+    const paused = Object.keys(settings.disabled_origins || {})
+      .filter((origin) => settings.disabled_origins[origin])
       .map(pausedOriginPattern)
       .filter(Boolean);
+    const pausedPatterns = [...new Set(paused)].sort();
+    const fullMain = MAIN_WORLD_SCRIPTS.filter((s) => !s.when || s.when(settings)).map(
+      (s) => s.file
+    );
     const shared = {
       allFrames: true,
-      excludeMatches: [...new Set(patterns)].sort(),
       matchOriginAsFallback: true,
-      matches: ["<all_urls>"],
       persistAcrossSessions: true,
       runAt: "document_start",
     };
-    return [
+    if (mode === "always") {
+      return [
+        {
+          ...shared,
+          excludeMatches: pausedPatterns,
+          id: "a-main",
+          js: fullMain,
+          matches: ["<all_urls>"],
+          world: "MAIN",
+        },
+        {
+          ...shared,
+          excludeMatches: pausedPatterns,
+          id: "b-isolated",
+          js: [...ISOLATED_WORLD_SCRIPTS],
+          matches: ["<all_urls>"],
+          world: "ISOLATED",
+        },
+      ];
+    }
+    const onPatterns = siteDecisionPatterns(settings.site_decisions);
+    const registrations = [];
+    if (onPatterns.length > 0) {
+      registrations.push(
+        {
+          ...shared,
+          excludeMatches: [],
+          id: "a-main",
+          js: fullMain,
+          matches: onPatterns,
+          world: "MAIN",
+        },
+        {
+          ...shared,
+          excludeMatches: [],
+          id: "b-isolated",
+          js: [...ISOLATED_WORLD_SCRIPTS],
+          matches: onPatterns,
+          world: "ISOLATED",
+        }
+      );
+    }
+    registrations.push(
       {
         ...shared,
-        id: "a-main",
-        js: MAIN_WORLD_SCRIPTS.filter((s) => !s.when || s.when(settings)).map((s) => s.file),
+        excludeMatches: onPatterns,
+        id: "c-scout-main",
+        js: [...SCOUT_MAIN_SCRIPTS],
+        matches: ["<all_urls>"],
         world: "MAIN",
       },
-      { ...shared, id: "b-isolated", js: [...ISOLATED_WORLD_SCRIPTS], world: "ISOLATED" },
-    ];
+      {
+        ...shared,
+        excludeMatches: onPatterns,
+        id: "d-scout-isolated",
+        js: [...SCOUT_ISOLATED_SCRIPTS],
+        matches: ["<all_urls>"],
+        world: "ISOLATED",
+      }
+    );
+    return registrations;
   };
 
   // getRegisteredContentScripts() can omit empty lists and default flags, so
@@ -443,11 +543,20 @@ globalThis.__static_sw_utils__ = (() => {
     CONTENT_SCRIPT_SETTINGS,
     ISOLATED_WORLD_SCRIPTS,
     MAIN_WORLD_SCRIPTS,
+    MAX_EVIDENCE_SITES,
+    MAX_SITE_DECISIONS,
+    PROTECTION_MODES,
+    SCOUT_ISOLATED_SCRIPTS,
+    SCOUT_MAIN_SCRIPTS,
     contentScriptRegistrationsFor,
     contentScriptsInSync,
+    decisionStateFor,
     isOriginPaused,
     pausedOriginPattern,
     pausedOriginsLike,
+    protectionModeFor,
+    siteDecisionPatterns,
+    siteDecisionsOn,
     enforceCaps,
     ensurePlaybookWeek,
     latestPlaybookComparison,

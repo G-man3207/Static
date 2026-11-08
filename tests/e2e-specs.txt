@@ -7,6 +7,11 @@ tests/globals-stealth.spec.js
 tests/bridge-flush.spec.js
 tests/extension-behavior.spec.js
 tests/content-script-registration.spec.js
+tests/scout.spec.js
+tests/site-decisions.spec.js
+tests/popup-decisions.spec.js
+tests/sites-page.spec.js
+tests/ruleset-scoping.spec.js
 tests/fingerprint-masking.spec.js
 tests/fingerprint-depth.spec.js
 tests/fingerprint-vectors.spec.js

@@ -285,6 +285,80 @@ function createFirefoxDriver() {
     .build();
 }
 
+/**
+ * Seed `protection_mode: "always"`.
+ *
+ * Per-site protection is the default and only masks sites the user opted in
+ * for, so the full-stack assertions below only run in `always` mode.  chrome.*
+ * is not exposed to ordinary web pages; it is exposed to extension pages, so
+ * load the sites page first, assert it renders the two mode radios, and set the
+ * storage key from there (and let the background pick it up) before navigating
+ * to the test page.
+ */
+async function seedProtectionMode(driver, extUuid) {
+  const sitesUrl = `moz-extension://${extUuid}/sites.html`;
+  log(`Opening sites page to seed protection mode: ${sitesUrl}`);
+  await driver.get(sitesUrl);
+  await driver.sleep(2000);
+
+  const modes = await driver.executeScript(`
+    const perSite = document.getElementById("mode-per-site");
+    const always = document.getElementById("mode-always");
+    const isRadio = (el) =>
+      !!el && (el.type === "radio" || !!el.querySelector('input[type="radio"]'));
+    return {
+      always: !!always,
+      alwaysRadio: isRadio(always),
+      perSite: !!perSite,
+      perSiteRadio: isRadio(perSite),
+    };
+  `);
+  log(`Sites page mode radios: ${JSON.stringify(modes)}`);
+  if (!modes || !modes.perSite || !modes.always) {
+    fail("Sites page did not render both mode controls (#mode-per-site / #mode-always)");
+  }
+  if (!modes.perSiteRadio || !modes.alwaysRadio) {
+    fail("Sites page mode controls are not radio inputs (#mode-per-site / #mode-always)");
+  }
+  log("Sites page rendered both mode radios — OK");
+
+  // Callback form on purpose: executeScript is synchronous, so returning a
+  // promise would not be awaited by every driver version.  Poll a page global
+  // instead.
+  await driver.executeScript(`
+    window.__staticSmokeModeSet = false;
+    chrome.storage.local.set({ protection_mode: "always" }, () => {
+      window.__staticSmokeModeSet = true;
+    });
+  `);
+  await driver.wait(
+    async () =>
+      (await driver.executeScript("return window.__staticSmokeModeSet === true")) === true,
+    5000,
+    "protection_mode was not persisted"
+  );
+
+  await driver.wait(
+    async () => {
+      const mode = await driver.executeScript(`
+        window.__staticSmokeStoredMode = window.__staticSmokeStoredMode || null;
+        chrome.storage.local.get({ protection_mode: null }, (value) => {
+          window.__staticSmokeStoredMode = value.protection_mode;
+        });
+        return window.__staticSmokeStoredMode;
+      `);
+      return mode === "always";
+    },
+    5000,
+    "protection_mode did not read back as always"
+  );
+
+  // Give the background worker a moment to observe the storage change and
+  // sync content scripts / DNR before the test page navigates.
+  await driver.sleep(1000);
+  log("protection_mode = always seeded — OK");
+}
+
 async function runSmokeSession(driver, extDir) {
   log("Installing extension as temporary add-on…");
   await driver.installAddon(extDir, true);
@@ -296,6 +370,10 @@ async function runSmokeSession(driver, extDir) {
     fail("Could not find extension UUID in about:debugging. Extension may not have loaded.");
   }
   log(`Extension UUID: ${extUuid}`);
+
+  // Per-site protection is the default; this smoke test covers the full stack,
+  // so opt into `always` before it navigates to the test page.
+  await seedProtectionMode(driver, extUuid);
 
   const testServer = await startTestServer();
   log(`Test server at ${testServer.url}`);

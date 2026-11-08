@@ -15,6 +15,33 @@ const RULESET_META = [
   },
 ];
 
+const MODE_PER_SITE = "per_site";
+const MODE_ALWAYS = "always";
+
+const MODE_EXPLAINER = {
+  [MODE_PER_SITE]: "Static stays off until you turn it on for a site.",
+  [MODE_ALWAYS]: "Static masks every site except the ones you pause.",
+};
+
+const SITE_STATE_TEXT = {
+  off: "You left this off here.",
+  on: "Static is on here.",
+  undecided: "Static is off here.",
+};
+
+const NO_EVIDENCE_HEADLINE = "Nothing seen here yet";
+const NO_EVIDENCE_SUMMARY =
+  "Static hasn't seen this page do anything it can mask. It gets more useful after a page load or two.";
+const NO_EVIDENCE_SUGGESTION = "Changes take effect when this page reloads.";
+const SITE_CAUTION_TEXT = "If sign-in misbehaves, leave this site off.";
+const SITE_TURNED_OFF_HEADLINE = "Since you turned it off, Static stays off here.";
+
+const NOTE_TARGETS = {
+  device: "fingerprint-title-text",
+  network: "rulesets",
+  replay: "replay-title-text",
+};
+
 const colorForCount = (n) => {
   if (n < 100) return "#888";
   if (n < 1000) return "#d88030";
@@ -39,6 +66,13 @@ const PROFILE_UA_HINTS = [
 const boundHelpTips = new WeakSet();
 let activeHelpTip = null;
 let helpTipPopover = null;
+
+// Popup state shared by the once-bound event listeners below.
+let currentMode = MODE_ALWAYS;
+let popupTabId = null;
+let currentSiteOrigin = null;
+let siteOpenMoreTarget = "rulesets";
+let recoveryAction = null;
 
 const tooltipMargin = 10;
 const tooltipOffset = 6;
@@ -151,11 +185,108 @@ const setReplayMode = (mode) => {
   renderReplayIndicators();
 };
 
-const renderCumulative = (cumulative) => {
-  if (cumulative > 0) {
-    document.getElementById("cumulative").textContent =
-      `${fmt(cumulative)} probes blocked since install`;
+const renderCumulative = (cumulative, visible) => {
+  const cumulativeEl = document.getElementById("cumulative");
+  cumulativeEl.hidden = !visible;
+  cumulativeEl.textContent =
+    visible && cumulative > 0 ? `${fmt(cumulative)} probes blocked since install` : "";
+};
+
+const modeForDetails = (details) =>
+  details && details.mode === MODE_PER_SITE ? MODE_PER_SITE : MODE_ALWAYS;
+
+const protectedHereFor = (details) => {
+  if (!details) return false;
+  if (modeForDetails(details) !== MODE_PER_SITE) return true;
+  if (typeof details.protectedHere === "boolean") return details.protectedHere;
+  if (details.site && details.site.decision === "on") return true;
+  if (typeof details.disabled === "boolean") return !details.disabled;
+  return false;
+};
+
+const modeForUi = (details) =>
+  details && isHttpUrl(details.origin) ? modeForDetails(details) : MODE_ALWAYS;
+
+const isPerSiteUnprotected = (details) =>
+  !!details &&
+  isHttpUrl(details.origin) &&
+  modeForDetails(details) === MODE_PER_SITE &&
+  !protectedHereFor(details);
+
+const pausedHereFor = (details) =>
+  !!(details && (details.disabled || details.paused || (details.site && details.site.paused)));
+
+const decisionForSite = (site) => {
+  if (!site) return "undecided";
+  if (site.decision === "on") return "on";
+  if (site.decision === "off") return "off";
+  return "undecided";
+};
+
+const recommendationForSite = (site) => {
+  const recommendation = site && site.recommendation;
+  return recommendation && typeof recommendation === "object" ? recommendation : null;
+};
+
+const reasonListFor = (recommendation, key) => {
+  const value = recommendation && recommendation[key];
+  return Array.isArray(value)
+    ? value.filter((reason) => reason && typeof reason.text === "string")
+    : [];
+};
+
+const noteTargetFor = (note) => {
+  if (note && typeof note.defense === "string" && NOTE_TARGETS[note.defense]) {
+    return NOTE_TARGETS[note.defense];
   }
+  const key = String((note && note.key) || "").toLowerCase();
+  const text = String((note && note.text) || "").toLowerCase();
+  const hint = `${key} ${text}`;
+  if (/replay|record|logrocket|fullstory|hotjar|posthog|sentry|datadog/.test(hint)) {
+    return NOTE_TARGETS.replay;
+  }
+  if (
+    /device|canvas|webgl|audio|font|hardware|screen|timezone|language|storage|webrtc|battery/.test(
+      hint
+    )
+  ) {
+    return NOTE_TARGETS.device;
+  }
+  if (/network|loads|vendor|list|challenge/.test(hint)) {
+    return NOTE_TARGETS.network;
+  }
+  return NOTE_TARGETS.device;
+};
+
+const formatConfidence = (confidence) => {
+  if (confidence === "high") return "high confidence";
+  if (confidence === "medium") return "medium confidence";
+  if (confidence === "low") return "low confidence";
+  return "";
+};
+
+const verdictTextFor = (recommendation) => {
+  const verdict = recommendation && recommendation.verdict;
+  const label =
+    verdict === "protect"
+      ? "Worth masking"
+      : verdict === "skip"
+        ? "Better left off"
+        : "No strong signal";
+  const confidence = formatConfidence(recommendation && recommendation.confidence);
+  return confidence ? `${label} · ${confidence}` : label;
+};
+
+const verdictClassFor = (recommendation) => {
+  const verdict = recommendation && recommendation.verdict;
+  if (verdict === "protect") return "site-verdict is-protect";
+  if (verdict === "skip") return "site-verdict is-skip";
+  return "site-verdict is-neutral";
+};
+
+const seenSinceDecisionFor = (site) => {
+  const value = Number(site && site.seenSinceDecision);
+  return Number.isFinite(value) && value > 0 ? value : 0;
 };
 
 const renderDriftNotice = (drift) => {
@@ -225,8 +356,21 @@ const resolvePopupTab = async () => {
   return active || null;
 };
 
-// The tab this popup is for, resolved at startup.
-let popupTabId = null;
+const reloadPopupTab = async () => {
+  if (popupTabId == null) return;
+  try {
+    await chrome.tabs.reload(popupTabId);
+  } catch (e) {
+    console.error("[Static] popup tab reload failed", e);
+  }
+};
+
+const requireOk = (response) => {
+  if (!response || response.ok === false) {
+    throw new Error((response && response.error) || "Static did not confirm the change.");
+  }
+  return response;
+};
 
 const reloadOriginTab = async (origin) => {
   if (!origin) return;
@@ -241,11 +385,14 @@ const setSiteDisabledAndReload = async (origin, disabled, button) => {
   if (!origin) return;
   if (button) button.disabled = true;
   try {
-    await chrome.runtime.sendMessage({
+    const response = await chrome.runtime.sendMessage({
       disabled,
       origin,
       type: "static_set_site_disabled",
     });
+    if (response && response.ok === false) {
+      throw new Error(response.error || "Static was not saved.");
+    }
     await reloadOriginTab(origin);
     window.close();
   } catch (e) {
@@ -254,49 +401,111 @@ const setSiteDisabledAndReload = async (origin, disabled, button) => {
   }
 };
 
-const renderRecoveryCard = (resp) => {
+const setRecoveryCardState = (state) => {
   const card = document.getElementById("recovery");
-  const titleEl = document.getElementById("recovery-title");
-  const detailEl = document.getElementById("recovery-detail");
-  const actionButton = document.getElementById("recovery-action");
-  if (!resp || !isHttpUrl(resp.origin)) {
-    card.hidden = true;
-    actionButton.onclick = null;
-    return;
-  }
+  card.dataset.state = state;
+  card.classList.toggle("is-warning", state === "warning");
+  card.classList.toggle("is-paused", state === "paused");
+};
 
+const showRecoveryCard = ({ action, actionText, detail, state, title }) => {
+  const section = document.getElementById("recovery-section");
+  const card = document.getElementById("recovery");
+  section.hidden = false;
   card.hidden = false;
+  setRecoveryCardState(state);
+  document.getElementById("recovery-title").textContent = title;
+  document.getElementById("recovery-detail").textContent = detail;
+  document.getElementById("recovery-action").textContent = actionText;
+  document.getElementById("recovery-action").disabled = false;
+  recoveryAction = action;
+};
+
+const hideRecoveryCard = () => {
+  document.getElementById("recovery-section").hidden = true;
+  document.getElementById("recovery").hidden = true;
+  recoveryAction = null;
+};
+
+const renderAlwaysRecoveryCard = (resp) => {
   if (resp.disabled) {
-    card.dataset.state = "paused";
-    card.classList.remove("is-warning");
-    card.classList.add("is-paused");
-    titleEl.textContent = "Static is paused here";
-    detailEl.textContent =
-      "Protection is off on this site. Reload if the page still looks stuck. You can turn Static back on anytime.";
-    actionButton.textContent = "Turn protection back on";
-    actionButton.onclick = () => setSiteDisabledAndReload(resp.origin, false, actionButton);
-    return;
+    showRecoveryCard({
+      action: { origin: resp.origin, type: "resume" },
+      actionText: "Turn protection back on",
+      detail:
+        "Protection is off on this site. Reload if the page still looks stuck. You can turn Static back on anytime.",
+      state: "paused",
+      title: "Static is paused here",
+    });
+    return true;
   }
 
   if (resp.compatWarning) {
-    card.dataset.state = "warning";
-    card.classList.add("is-warning");
-    card.classList.remove("is-paused");
-    titleEl.textContent = "This site may be broken by Static";
-    detailEl.textContent =
-      "Static blocked something this page expected. Pause here and reload to see if that fixes it.";
-    actionButton.textContent = "Pause this site and reload";
-    actionButton.onclick = () => setSiteDisabledAndReload(resp.origin, true, actionButton);
+    showRecoveryCard({
+      action: { origin: resp.origin, type: "pause" },
+      actionText: "Pause this site and reload",
+      detail:
+        "Static blocked something this page expected. Pause here and reload to see if that fixes it.",
+      state: "warning",
+      title: "This site may be broken by Static",
+    });
+    return true;
+  }
+
+  if (!resp.origin || !isHttpUrl(resp.origin)) return false;
+  showRecoveryCard({
+    action: { origin: resp.origin, type: "pause" },
+    actionText: "Pause this site and reload",
+    detail:
+      "Static can stop logins, checkouts, or extra features on some sites. Pause it here to check.",
+    state: "help",
+    title: "Page not working?",
+  });
+  return true;
+};
+
+const renderPerSiteRecoveryCard = (resp) => {
+  if (!protectedHereFor(resp)) {
+    hideRecoveryCard();
+    return;
+  }
+  const compatWarning = !!(
+    (resp.site && resp.site.history && resp.site.history.compatWarning) ||
+    resp.compatWarning
+  );
+
+  if (compatWarning) {
+    showRecoveryCard({
+      action: { origin: resp.origin, type: "decision-off" },
+      actionText: "Turn protection off here and reload",
+      detail:
+        "Static interrupted a request this page expected. Turn protection off here to see if that fixes it.",
+      state: "warning",
+      title: "This site may be broken by Static",
+    });
     return;
   }
 
-  card.dataset.state = "help";
-  card.classList.remove("is-warning", "is-paused");
-  titleEl.textContent = "Page not working?";
-  detailEl.textContent =
-    "Static can stop logins, checkouts, or extra features on some sites. Pause it here to check.";
-  actionButton.textContent = "Pause this site and reload";
-  actionButton.onclick = () => setSiteDisabledAndReload(resp.origin, true, actionButton);
+  showRecoveryCard({
+    action: { origin: resp.origin, type: "decision-off" },
+    actionText: "Turn protection off here",
+    detail:
+      "Static can stop logins, checkouts, or extra features on this site. Turn it off here to check.",
+    state: "help",
+    title: "Page not working?",
+  });
+};
+
+const renderRecoveryCard = (resp) => {
+  if (!resp || !isHttpUrl(resp.origin)) {
+    hideRecoveryCard();
+    return;
+  }
+  if (modeForDetails(resp) === MODE_PER_SITE) {
+    renderPerSiteRecoveryCard(resp);
+    return;
+  }
+  if (!renderAlwaysRecoveryCard(resp)) hideRecoveryCard();
 };
 
 const renderTopIds = (topIds) => {
@@ -707,145 +916,312 @@ const renderPowerDiagnostics = (resp) => {
   }
 };
 
-const renderSiteStatus = (isDisabled) => {
+const renderSiteStatusLine = (text, variant) => {
   const statusText = document.getElementById("site-status-text");
+  statusText.textContent = text;
+  statusText.className = variant;
+};
+
+const renderSiteStatus = (isDisabled) => {
   if (isDisabled) {
-    statusText.textContent = "Paused. This site can see installed extensions again.";
-    statusText.className = "site-status-paused";
+    renderSiteStatusLine(
+      "Paused. This site can see installed extensions again.",
+      "site-status-paused"
+    );
   } else {
-    statusText.textContent = "On. Pause it if the page looks broken.";
-    statusText.className = "site-status-active";
+    renderSiteStatusLine("On. Pause it if the page looks broken.", "site-status-active");
   }
+};
+
+const setCurrentMode = (mode) => {
+  currentMode = mode;
+  const perSite = mode === MODE_PER_SITE;
+  document.getElementById("mode-per-site").setAttribute("aria-pressed", String(perSite));
+  document.getElementById("mode-always").setAttribute("aria-pressed", String(!perSite));
+  document.getElementById("mode-explainer").textContent = MODE_EXPLAINER[mode];
+};
+
+const renderModeRow = (resp) => {
+  setCurrentMode(modeForUi(resp));
+  const note = document.getElementById("mode-note");
+  note.hidden = true;
+  note.textContent = "";
+};
+
+const renderOnboarding = (resp) => {
+  const visible = !!(resp && resp.onboarding && resp.onboarding.visible && isHttpUrl(resp.origin));
+  document.getElementById("onboarding").hidden = !visible;
+};
+
+const renderSitesLink = (resp) => {
+  const stats = document.getElementById("sites-stats");
+  stats.textContent = "";
+  const summary = resp && resp.sitesSummary;
+  if (!summary || typeof summary !== "object") return;
+
+  const count = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : 0;
+  };
+  if (modeForDetails(resp) === MODE_ALWAYS) {
+    stats.textContent = `${fmt(count(summary.paused))} paused`;
+    return;
+  }
+  stats.textContent = `${fmt(count(summary.on))} on · ${fmt(count(summary.off))} off`;
+};
+
+const renderRulesetPausedNote = (resp) => {
+  const note = document.getElementById("rulesets-paused-note");
+  if (!resp || !isHttpUrl(resp.origin)) {
+    note.hidden = true;
+    note.textContent = "";
+    return;
+  }
+  if (modeForDetails(resp) === MODE_ALWAYS) {
+    note.textContent = "Static is paused on this site, so these lists don't apply to this site.";
+    note.hidden = !pausedHereFor(resp);
+    return;
+  }
+  note.textContent =
+    "Static is off on this site, so these lists only apply to the sites you protect.";
+  note.hidden = protectedHereFor(resp);
 };
 
 const renderSiteSection = (resp) => {
-  const toggle = document.getElementById("site-toggle");
   const section = document.getElementById("site-control");
-  const isDisabled = !!(resp && resp.disabled);
+  const decisionSection = document.getElementById("site-decision");
+  const toggle = document.getElementById("site-toggle");
+  const mode = resp ? modeForDetails(resp) : null;
+  const http = !!(resp && isHttpUrl(resp.origin));
+  const showSwitch = http && mode === MODE_ALWAYS;
+  const showDecision = http && mode === MODE_PER_SITE && !!resp.site;
 
-  toggle.checked = !isDisabled;
-  renderSiteStatus(isDisabled);
-
-  if (!resp || !isHttpUrl(resp.origin)) {
-    section.hidden = true;
-    return;
+  section.hidden = !showSwitch;
+  decisionSection.hidden = !showDecision;
+  if (showSwitch) {
+    toggle.checked = !resp.disabled;
+    toggle.dataset.siteOrigin = resp.origin;
+    renderSiteStatus(!!resp.disabled);
   }
-  section.hidden = false;
+  if (showDecision) {
+    renderSiteDecision(resp);
+  } else {
+    resetSiteDecision();
+  }
+};
 
-  toggle.addEventListener("change", async () => {
-    const enabled = toggle.checked;
-    try {
-      await chrome.runtime.sendMessage({
-        type: "static_set_site_disabled",
-        disabled: !enabled,
-        origin: resp.origin,
-      });
-      renderSiteStatus(!enabled);
-      // A paused site has no Static code left to update, so both directions
-      // take effect on reload. The handler re-registered the scripts first.
-      await reloadOriginTab(resp.origin);
-    } catch (e) {
-      console.error("[Static] site toggle failed", e);
-      toggle.checked = !enabled;
-    }
-  });
+const seenCountFor = (resp) => {
+  if (resp && typeof resp.seen === "number") return resp.seen;
+  const evidence = resp && resp.site && resp.site.evidence;
+  return evidence && typeof evidence.probeTotal === "number" ? evidence.probeTotal : 0;
+};
+
+const renderCountHero = (resp) => {
+  const total = resp && typeof resp.total === "number" ? resp.total : 0;
+  const cumulative = resp && typeof resp.cumulative === "number" ? resp.cumulative : 0;
+  const perSiteUnprotected = isPerSiteUnprotected(resp);
+  const seen = seenCountFor(resp);
+
+  const countEl = document.getElementById("count");
+  countEl.textContent = fmt(perSiteUnprotected ? seen : total);
+  countEl.style.color = perSiteUnprotected ? (seen > 0 ? "#d88030" : "#888") : colorForCount(total);
+  countEl.dataset.countKind = perSiteUnprotected ? "seen" : "blocked";
+  document.getElementById("count-label").textContent = perSiteUnprotected
+    ? "extension checks seen here"
+    : "probes blocked on this tab";
+  document.getElementById("count-subtext").hidden = !perSiteUnprotected;
+  renderCumulative(cumulative, !perSiteUnprotected);
+  renderDriftNotice(resp && resp.drift);
+  renderAdaptiveNotice(resp);
 };
 
 const renderDetails = (resp) => {
-  const total = resp && typeof resp.total === "number" ? resp.total : 0;
-  const cumulative = resp && typeof resp.cumulative === "number" ? resp.cumulative : 0;
   const topIds = resp && Array.isArray(resp.topIds) ? resp.topIds : [];
 
-  const countEl = document.getElementById("count");
-  countEl.textContent = fmt(total);
-  countEl.style.color = colorForCount(total);
-  renderCumulative(cumulative);
-  renderDriftNotice(resp && resp.drift);
-  renderAdaptiveNotice(resp);
+  renderCountHero(resp);
   renderRecoveryCard(resp);
   renderTopIds(topIds);
   renderPowerDiagnostics(resp);
+};
+
+const setSiteNote = (text) => {
+  const note = document.getElementById("site-note");
+  note.textContent = text || "";
+  note.hidden = !text;
+};
+
+const setSiteActionsBusy = (busy) => {
+  for (const id of ["site-protect", "site-leave-off", "site-turn-off", "recovery-action"]) {
+    document.getElementById(id).disabled = busy;
+  }
+};
+
+const clearSuggestedActions = () => {
+  document.getElementById("site-protect").classList.remove("is-suggested");
+  document.getElementById("site-leave-off").classList.remove("is-suggested");
+};
+
+const appendReasonRows = (list, reasons, className) => {
+  for (const reason of reasons) {
+    if (!reason || typeof reason.text !== "string" || !reason.text) continue;
+    const row = document.createElement("li");
+    row.className = className;
+    row.textContent = reason.text;
+    if (typeof reason.key === "string") row.dataset.key = reason.key;
+    if (typeof reason.defense === "string") row.dataset.defense = reason.defense;
+    list.appendChild(row);
+  }
+};
+
+const renderSiteReasons = (recommendation) => {
+  const list = document.getElementById("site-reasons");
+  const openMore = document.getElementById("site-open-more");
+  list.replaceChildren();
+  if (recommendation) {
+    appendReasonRows(list, reasonListFor(recommendation, "benefits"), "benefit");
+    appendReasonRows(list, reasonListFor(recommendation, "risks"), "risk");
+    appendReasonRows(list, reasonListFor(recommendation, "notes"), "note");
+  }
+  list.hidden = list.childElementCount === 0;
+  const notes = reasonListFor(recommendation, "notes");
+  openMore.hidden = notes.length === 0;
+  if (notes.length > 0) siteOpenMoreTarget = noteTargetFor(notes[0]);
+};
+
+const renderSiteVerdict = (decision, recommendation) => {
+  const verdict = document.getElementById("site-verdict");
+  verdict.className = "site-verdict";
+  if (decision === "on") {
+    verdict.textContent = "On · you chose it";
+    verdict.className = "site-verdict is-on";
+    verdict.hidden = false;
+    return;
+  }
+  if (!recommendation) {
+    verdict.textContent = "";
+    verdict.hidden = true;
+    return;
+  }
+  if (decision === "off" && recommendation.verdict === "protect") {
+    verdict.textContent = "";
+    verdict.hidden = true;
+    return;
+  }
+  verdict.textContent = verdictTextFor(recommendation);
+  verdict.className = verdictClassFor(recommendation);
+  verdict.hidden = false;
+};
+
+const setRecommendationCopy = (headlineText, summaryText) => {
+  const block = document.getElementById("site-summary");
+  const headline = document.getElementById("site-headline");
+  const summary = document.getElementById("site-summary-text");
+  headline.textContent = headlineText || "";
+  headline.hidden = !headlineText;
+  summary.textContent = summaryText || "";
+  summary.hidden = !summaryText;
+  block.hidden = !headlineText && !summaryText;
+};
+
+const renderSiteCopy = (decision, recommendation) => {
+  const caution = document.getElementById("site-caution");
+  if (decision === "off" && recommendation && recommendation.verdict === "protect") {
+    setRecommendationCopy(SITE_TURNED_OFF_HEADLINE, recommendation.summary || "");
+  } else if (recommendation) {
+    setRecommendationCopy(recommendation.headline || "", recommendation.summary || "");
+  } else {
+    setRecommendationCopy(NO_EVIDENCE_HEADLINE, NO_EVIDENCE_SUMMARY);
+  }
+
+  caution.textContent = recommendation && recommendation.caution ? SITE_CAUTION_TEXT : "";
+  caution.hidden = !caution.textContent;
+};
+
+const renderSiteActions = (decision, recommendation) => {
+  const protect = document.getElementById("site-protect");
+  const leaveOff = document.getElementById("site-leave-off");
+  const turnOff = document.getElementById("site-turn-off");
+  protect.hidden = decision === "on";
+  leaveOff.hidden = decision !== "undecided";
+  turnOff.hidden = decision !== "on";
+  clearSuggestedActions();
+  if (decision !== "undecided" || !recommendation) return;
+  if (recommendation.verdict === "protect") {
+    protect.classList.add("is-suggested");
+  } else if (recommendation.verdict === "skip") {
+    leaveOff.classList.add("is-suggested");
+  }
+};
+
+const renderSiteDecisionNote = (decision, site) => {
+  if (decision === "undecided") {
+    setSiteNote(NO_EVIDENCE_SUGGESTION);
+    return;
+  }
+  if (decision === "off") {
+    const newChecks = seenSinceDecisionFor(site);
+    setSiteNote(newChecks > 0 ? `New checks here: ${fmt(newChecks)} since you turned it off.` : "");
+    return;
+  }
+  setSiteNote("");
+};
+
+const renderSiteDecision = (resp) => {
+  const site = resp.site;
+  const decision = decisionForSite(site);
+  const recommendation = recommendationForSite(site);
+  currentSiteOrigin = typeof resp.origin === "string" ? resp.origin : "";
+  document.getElementById("site-decision").dataset.decision = decision;
+  document.getElementById("site-state").textContent = SITE_STATE_TEXT[decision];
+  renderSiteVerdict(decision, recommendation);
+  renderSiteCopy(decision, recommendation);
+  renderSiteReasons(recommendation);
+  renderSiteActions(decision, recommendation);
+  renderSiteDecisionNote(decision, site);
+  setSiteActionsBusy(false);
+};
+
+const resetSiteDecision = () => {
+  currentSiteOrigin = null;
+  document.getElementById("site-decision").hidden = true;
+  document.getElementById("site-decision").dataset.decision = "";
+  document.getElementById("site-state").textContent = "";
+  document.getElementById("site-verdict").hidden = true;
+  document.getElementById("site-headline").hidden = true;
+  document.getElementById("site-headline").textContent = "";
+  document.getElementById("site-summary-text").hidden = true;
+  document.getElementById("site-summary-text").textContent = "";
+  document.getElementById("site-summary").hidden = true;
+  document.getElementById("site-caution").hidden = true;
+  const reasons = document.getElementById("site-reasons");
+  reasons.replaceChildren();
+  reasons.hidden = true;
+  document.getElementById("site-open-more").hidden = true;
+  clearSuggestedActions();
+  setSiteNote("");
+  setSiteActionsBusy(false);
 };
 
 const renderNoiseSection = (resp) => {
   const toggle = document.getElementById("noise-toggle");
   toggle.checked = !!(resp && resp.noiseEnabled);
 
-  toggle.addEventListener("change", async () => {
-    const desired = toggle.checked;
-    try {
-      await chrome.runtime.sendMessage({ type: "static_set_noise", enabled: desired });
-      // Push the new state to the active tab's content scripts via activeTab
-      // so the current page sees the change without a reload.
-      await pushConfigUpdateToActiveTab();
-    } catch (e) {
-      console.error("[Static] noise toggle failed", e);
-      toggle.checked = !desired;
-    }
-  });
-
   const originsLogged = resp && typeof resp.originsLogged === "number" ? resp.originsLogged : 0;
   const viewLog = document.getElementById("view-log");
   const stats = document.getElementById("noise-stats");
-  if (originsLogged > 0) {
-    stats.textContent = `${fmt(originsLogged)} origin${originsLogged === 1 ? "" : "s"} logged`;
-    viewLog.hidden = false;
-    viewLog.addEventListener("click", () => {
-      chrome.tabs.create({ url: chrome.runtime.getURL("log.html") });
-      window.close();
-    });
-  }
-};
-
-const renderDisabledSitesLink = async () => {
-  const { disabled_origins = {} } = await chrome.storage.local.get({ disabled_origins: {} });
-  const disabledCount = Object.keys(disabled_origins).filter((o) => disabled_origins[o]).length;
-  const viewBtn = document.getElementById("view-disabled");
-  const stats = document.getElementById("disabled-stats");
-  stats.textContent = `${fmt(disabledCount)} site${disabledCount === 1 ? "" : "s"}`;
-  viewBtn.addEventListener("click", () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL("disabled.html") });
-    window.close();
-  });
+  const hasOrigins = originsLogged > 0;
+  viewLog.hidden = !hasOrigins;
+  stats.textContent = hasOrigins
+    ? `${fmt(originsLogged)} origin${originsLogged === 1 ? "" : "s"} logged`
+    : "";
 };
 
 const renderDiagnosticsSection = (resp) => {
-  const toggle = document.getElementById("diagnostics-toggle");
-  toggle.checked = !!(resp && resp.diagnosticsMode);
-
-  toggle.addEventListener("change", async () => {
-    const desired = toggle.checked;
-    try {
-      const saved = await chrome.runtime.sendMessage({
-        enabled: desired,
-        type: "static_set_diagnostics",
-      });
-      toggle.checked = !!(saved && saved.enabled);
-      await pushConfigUpdateToActiveTab();
-    } catch (e) {
-      console.error("[Static] diagnostics toggle failed", e);
-      toggle.checked = !desired;
-    }
-  });
+  document.getElementById("diagnostics-toggle").checked = !!(resp && resp.diagnosticsMode);
 };
 
 const renderResearchLoggingSection = (resp) => {
-  const toggle = document.getElementById("research-logging-toggle");
-  toggle.checked = !!(resp && resp.researchLogging);
-
-  toggle.addEventListener("change", async () => {
-    const desired = toggle.checked;
-    try {
-      const saved = await chrome.runtime.sendMessage({
-        enabled: desired,
-        type: "static_set_research_logging",
-      });
-      toggle.checked = !!(saved && saved.enabled);
-    } catch (e) {
-      console.error("[Static] research logging toggle failed", e);
-      toggle.checked = !desired;
-    }
-  });
+  document.getElementById("research-logging-toggle").checked = !!(resp && resp.researchLogging);
 };
 
 const renderReplaySection = (resp) => {
@@ -857,47 +1233,12 @@ const renderReplaySection = (resp) => {
   select.value = replayState.replayMode;
   detected.hidden = !replayState.replayDetected;
   renderReplayIndicators();
-
-  select.addEventListener("change", async () => {
-    const desired = allowed.has(select.value) ? select.value : "off";
-    const previous = replayState.replayMode;
-    try {
-      const saved = await chrome.runtime.sendMessage({ type: "static_set_replay", mode: desired });
-      const next = saved && allowed.has(saved.mode) ? saved.mode : desired;
-      select.value = next;
-      setReplayMode(next);
-      await pushConfigUpdateToActiveTab();
-    } catch (e) {
-      console.error("[Static] replay mode update failed", e);
-      select.value = previous;
-      setReplayMode(previous);
-    }
-  });
 };
 
 const renderFingerprintSection = (resp) => {
   const select = document.getElementById("fingerprint-mode");
   const allowed = new Set(["off", "mask"]);
-  const state = { mode: resp && allowed.has(resp.fingerprintMode) ? resp.fingerprintMode : "off" };
-  select.value = state.mode;
-
-  select.addEventListener("change", async () => {
-    const desired = allowed.has(select.value) ? select.value : "off";
-    const previous = state.mode;
-    try {
-      const saved = await chrome.runtime.sendMessage({
-        mode: desired,
-        type: "static_set_fingerprint",
-      });
-      state.mode = saved && allowed.has(saved.mode) ? saved.mode : desired;
-      select.value = state.mode;
-      await pushConfigUpdateToActiveTab();
-    } catch (e) {
-      console.error("[Static] fingerprint mode update failed", e);
-      state.mode = previous;
-      select.value = previous;
-    }
-  });
+  select.value = resp && allowed.has(resp.fingerprintMode) ? resp.fingerprintMode : "off";
 };
 
 const addReplayPill = (container, text, kind) => {
@@ -961,8 +1302,15 @@ const renderReplayIndicators = () => {
   list.hidden = !list.childElementCount;
 };
 
-const renderRulesets = (enabledArr, counts) => {
-  const enabled = new Set(enabledArr);
+const rulesetEnabled = (resp, enabled) => (rulesetId) => {
+  const prefs = resp && resp.rulesetPrefs;
+  if (prefs && typeof prefs[rulesetId] === "boolean") return prefs[rulesetId];
+  return enabled.has(rulesetId);
+};
+
+const renderRulesets = (resp, enabledArr, counts) => {
+  const enabled = new Set(Array.isArray(enabledArr) ? enabledArr : []);
+  const isEnabled = rulesetEnabled(resp, enabled);
   const container = document.getElementById("rulesets");
   container.innerHTML = "";
   let currentGroup = null;
@@ -979,7 +1327,7 @@ const renderRulesets = (enabledArr, counts) => {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.id = `rs_${meta.id}`;
-    input.checked = enabled.has(meta.id);
+    input.checked = isEnabled(meta.id);
 
     const label = document.createElement("label");
     label.htmlFor = input.id;
@@ -1000,14 +1348,22 @@ const renderRulesets = (enabledArr, counts) => {
     }
 
     input.addEventListener("change", async () => {
-      const payload = input.checked
-        ? { enableRulesetIds: [meta.id] }
-        : { disableRulesetIds: [meta.id] };
+      const desired = input.checked;
+      input.disabled = true;
       try {
-        await chrome.declarativeNetRequest.updateEnabledRulesets(payload);
+        const saved = await chrome.runtime.sendMessage({
+          enabled: desired,
+          id: meta.id,
+          type: "static_set_ruleset_enabled",
+        });
+        requireOk(saved);
+        const persisted = saved && saved.prefs && typeof saved.prefs[meta.id] === "boolean";
+        input.checked = persisted ? saved.prefs[meta.id] : desired;
       } catch (e) {
         console.error("[Static] ruleset toggle failed", meta.id, e);
-        input.checked = !input.checked;
+        input.checked = !desired;
+      } finally {
+        input.disabled = false;
       }
     });
 
@@ -1024,32 +1380,322 @@ const renderRulesets = (enabledArr, counts) => {
   });
 };
 
+const applySiteDecision = async (state) => {
+  const origin = currentSiteOrigin;
+  if (!origin) {
+    setSiteNote("Reload this page, then try again.");
+    return;
+  }
+  setSiteActionsBusy(true);
+  setSiteNote("Saving…");
+  try {
+    const response = await chrome.runtime.sendMessage({
+      origin,
+      state,
+      type: "static_set_site_decision",
+    });
+    requireOk(response);
+    await reloadPopupTab();
+    window.close();
+  } catch (error) {
+    console.error("[Static] site decision failed", error);
+    setSiteActionsBusy(false);
+    setSiteNote("Static couldn't save that. Try again.");
+  }
+};
+
+const handleSiteToggle = async () => {
+  const toggle = document.getElementById("site-toggle");
+  const origin = toggle.dataset.siteOrigin;
+  const enabled = toggle.checked;
+  if (!origin) {
+    toggle.checked = !enabled;
+    return;
+  }
+  toggle.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      disabled: !enabled,
+      origin,
+      type: "static_set_site_disabled",
+    });
+    if (response && response.ok === false) {
+      throw new Error(response.error || "Static was not saved.");
+    }
+    renderSiteStatus(!enabled);
+    // A paused site has no Static code left to update, so both directions
+    // take effect on reload. The handler re-registered the scripts first.
+    await reloadOriginTab(origin);
+  } catch (e) {
+    console.error("[Static] site toggle failed", e);
+    toggle.checked = !enabled;
+  } finally {
+    toggle.disabled = false;
+  }
+};
+
+const handleModeChange = async (mode) => {
+  if (mode === currentMode) return;
+  const perSiteButton = document.getElementById("mode-per-site");
+  const alwaysButton = document.getElementById("mode-always");
+  const note = document.getElementById("mode-note");
+  perSiteButton.disabled = true;
+  alwaysButton.disabled = true;
+  note.hidden = true;
+  note.textContent = "";
+  try {
+    requireOk(await chrome.runtime.sendMessage({ mode, type: "static_set_protection_mode" }));
+    setCurrentMode(mode);
+    await reloadPopupTab();
+    window.close();
+  } catch (error) {
+    console.error("[Static] protection mode update failed", error);
+    note.textContent = "Static couldn't switch modes. Try again.";
+    note.hidden = false;
+  } finally {
+    perSiteButton.disabled = false;
+    alwaysButton.disabled = false;
+  }
+};
+
+const setOnboardingBusy = (busy) => {
+  document.getElementById("onboarding-dismiss").disabled = busy;
+  document.getElementById("onboarding-always").disabled = busy;
+};
+
+const setOnboardingNote = (text) => {
+  const note = document.getElementById("onboarding-note");
+  note.textContent = text || "";
+  note.hidden = !text;
+};
+
+const handleOnboardingDismiss = async () => {
+  setOnboardingBusy(true);
+  setOnboardingNote("");
+  try {
+    requireOk(await chrome.runtime.sendMessage({ type: "static_dismiss_onboarding" }));
+    document.getElementById("onboarding").hidden = true;
+  } catch (error) {
+    console.error("[Static] onboarding dismiss failed", error);
+    setOnboardingNote("Static couldn't save that. Try again.");
+  } finally {
+    setOnboardingBusy(false);
+  }
+};
+
+const handleOnboardingAlways = async () => {
+  setOnboardingBusy(true);
+  setOnboardingNote("");
+  try {
+    requireOk(
+      await chrome.runtime.sendMessage({
+        mode: MODE_ALWAYS,
+        type: "static_set_protection_mode",
+      })
+    );
+    setCurrentMode(MODE_ALWAYS);
+    document.getElementById("onboarding").hidden = true;
+    await reloadPopupTab();
+    window.close();
+  } catch (error) {
+    console.error("[Static] onboarding mode switch failed", error);
+    setOnboardingNote("Static couldn't switch modes. Try again.");
+  } finally {
+    setOnboardingBusy(false);
+  }
+};
+
+const handleRecoveryAction = async () => {
+  const action = recoveryAction;
+  if (!action) return;
+  if (action.type === "decision-off") {
+    await applySiteDecision("off");
+    return;
+  }
+  const button = document.getElementById("recovery-action");
+  await setSiteDisabledAndReload(action.origin, action.type === "pause", button);
+};
+
+const handleOpenMore = () => {
+  const advanced = document.getElementById("advanced-controls");
+  if (advanced) advanced.open = true;
+  const target = document.getElementById(siteOpenMoreTarget) || document.getElementById("rulesets");
+  if (!target) return;
+  target.classList.add("is-targeted");
+  target.scrollIntoView({ block: "center" });
+  const controlId = {
+    "fingerprint-title-text": "fingerprint-mode",
+    "replay-title-text": "replay-mode",
+    rulesets: "rs_fingerprint_vendors",
+  }[siteOpenMoreTarget];
+  const control = controlId ? document.getElementById(controlId) : null;
+  if (control) control.focus({ preventScroll: true });
+  window.setTimeout(() => target.classList.remove("is-targeted"), 1600);
+};
+
+const handleNoiseToggle = async () => {
+  const toggle = document.getElementById("noise-toggle");
+  const desired = toggle.checked;
+  try {
+    requireOk(await chrome.runtime.sendMessage({ enabled: desired, type: "static_set_noise" }));
+    // Push the new state to the active tab's content scripts via activeTab
+    // so the current page sees the change without a reload.
+    await pushConfigUpdateToActiveTab();
+  } catch (e) {
+    console.error("[Static] noise toggle failed", e);
+    toggle.checked = !desired;
+  }
+};
+
+const handleDiagnosticsToggle = async () => {
+  const toggle = document.getElementById("diagnostics-toggle");
+  const desired = toggle.checked;
+  try {
+    const saved = await chrome.runtime.sendMessage({
+      enabled: desired,
+      type: "static_set_diagnostics",
+    });
+    toggle.checked = !!(saved && saved.enabled);
+    await pushConfigUpdateToActiveTab();
+  } catch (e) {
+    console.error("[Static] diagnostics toggle failed", e);
+    toggle.checked = !desired;
+  }
+};
+
+const handleResearchLoggingToggle = async () => {
+  const toggle = document.getElementById("research-logging-toggle");
+  const desired = toggle.checked;
+  try {
+    const saved = await chrome.runtime.sendMessage({
+      enabled: desired,
+      type: "static_set_research_logging",
+    });
+    toggle.checked = !!(saved && saved.enabled);
+  } catch (e) {
+    console.error("[Static] research logging toggle failed", e);
+    toggle.checked = !desired;
+  }
+};
+
+const handleFingerprintChange = async () => {
+  const select = document.getElementById("fingerprint-mode");
+  const previous = select.value === "mask" ? "mask" : "off";
+  const desired = select.value === "mask" ? "mask" : "off";
+  try {
+    const saved = await chrome.runtime.sendMessage({
+      mode: desired,
+      type: "static_set_fingerprint",
+    });
+    select.value = saved && saved.mode === "mask" ? "mask" : "off";
+    await pushConfigUpdateToActiveTab();
+  } catch (e) {
+    console.error("[Static] fingerprint mode update failed", e);
+    select.value = previous;
+  }
+};
+
+const handleReplayChange = async () => {
+  const select = document.getElementById("replay-mode");
+  const allowed = new Set(["off", "mask", "noise", "chaos"]);
+  const desired = allowed.has(select.value) ? select.value : "off";
+  const previous = replayState.replayMode;
+  try {
+    const saved = await chrome.runtime.sendMessage({ mode: desired, type: "static_set_replay" });
+    const next = saved && allowed.has(saved.mode) ? saved.mode : desired;
+    select.value = next;
+    setReplayMode(next);
+    await pushConfigUpdateToActiveTab();
+  } catch (e) {
+    console.error("[Static] replay mode update failed", e);
+    select.value = previous;
+    setReplayMode(previous);
+  }
+};
+
+const handleViewLog = () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("log.html") });
+  window.close();
+};
+
+const handleViewSites = (event) => {
+  event.preventDefault();
+  chrome.tabs.create({ url: chrome.runtime.getURL("sites.html") });
+  window.close();
+};
+
+const bindPopupHandlers = () => {
+  document.getElementById("site-toggle").addEventListener("change", handleSiteToggle);
+  document.getElementById("site-protect").addEventListener("click", () => applySiteDecision("on"));
+  document
+    .getElementById("site-leave-off")
+    .addEventListener("click", () => applySiteDecision("off"));
+  document
+    .getElementById("site-turn-off")
+    .addEventListener("click", () => applySiteDecision("off"));
+  document.getElementById("site-open-more").addEventListener("click", handleOpenMore);
+  document.getElementById("recovery-action").addEventListener("click", handleRecoveryAction);
+  document.getElementById("mode-per-site").addEventListener("click", () => {
+    handleModeChange(MODE_PER_SITE);
+  });
+  document.getElementById("mode-always").addEventListener("click", () => {
+    handleModeChange(MODE_ALWAYS);
+  });
+  document.getElementById("onboarding-dismiss").addEventListener("click", handleOnboardingDismiss);
+  document.getElementById("onboarding-always").addEventListener("click", handleOnboardingAlways);
+  document.getElementById("noise-toggle").addEventListener("change", handleNoiseToggle);
+  document.getElementById("diagnostics-toggle").addEventListener("change", handleDiagnosticsToggle);
+  document
+    .getElementById("research-logging-toggle")
+    .addEventListener("change", handleResearchLoggingToggle);
+  document.getElementById("fingerprint-mode").addEventListener("change", handleFingerprintChange);
+  document.getElementById("replay-mode").addEventListener("change", handleReplayChange);
+  document.getElementById("view-log").addEventListener("click", handleViewLog);
+  document.getElementById("view-sites").addEventListener("click", handleViewSites);
+};
+
 (async () => {
-  const queriedTabId = tabIdFromQuery();
-  const tab = queriedTabId != null ? { id: queriedTabId } : await resolvePopupTab();
-  popupTabId = tab ? tab.id : null;
-  const detailsPromise = tab
-    ? chrome.runtime.sendMessage({ type: "static_get_details", tabId: tab.id }).catch(() => null)
-    : Promise.resolve(null);
-  const enabledPromise = chrome.declarativeNetRequest.getEnabledRulesets().catch(() => []);
-  const countsPromise = Promise.all(RULESET_META.map((m) => fetchRuleCount(m.id)));
+  try {
+    const queriedTabId = tabIdFromQuery();
+    const tab =
+      queriedTabId != null
+        ? await chrome.tabs.get(queriedTabId).catch(() => null)
+        : await resolvePopupTab();
+    popupTabId = tab && tab.id != null ? tab.id : null;
+    // Settings pages and chrome:// tabs have no site card, but their details
+    // still carry the popup settings (replay, diagnostics, rulesets).
+    const detailsPromise =
+      popupTabId != null
+        ? chrome.runtime
+            .sendMessage({ type: "static_get_details", tabId: popupTabId })
+            .catch(() => null)
+        : Promise.resolve(null);
+    const enabledPromise = chrome.declarativeNetRequest.getEnabledRulesets().catch(() => []);
+    const countsPromise = Promise.all(RULESET_META.map((m) => fetchRuleCount(m.id)));
 
-  const [details, enabledArr, counts] = await Promise.all([
-    detailsPromise,
-    enabledPromise,
-    countsPromise,
-  ]);
+    const [details, enabledArr, counts] = await Promise.all([
+      detailsPromise,
+      enabledPromise,
+      countsPromise,
+    ]);
 
-  renderDetails(details);
-  renderSiteSection(details);
-  renderNoiseSection(details);
-  renderDiagnosticsSection(details);
-  renderResearchLoggingSection(details);
-  renderFingerprintSection(details);
-  renderReplaySection(details);
-  renderRulesets(enabledArr, counts);
-  document.getElementById("rulesets-paused-note").hidden = !(details && details.disabled);
-  await renderExposedProfile(details);
-  renderDisabledSitesLink();
-  setupHelpTips();
+    renderModeRow(details);
+    renderDetails(details);
+    renderSiteSection(details);
+    renderOnboarding(details);
+    renderNoiseSection(details);
+    renderDiagnosticsSection(details);
+    renderResearchLoggingSection(details);
+    renderFingerprintSection(details);
+    renderReplaySection(details);
+    renderRulesets(details, enabledArr, counts);
+    renderRulesetPausedNote(details);
+    renderSitesLink(details);
+    await renderExposedProfile(details);
+    setupHelpTips();
+  } catch (error) {
+    console.error("[Static] popup rendering failed", error);
+  } finally {
+    bindPopupHandlers();
+  }
 })();

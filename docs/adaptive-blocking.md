@@ -4,6 +4,19 @@ Adaptive blocking is local-only. Static must not run a backend, upload telemetry
 user data. Every signal described here stays in `chrome.storage.local` unless the user explicitly
 exports a raw log file from their own browser.
 
+## Relationship to per-site protection (Static 2.8)
+
+Static 2.8 adds a second, much smaller observe-only store: **scout evidence**, used by the default
+per-site mode to recommend whether a site is worth masking. The two are separate on purpose. Scout
+evidence is always on in per-site mode (the user has not decided yet, so the scout must be able to
+tell them what the page does), capped at fixed categories and 200 sites, and consumed by the
+recommendation engine; see [site protection](site-protection.md). This adaptive log is the opt-in
+deep logger: off by default, switched on with Research logging, and able to attribute behavior to
+script sources, endpoints, and async boundaries. They do not feed each other today — scout evidence
+never creates adaptive signals, and adaptive findings never change a site recommendation, decision,
+or protection mode. If adaptive blocking later graduates to a stage that needs a per-site hint, the
+scout's store is the obvious precedent, but it would be a new contract rather than a shared one.
+
 ## Goal
 
 Static rules block known endpoints before they run. Adaptive blocking is the second layer for vendor

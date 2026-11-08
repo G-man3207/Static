@@ -3,6 +3,9 @@
 Noise mode should be internally consistent before it is broad. A decoy ID should not answer
 "installed" through one passive probe vector and immediately contradict itself through another.
 
+In Static 2.8's default per-site mode Noise only runs on sites you protect; an unprotected page's
+probes are observed by the scout, not answered. See [Per-site protection](site-protection.md#modes).
+
 ## Current Contract
 
 Known plausible extension IDs can enter an origin persona after 2 probes. Unknown extension-shaped

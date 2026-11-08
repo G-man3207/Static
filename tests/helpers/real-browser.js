@@ -8,6 +8,7 @@
 // are designed to compose cleanly with Playwright's test/expect API.
 
 const { visibleContentRatio } = require("./png");
+const { resetStorage } = require("./extension");
 
 /** Minimum visible-content ratio below which a page is considered blank. */
 const MIN_VISIBLE_CONTENT_RATIO = 0.01;
@@ -248,7 +249,9 @@ const realBrowserTest = require("@playwright/test").test.extend({
   realBrowser: async (_, use) => {
     const ext = await launchRealBrowser();
     try {
-      await ext.serviceWorker.evaluate(() => chrome.storage.local.clear());
+      // Real-site smoke tests exercise the masking path; re-seed the v2.7
+      // always-mode baseline after clearing the fresh profile.
+      await resetStorage(ext);
       await use(ext);
     } finally {
       await ext.close();

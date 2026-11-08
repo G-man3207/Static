@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Static — site protection</title>
+    <link rel="icon" href="icons/icon-128.png" />
+    <style>
+      :root {
+        --bg: #fafafa;
+        --surface: #ffffff;
+        --border: #ececec;
+        --border-strong: #dadada;
+        --text: #1a1a1a;
+        --text-muted: #666;
+        --text-subtle: #999;
+        --accent: #c93131;
+        --accent-soft: #fff5f5;
+        --accent-border: #ead0d0;
+        --warn: #8a4b00;
+        --warn-soft: #fff7e8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        font:
+          14px/1.5 "Inter",
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        color: var(--text);
+        background-color: var(--bg);
+        min-height: 100vh;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      header {
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .brand-stripe {
+        display: flex;
+        height: 3px;
+      }
+      .brand-stripe span {
+        flex: 1;
+      }
+      .brand-stripe span:nth-child(1) {
+        background: #c0c0c0;
+      }
+      .brand-stripe span:nth-child(2) {
+        background: #c0c01f;
+      }
+      .brand-stripe span:nth-child(3) {
+        background: #1fc0c0;
+      }
+      .brand-stripe span:nth-child(4) {
+        background: #1fc01f;
+      }
+      .brand-stripe span:nth-child(5) {
+        background: #c01fc0;
+      }
+      .brand-stripe span:nth-child(6) {
+        background: #c01f1f;
+      }
+      .brand-stripe span:nth-child(7) {
+        background: #1f1fc0;
+      }
+      .container {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      .header-inner {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 22px 0 18px;
+      }
+      .header-inner img {
+        width: 36px;
+        height: 36px;
+      }
+      .header-titles h1 {
+        font-size: 18px;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: -0.3px;
+      }
+      .brand-name {
+        display: block;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-subtle);
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        margin-bottom: 2px;
+      }
+      .header-note {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--text-subtle);
+      }
+      main {
+        padding: 24px 0 60px;
+      }
+      .lede {
+        margin: 0 0 20px;
+        max-width: 680px;
+        font-size: 13.5px;
+        color: var(--text-muted);
+        line-height: 1.55;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 18px 20px;
+        margin-bottom: 14px;
+      }
+      .card h2,
+      .section-head h2 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: -0.1px;
+      }
+      .card-desc {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .muted {
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .mode-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      .mode-card {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 14px;
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .mode-card:hover {
+        border-color: #c8c8c8;
+      }
+      .mode-card:has(input:checked) {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        box-shadow: inset 0 0 0 1px var(--accent);
+      }
+      .mode-card input[type="radio"] {
+        margin: 2px 0 0;
+        accent-color: var(--accent);
+        flex: none;
+      }
+      .mode-copy {
+        display: block;
+        min-width: 0;
+      }
+      .mode-line {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .mode-name {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .mode-desc {
+        display: block;
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--text-muted);
+        max-width: 46ch;
+      }
+      .chip {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: var(--accent);
+        background: #fff0f0;
+        border: 1px solid #f0d0d0;
+        border-radius: 999px;
+        padding: 2px 7px;
+        line-height: 1.4;
+      }
+      .mode-note {
+        margin: 12px 0 0;
+        font-size: 11px;
+      }
+      .inline-error {
+        margin: 8px 0 0;
+        font-size: 12px;
+        color: #a02020;
+      }
+      .toolbar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin: 20px 0 8px;
+      }
+      input[type="search"] {
+        flex: 1;
+        min-width: 0;
+        padding: 8px 12px;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        font: inherit;
+        font-size: 13px;
+        background: var(--surface);
+      }
+      input[type="search"]:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .summary {
+        color: var(--text-muted);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .no-match {
+        margin: 0 0 14px;
+        padding: 18px;
+        text-align: center;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-size: 13px;
+      }
+      .loading {
+        color: var(--text-muted);
+        font-size: 13px;
+        padding: 28px 0;
+        text-align: center;
+      }
+      .error-card {
+        margin: 0 0 14px;
+        padding: 16px 18px;
+        background: #fff7f7;
+        border: 1px solid var(--accent-border);
+        border-radius: 10px;
+        color: #8a1f1f;
+      }
+      .error-card p {
+        margin: 0 0 10px;
+        font-size: 13px;
+      }
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .site-section {
+        padding-top: 16px;
+      }
+      .sites-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-variant-numeric: tabular-nums;
+      }
+      .sites-table th {
+        text-align: left;
+        padding: 8px 0;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        border-bottom: 1px solid var(--border);
+      }
+      .sites-table th.action-head {
+        width: 1%;
+        text-align: right;
+        white-space: nowrap;
+      }
+      .sites-table td {
+        padding: 12px 0;
+        border-top: 1px solid var(--border);
+        vertical-align: top;
+      }
+      .sites-table tbody tr:first-child td {
+        border-top: none;
+      }
+      .sites-table tbody tr:hover {
+        background: #fafafa;
+      }
+      .site-name {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+      .site-meta,
+      .site-evidence,
+      .site-note {
+        display: block;
+        font-size: 11.5px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+      .site-meta {
+        color: var(--text-subtle);
+      }
+      .site-evidence {
+        color: var(--text-muted);
+      }
+      .site-note {
+        color: var(--warn);
+        font-size: 11px;
+      }
+      .action-cell {
+        text-align: right;
+        white-space: nowrap;
+      }
+      .action-cell .btn-row + .btn-row {
+        margin-left: 8px;
+      }
+      .btn {
+        padding: 8px 14px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .btn:hover {
+        background: #f4f4f4;
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .btn-danger {
+        color: var(--accent);
+        border-color: var(--accent-border);
+      }
+      .btn-danger:hover {
+        background: var(--accent-soft);
+      }
+      .btn-row {
+        padding: 5px 10px;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .btn-row:hover {
+        background: #f4f4f4;
+      }
+      .btn-row:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .btn-row[data-action="protect"],
+      .btn-row[data-action="enable"] {
+        color: var(--accent);
+        border-color: var(--accent-border);
+        background: var(--surface);
+      }
+      .btn-row[data-action="protect"]:hover,
+      .btn-row[data-action="enable"]:hover {
+        background: var(--accent-soft);
+      }
+      .btn-row[data-action="leave-off"] {
+        color: var(--text-muted);
+      }
+      .empty {
+        padding: 18px;
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 12.5px;
+        line-height: 1.6;
+        background: #fbfbfb;
+        border: 1px dashed var(--border-strong);
+        border-radius: 8px;
+      }
+      .caps-note {
+        margin: 10px 0 0;
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--text-subtle);
+      }
+      .footer-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 16px 0 6px;
+      }
+      .behavior-note {
+        margin: 0 0 12px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .how {
+        margin-top: 24px;
+        padding: 16px 20px;
+      }
+      .how summary {
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .how summary:focus-visible,
+      .btn:focus-visible,
+      .btn-row:focus-visible,
+      input[type="search"]:focus-visible,
+      .mode-card:focus-within {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .how-body {
+        max-width: 720px;
+      }
+      .how-body p {
+        margin: 12px 0 0;
+        font-size: 12.5px;
+        line-height: 1.6;
+        color: var(--text-muted);
+      }
+      .how-body strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      @media (max-width: 700px) {
+        .mode-grid {
+          grid-template-columns: 1fr;
+        }
+        .header-note {
+          display: none;
+        }
+        .toolbar {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .summary {
+          white-space: normal;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand-stripe" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <div class="container header-inner">
+        <img src="icons/icon-128.png" alt="" width="36" height="36" />
+        <div class="header-titles">
+          <span class="brand-name">Static</span>
+          <h1>Site protection</h1>
+        </div>
+        <div class="header-note">Per-site masking</div>
+      </div>
+    </header>
+
+    <main>
+      <div class="container">
+        <p class="lede">
+          Static masks only the sites you choose. Autodetection tells you what each page is doing so
+          the choice is informed.
+        </p>
+
+        <section class="card" id="mode-section" aria-labelledby="mode-title">
+          <div class="section-head">
+            <div>
+              <h2 id="mode-title">Protection mode</h2>
+              <p class="card-desc">
+                Decide once whether every site is masked or only the ones you pick.
+              </p>
+            </div>
+          </div>
+          <div class="mode-grid" role="radiogroup" aria-labelledby="mode-title">
+            <label class="mode-card" for="mode-per-site">
+              <input
+                type="radio"
+                id="mode-per-site"
+                name="protection-mode"
+                value="per_site"
+                checked
+              />
+              <span class="mode-copy">
+                <span class="mode-line">
+                  <span class="mode-name">Only sites I choose</span>
+                  <span class="chip">Recommended</span>
+                </span>
+                <span class="mode-desc" id="mode-per-site-desc"
+                  >Static stays off until you protect a site. The popup shows what each page
+                  checked, so the decision is yours.</span
+                >
+              </span>
+            </label>
+            <label class="mode-card" for="mode-always">
+              <input type="radio" id="mode-always" name="protection-mode" value="always" />
+              <span class="mode-copy">
+                <span class="mode-line">
+                  <span class="mode-name">Every site</span>
+                </span>
+                <span class="mode-desc" id="mode-always-desc"
+                  >Static masks every site straight away, except the sites you pause. This is the
+                  old behavior.</span
+                >
+              </span>
+            </label>
+          </div>
+          <p class="muted mode-note" id="mode-note">Mode changes apply when pages reload.</p>
+          <p class="inline-error" id="mode-error" role="alert" hidden></p>
+        </section>
+
+        <div class="toolbar">
+          <input
+            type="search"
+            id="search"
+            placeholder="Search sites…"
+            aria-label="Search sites"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <span class="summary" id="summary" aria-live="polite"></span>
+        </div>
+        <p class="inline-error" id="action-error" role="alert" hidden></p>
+        <p class="no-match" id="no-match" hidden></p>
+
+        <div id="loading" class="loading" role="status">Loading…</div>
+        <div class="error-card" id="error-card" role="alert" hidden>
+          <p id="error-text">Static couldn't read your site list.</p>
+          <button class="btn" type="button" id="retry">Try again</button>
+        </div>
+
+        <div id="site-lists" hidden>
+          <section class="card site-section" id="section-on" aria-labelledby="heading-on">
+            <div class="section-head">
+              <h2 id="heading-on">Protected sites</h2>
+            </div>
+            <table class="sites-table" id="table-on" hidden>
+              <thead>
+                <tr>
+                  <th scope="col">Site</th>
+                  <th scope="col" class="action-head">
+                    <span class="visually-hidden">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="tbody-on"></tbody>
+            </table>
+            <p class="empty" id="empty-on" hidden></p>
+          </section>
+
+          <section class="card site-section" id="section-off" aria-labelledby="heading-off">
+            <div class="section-head">
+              <h2 id="heading-off">Left off</h2>
+            </div>
+            <table class="sites-table" id="table-off" hidden>
+              <thead>
+                <tr>
+                  <th scope="col">Site</th>
+                  <th scope="col" class="action-head">
+                    <span class="visually-hidden">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="tbody-off"></tbody>
+            </table>
+            <p class="empty" id="empty-off" hidden></p>
+          </section>
+
+          <section class="card site-section" id="section-seen" aria-labelledby="heading-seen">
+            <div class="section-head">
+              <h2 id="heading-seen">Seen here, no decision</h2>
+            </div>
+            <table class="sites-table" id="table-seen" hidden>
+              <thead>
+                <tr>
+                  <th scope="col">Site</th>
+                  <th scope="col" class="action-head">
+                    <span class="visually-hidden">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="tbody-seen"></tbody>
+            </table>
+            <p class="empty" id="empty-seen" hidden></p>
+          </section>
+
+          <section
+            class="card site-section"
+            id="section-paused"
+            aria-labelledby="heading-paused"
+            hidden
+          >
+            <div class="section-head">
+              <h2 id="heading-paused">Paused sites</h2>
+              <button class="btn" type="button" id="reenable-all">Enable all</button>
+            </div>
+            <p class="behavior-note" id="paused-note" hidden>
+              Per-site decisions are kept while every site is masked. Switch back to per-site
+              protection to use them.
+            </p>
+            <table class="sites-table" id="table-paused" hidden>
+              <thead>
+                <tr>
+                  <th scope="col">Origin</th>
+                  <th scope="col" class="action-head">
+                    <span class="visually-hidden">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="tbody-paused"></tbody>
+            </table>
+            <p class="empty" id="empty-paused" hidden></p>
+          </section>
+        </div>
+
+        <p class="caps-note muted" id="caps-note" hidden></p>
+
+        <div class="footer-actions" id="footer-actions" hidden>
+          <button class="btn" type="button" id="clear-seen">Forget undecided sites</button>
+          <button class="btn btn-danger" type="button" id="clear-all">Clear all decisions</button>
+        </div>
+
+        <details class="card how" id="how-it-works">
+          <summary>How this works</summary>
+          <div class="how-body">
+            <p>
+              <strong>Only sites I choose</strong> is the default. Static watches each page, lists
+              its observation above, and masks a site only after you choose <strong>Protect</strong>
+              — in the popup or on this page.
+            </p>
+            <p>
+              <strong>Every site</strong> masks every page straight away, except the sites you
+              pause. Paused origins are listed here so you can turn them back on. Your per-site
+              choices are kept while this mode is on.
+            </p>
+            <p>
+              Turning a site on masks that site. Static blocks extension-enumeration probes,
+              rewrites the user agent and Client Hints the page sees, can mask the device signals
+              the page reads when device masking is on, and applies its narrow fingerprint and
+              CAPTCHA vendor lists there. It does not proxy your traffic, add a VPN, block ads or
+              trackers broadly, or send what it observes anywhere: everything stays on this device.
+            </p>
+            <p>
+              A decision covers a site, not a single page: every subdomain, scheme and port follows
+              it. Autodetection is a hint, not a guarantee — a page can check for extensions before
+              Static’s observer runs, or in ways the observer cannot see. The detection list stays
+              local; decisions and what a page was seen doing never leave the browser.
+            </p>
+            <p>
+              <strong>Forget undecided sites</strong> clears the observations for sites without a
+              decision. <strong>Clear all decisions</strong> clears the protection choices
+              themselves; pages you have chosen stay in the list until you choose again.
+            </p>
+          </div>
+        </details>
+      </div>
+    </main>
+
+    <script src="sites.js"></script>
+  </body>
+</html>

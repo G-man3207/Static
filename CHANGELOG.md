@@ -4,6 +4,163 @@ All notable changes to Static will be documented here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [2.8.0] — 2026-11-08
+
+Static now masks a site only after you choose it. The default is **per-site** protection: an
+observe-only scout watches each page, the popup shows what the page was doing and whether masking is
+worth it, and the full stack applies only where you pick it. The old always-on behavior is still
+there as **Every site** mode. The change targets the sign-in and checkout flows — PayPal, Discord,
+and similar — that probe for extensions, run bot checks, or sniff the user agent as part of
+legitimate work and can trip when the whole browser is masked.
+
+### Added
+
+- **Per-site protection mode**, now the default. A page with no decision runs only the scout: no
+  probe blocking, no DOM scrubbing, no global stripping, no device poisoning, no network lists, no
+  User-Agent rewrite. **Protect this site** applies the full stack from the next load; **Leave it
+  off** records an explicit decision on the sites page. The old behavior is **Every site** mode.
+- **The scout** (`scout.js`, `scout_probes.js`, `scout_signals.js`), an observe-only script that runs
+  in every frame at `document_start` in per-site mode, on undecided and left-off sites. It wraps
+  probe vectors, fingerprint vendors, device readbacks, replay SDKs, and auth/checkout/bot-check
+  signals, and calls the native implementation unchanged every time — same `this`, arguments,
+  return value, thrown value, promise identity, descriptors, and `name` / `length` / `toString`. Its
+  detection catalog is the fixed, shared `signals.js`; the same file is loaded by the service worker
+  and the tests, so the scout and the engine cannot drift.
+- **The recommendation engine** (`site_signals.js`). A local benefit-versus-risk heuristic over the
+  scout's evidence: benefit counts extension probes (volume, distinct IDs, distinct vectors) and
+  fingerprint, device, replay, and CAPTCHA signals; risk counts sign-in / checkout fields and paths,
+  bot checks, CAPTCHAs, WebAuthn, OAuth, Trusted Types, embedded sign-in frames, heavy UA reads, bot
+  and payment vendors, previous pauses, and fresh compatibility warnings. It returns a
+  `protect` / `skip` / `neutral` verdict with low/medium/high confidence, one of six fixed headlines,
+  up to three reasons per side, "defences off" notes, and a caution flag. Evidence older than 30
+  days is stale and confidence-capped; a fresh compatibility warning overrides the verdict. All
+  local, no cloud, no model, no telemetry.
+- **Popup decision card**: the scout's observed count (amber, labelled "extension checks seen here"
+  while unprotected), strongest reasons for and against, the recommendation, and **Protect this
+  site** / **Leave it off**, plus **Turn it off here** while protected. The card explains when a
+  detected signal is not actually being masked because its defence is off. A left-off site reports
+  new checks since the decision quietly ("New checks here: 12 since you turned it off.").
+- **Protection mode row** in the popup: **Only sites I choose** / **Every site**, with a one-line
+  explainer and an ARIA-pressed state. Switching reloads the current tab and closes the popup.
+- **Onboarding card** while per-site mode has no site decisions: "Static now asks before it masks",
+  with **Got it** and **Protect every site instead**. Dismissal is stored.
+- **Sites page** (`sites.html` / `sites.js`, replacing the disabled-sites page): Protected sites,
+  Left off, Seen here, no decision, and (Every site mode) Paused sites; search across the lists; mode
+  radios; per-site **Protect** / **Turn off** / **Leave off** / **Enable**; **Forget undecided
+  sites**; **Clear all decisions** with an inline two-step confirm; an explanatory "How this
+  works" block. The page re-renders on storage changes from the popup or the worker.
+- **Site decisions and evidence storage** (`chrome.storage.local`): decisions keyed by registrable
+  domain (or the literal host for IPs, `localhost`, and single-label hosts), covering subdomains,
+  both schemes, and all ports, with one extra label for multi-tenant suffixes such as `github.io`;
+  250 protected and 250 left-off decisions; evidence for 200 sites, evicted least-recently-seen.
+  Scout evidence is included in the raw log export in per-site mode.
+- **Scoped network and User-Agent defenses.** In per-site mode the static fingerprint-vendor and
+  CAPTCHA-vendor rulesets are disabled and each enabled list is re-derived as dynamic DNR rules with
+  `initiatorDomains` set to the protected sites; User-Agent / Client Hints rewriting is installed as
+  a request rule plus an initiator rule per protected site instead of one global rule. Unprotected
+  sites get the real browser and load vendor scripts normally. Every site mode keeps the 2.7 global
+  rulesets and global header rule.
+- **Ruleset preferences that survive mode changes.** The enabled rulesets are captured once into
+  `ruleset_prefs` (with `ruleset_prefs_captured`) from `getEnabledRulesets()` on the first 2.8 start,
+  and the popup writes there afterwards, so switching modes no longer silently resets which lists
+  are on.
+- **Documentation**: `docs/site-protection.md` is the behavior and architecture reference for the
+  release — modes, storage schema, detection catalog, scoring, UI copy, DNR gating, test plan.
+- **Playwright coverage**: `tests/scout.spec.js`, `tests/site-decisions.spec.js`,
+  `tests/popup-decisions.spec.js`, `tests/sites-page.spec.js`, `tests/ruleset-scoping.spec.js`; the
+  static validator covers the new registrations, the site-key algorithm, the `signals.js` catalog,
+  the recommendation engine and sanitizer, and the Firefox build's script list. The new
+  `ruleset-scoping` spec covers the scoped DNR module in a vm pass over the real rule files and in
+  the browser, and the scanned-rule header layer across mode switches. The Firefox smoke test seeds
+  Every site mode before navigating and checks that the sites page renders.
+
+### Changed
+
+- The default protection mode is **per-site** (`per_site`). The 2.7 behavior is preserved exactly
+  as the **Every site** mode (`always`): same content-script registrations, same global rulesets,
+  same global User-Agent rule, same pause flow, same badge.
+- **Pausing is now an Every-site-mode concept.** In per-site mode a site is Protected, Left off, or
+  Undecided. A left-off decision is not a pause: it keeps the scout running and does not create a
+  network exception, because nothing global is blocked that needs one. Pause entries in
+  `disabled_origins` are untouched, are ignored for masking in per-site mode, and apply again in
+  Every site mode.
+- **The popup count is state-aware.** On a protected page it is still "probes blocked on this tab";
+  on an unprotected per-site page it is "extension checks seen here", in amber, and the hero
+  diagnostics hide the cumulative/blocked rows that would otherwise read zero.
+- **The popup's site section is mode-aware.** In per-site mode the switch row is replaced by the
+  decision card; in Every site mode the switch and its existing copy are unchanged. The footer link
+  "View disabled sites" becomes "Manage protected sites" and opens `sites.html`; `#disabled-stats`
+  is now `#sites-stats`.
+- **The recovery card is mode-aware.** Per-site protected shows **Turn protection off here and
+  reload**; per-site unprotected shows no card; Every site keeps **Pause this site and reload**.
+  A protected page with a fresh compatibility warning uses the warning variant.
+- **The ruleset section explains the mode.** In per-site mode, while the site is unprotected, it
+  says the lists apply only to the sites you protect; while protected, that note is hidden.
+- **Upgrading from 2.7.** Existing installs move to per-site mode on update. Explicitly paused
+  origins are preserved and still apply in Every site mode; ruleset toggles are captured once so
+  they survive the move. Site decisions start empty, so **every site is unmasked by default until
+  you choose** — including sites you had paused; the first popup on a site explains the new default
+  and offers both the decision buttons and the mode row.
+- **Docs.** `README.md` gains a "Protection modes" section, mode-aware "What it blocks" items, the
+  recommendation explanation, and updated caveats; `PRIVACY.md` gains the new keys and the scout's
+  data description; `docs/adaptive-blocking.md` gains the relationship paragraph;
+  `docs/site-protection.md` is the public design document.
+
+### Fixed
+
+- **Sign-in and checkout flows no longer get masked before you ask.** PayPal-, Discord-, and
+  Shopify-style pages that use extension enumeration, bot checks, or user-agent sniffing during
+  login, sign-up, or payment were the motivating breakage: 2.7 masked them on every visit, including
+  the frames their challenges load in. In the default per-site mode they are observed only, the
+  recommendation usually says to leave masking off, and masking starts only if you choose it.
+- **Network fingerprint lists no longer apply to sites you did not protect.** The static
+  fingerprint-vendor and CAPTCHA-vendor rulesets used to be global in every mode, so a vendor script
+  loaded by an unrelated page was blocked as a side effect. In per-site mode the lists are scoped to
+  the protected site's own initiator, and the static lists are off.
+- **User-Agent and Client Hints rewriting no longer touches sites you did not protect.** 2.7
+  rewrote `navigator.userAgent`, platform, and Client Hints and the matching request headers on every
+  site. In per-site mode an unprotected site sees the real browser and real headers; a protected site
+  gets a stable per-site persona, including the first navigation and its requests to other hosts.
+- **Site decisions survive mode switches.** Switching to Every site and back no longer drops
+  decisions or evidence; ruleset choices are kept instead of silently resetting when the static
+  rulesets are disabled for per-site mode.
+- **Evidence is bounded.** Per-site probe IDs (300), vectors (24), path kinds (20), vendors (40),
+  device surfaces (30), replay SDKs (20), and compatibility signals (24) are capped and counts
+  clamped, so a page that probes thousands of unique IDs cannot grow local storage without bound;
+  the site map is capped at 200 entries.
+- **The recommendation is honest about defences that are off.** A signal Static is detecting but not
+  masking is listed as a note ("device poisoning is off", "network lists are off"), not as a benefit,
+  and a site with no active benefit cannot get a `protect` verdict.
+- **Turning protection off from the recovery card is a real decision.** "Turn protection off here
+  and reload" writes the off decision before reloading, so it survives the reload and shows up under
+  **Left off** rather than coming back undecided.
+- **Clear log also clears scout evidence and the per-tab observed counters**, so clearing the probe
+  log does not leave the sites page showing sites from the same session.
+- **The popup renders on non-page tabs too.** On `chrome://`, extension, error, and other non-http
+  tabs where the content-script details are null it shows the mode row (Every site default) and
+  hides the site card instead of failing to open.
+
+### Privacy
+
+- New local storage keys, all in `chrome.storage.local`: `protection_mode`, `site_decisions`,
+  `site_evidence`, `onboarding_dismissed`, `ruleset_prefs`, and `ruleset_prefs_captured`, plus the
+  internal bookkeeping keys `tab_seen` and `header_rules_mode`. No `chrome.storage.sync`, no new
+  permission, no new host permission, no new network request, no telemetry, and no third-party
+  code.
+- The scout observes behavior categories, not page content: extension-probe IDs/vectors/path kinds,
+  fixed vendor, device, replay, and compatibility catalog keys, counts, first/last-seen times, and
+  the number of top-frame page loads that produced evidence. It never stores page URLs beyond the
+  site key, paths, titles, text, form values, cookies, local-storage values, request bodies, or
+  individual event times. `tab_seen` is only `{[tabId]: {at, total, ids}}` for the 30 most recent
+  tabs, 10 extension IDs each; entries are dropped when the tab closes or navigates.
+- Evidence is capped at 200 sites, evicted least-recently-seen; per-site maps and counters are capped
+  as above. **Clear log** clears the evidence and the per-tab counters. The sites page can forget
+  undecided sites (evidence and tab counters); clearing all decisions clears the decisions and the
+  tab counters but keeps the evidence (those sites move to **Seen here**).
+  In per-site mode the raw export includes evidence and decisions; in Every site mode the export
+  shape is unchanged. The anonymized research export and the copied issue report ignore the new
+  keys, so their shape and size are unchanged too.
+
 ## [2.7.0] — 2026-10-29
 
 ### Fixed
@@ -419,7 +576,8 @@ Five toggleable DNR rulesets with per-ruleset `enabled` defaults, file-per-categ
 - `.editorconfig`, `.prettierrc`, `.prettierignore` for cross-editor consistency.
 - GitHub Actions: `format.yml` (Prettier auto-format + commit back), `validate.yml` (JSON syntax + DNR rule shape + manifest file-reference checks), `release.yml` (tag-triggered zip + GitHub Release).
 
-[Unreleased]: https://github.com/G-man3207/Static/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/G-man3207/Static/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/G-man3207/Static/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/G-man3207/Static/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/G-man3207/Static/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/G-man3207/Static/compare/v2.5.0...v2.5.1
