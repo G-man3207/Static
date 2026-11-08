@@ -878,6 +878,16 @@ test("leaves no page-visible globals or wrapper tells", async ({ extension }) =>
         }
         return record;
       };
+      window.__lateSurface = { fetchName: fetch.name, fetchLength: fetch.length, fetchSource: Function.prototype.toString.call(fetch) };
+      // Chrome 147 exposes document.fonts as a FontFaceSet without exposing the
+      // FontFaceSet constructor on Window. Resolve the interface from either.
+      window.__fontProto =
+        typeof FontFaceSet === "function"
+          ? FontFaceSet.prototype
+          : document.fonts
+            ? Object.getPrototypeOf(document.fonts)
+            : null;
+      try {
       window.__surface = {
         aHref: window.__describe(HTMLAnchorElement.prototype, "href"),
         areaHref: window.__describe(HTMLAreaElement.prototype, "href"),
@@ -898,8 +908,8 @@ test("leaves no page-visible globals or wrapper tells", async ({ extension }) =>
         embedSrc: window.__describe(HTMLEmbedElement.prototype, "src"),
         eventSource: window.__describe(window, "EventSource"),
         fetch: window.__describe(window, "fetch"),
-        fontsCheck: window.__describe(FontFaceSet.prototype, "check"),
-        fontsLoad: window.__describe(FontFaceSet.prototype, "load"),
+        fontsCheck: window.__describe(window.__fontProto, "check"),
+        fontsLoad: window.__describe(window.__fontProto, "load"),
         formAction: window.__describe(HTMLFormElement.prototype, "action"),
         getImageData: window.__describe(CanvasRenderingContext2D.prototype, "getImageData"),
         hardwareConcurrency: window.__describe(Navigator.prototype, "hardwareConcurrency"),
@@ -934,7 +944,9 @@ test("leaves no page-visible globals or wrapper tells", async ({ extension }) =>
         workletAddModule: window.__describe(Worklet.prototype, "addModule"),
         xhrOpen: window.__describe(XMLHttpRequest.prototype, "open"),
       };
-      window.__lateSurface = { fetchName: fetch.name, fetchLength: fetch.length, fetchSource: Function.prototype.toString.call(fetch) };
+      } catch (error) {
+        window.__surface = { buildError: String((error && error.stack) || error) };
+      }
     </script></body>`,
   });
   try {
@@ -951,6 +963,10 @@ test("leaves no page-visible globals or wrapper tells", async ({ extension }) =>
     );
     expect(state.early).toEqual([]);
     expect(scoutKeys).toEqual(controlKeys);
+    // A missing API in this Chromium may be absent from the snapshot, but a
+    // fixture that cannot build the snapshot (or a scout that clobbers a
+    // global) must fail with the reason instead of a downstream TypeError.
+    expect(state.surface.buildError, "fixture surface build").toBeUndefined();
     expect(state.late.fetchName).toBe("fetch");
     expect(state.late.fetchLength).toBe(1);
     expect(state.late.fetchSource).toBe("function fetch() { [native code] }");
