@@ -4,6 +4,30 @@ All notable changes to Static will be documented here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [2.8.1] — 2026-11-13
+
+A packaging-only release: the extension code is unchanged from 2.8.0, and the release artifacts are
+built with a development toolchain that no longer carries the vulnerabilities GitHub was reporting.
+No new permissions, no behavior changes.
+
+### Security
+
+- Resolved all open GitHub Dependabot alerts for the repository. `minimatch` is pinned to 11.0.8
+  (CVE-2026-118764 / GHSA-g3hv-75wg-m249) via an npm override scoped to the vulnerable `^10` line
+  only, and `node-forge` is updated to 1.4.3 (ten advisories, among them GHSA-86w9-cpqp-85rv,
+  GHSA-5x38-2vff-x55p and GHSA-8hrf-8g6f-7xwp), covering the build, lint and test dependencies
+  (`eslint`, `web-ext` and their transitive trees). None of these packages run in the shipped
+  extension.
+- The remaining advisory for `deepmerge` (CVE-2026-93753) was dismissed as inaccurate with evidence:
+  the CVE was disputed and rejected by its own CNA, it affects only a dev-only linting dependency,
+  and no patched release exists to upgrade to.
+
+### Changed
+
+- CI validation runs on `ubuntu-24.04` until `@playwright/test` is bumped past 1.65 for
+  `ubuntu-26.04` runner support (tracked in
+  [#18](https://github.com/G-man3207/Static/issues/18)).
+
 ## [2.8.0] — 2026-11-08
 
 Static now masks a site only after you choose it. The default is **per-site** protection: an
