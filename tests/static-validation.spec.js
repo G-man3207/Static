@@ -3342,9 +3342,9 @@ test("site_dnr.js copies rule conditions instead of hardcoding Firefox-stripped 
   expect(source.includes("resourceTypes:")).toBe(false);
 });
 
-test("manifest, package metadata and the latest changelog release agree on 2.8.0", () => {
+test("manifest, package metadata and the latest changelog release agree on 2.8.1", () => {
   const version = latestChangelogReleaseVersion();
-  expect(version).toBe("2.8.0");
+  expect(version).toBe("2.8.1");
   expect(readJson("manifest.json").version).toBe(version);
   expect(readJson("package.json").version).toBe(version);
   expect(readJson("package-lock.json").version).toBe(version);
